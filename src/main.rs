@@ -2219,7 +2219,9 @@ impl KeysApp {
             .map(|i| i.name.clone())
             .unwrap_or_default();
         // Owned antes do UI: nenhum borrow de self.raw na closure.
+        // Separa vivos (para exibir) de deletados (lixeira).
         let mut atts: Vec<(String, String, u64)> = Vec::new();
+        let mut trashed: Vec<(String, String, u64)> = Vec::new();
         if let Some(list) = self
             .raw
             .as_ref()
@@ -2244,13 +2246,23 @@ impl KeysApp {
                     .unwrap_or("anexo")
                     .to_string();
                 let size = a.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                atts.push((id, name, size));
+                let deleted = a
+                    .get("deletedAt")
+                    .map(|v| !v.is_null())
+                    .unwrap_or(false);
+                if deleted {
+                    trashed.push((id, name, size));
+                } else {
+                    atts.push((id, name, size));
+                }
             }
         }
         let mut close = false;
         let mut add = false;
         let mut save: Option<String> = None;
         let mut del: Option<String> = None;
+        let mut restore: Option<String> = None;
+        let mut del_forever: Option<String> = None;
         let resp = egui::Modal::new(egui::Id::new("attachments"))
             .frame(modal_frame(ctx))
             .show(ctx, |ui| {
@@ -2286,6 +2298,40 @@ impl KeysApp {
                                 .clicked()
                             {
                                 del = Some(att_id.clone());
+                            }
+                        });
+                    }
+                }
+                // Lixeira de anexos — anexos excluídos ficam aqui até serem
+                // restaurados ou excluídos de vez (padrão do item, onda 23).
+                if !trashed.is_empty() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(format!("🗑 {}", t(Key::Trash))).small().weak());
+                    ui.add_space(4.0);
+                    for (att_id, name, size) in &trashed {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(name).weak());
+                            ui.label(
+                                egui::RichText::new(human_size(*size as usize))
+                                    .small()
+                                    .weak(),
+                            );
+                            if ui
+                                .add_enabled_ui(ready, |ui| ghost(ui, t(Key::Restore)))
+                                .inner
+                                .clicked()
+                            {
+                                restore = Some(att_id.clone());
+                            }
+                            if ui
+                                .add_enabled_ui(ready, |ui| ghost(ui, "🗑"))
+                                .inner
+                                .on_hover_text(t(Key::DeleteForever))
+                                .clicked()
+                            {
+                                del_forever = Some(att_id.clone());
                             }
                         });
                     }
@@ -2326,6 +2372,20 @@ impl KeysApp {
                 return;
             };
             if vault::delete_attachment(&mut next, &item_id, &att_id) {
+                self.persist(next);
+            }
+        } else if let Some(att_id) = restore {
+            let Some(mut next) = self.raw.clone() else {
+                return;
+            };
+            if vault::restore_attachment(&mut next, &item_id, &att_id) {
+                self.persist(next);
+            }
+        } else if let Some(att_id) = del_forever {
+            let Some(mut next) = self.raw.clone() else {
+                return;
+            };
+            if vault::delete_attachment_forever(&mut next, &item_id, &att_id) {
                 self.persist(next);
             }
         } else if add {

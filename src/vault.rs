@@ -85,7 +85,11 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                         }),
                         favorite: ri.favorite,
                         folder_id: ri.folder_id,
-                        has_attachments: ri.attachments.as_ref().is_some_and(|a| !a.is_empty()),
+                        has_attachments: ri.attachments.as_ref().is_some_and(|a| {
+                        a.iter().any(|att| {
+                            att.get("deletedAt").is_none() || att.get("deletedAt") == Some(&Value::Null)
+                        })
+                    }),
                     })
                 })
                 .collect()
@@ -494,6 +498,7 @@ pub fn add_attachment(
         "size": bytes.len(),
         "mime": mime,
         "dataB64": data_b64,
+        "deletedAt": null,
     });
     if !it.get("attachments").is_some_and(Value::is_array) {
         it["attachments"] = json!([]);
@@ -506,6 +511,7 @@ pub fn add_attachment(
 }
 
 /// `(name, dataB64)` de um anexo — o que a UI precisa pra salvar em disco.
+/// Só anexos vivos (não na lixeira).
 pub fn attachment_data(
     raw: &Value,
     item_id: &str,
@@ -514,7 +520,10 @@ pub fn attachment_data(
     let atts = item(raw, item_id)?.get("attachments")?.as_array()?;
     let att = atts
         .iter()
-        .find(|a| a.get("id").and_then(Value::as_str) == Some(attachment_id))?;
+        .find(|a| {
+            a.get("id").and_then(Value::as_str) == Some(attachment_id)
+                && (a.get("deletedAt").is_none() || a.get("deletedAt") == Some(&Value::Null))
+        })?;
     Some((
         att.get("name").and_then(Value::as_str)?.to_string(),
         att.get("dataB64").and_then(Value::as_str)?.to_string(),
@@ -523,15 +532,75 @@ pub fn attachment_data(
 
 /// Remove um anexo do item (escrita conservadora: só o array do item alvo).
 pub fn delete_attachment(raw: &mut Value, item_id: &str, attachment_id: &str) -> bool {
-    let Some(atts) = item_mut(raw, item_id)
-        .and_then(|it| it.get_mut("attachments"))
-        .and_then(Value::as_array_mut)
-    else {
+    let Some(it) = item_mut(raw, item_id) else {
+        return false;
+    };
+    let Some(atts) = it.get_mut("attachments").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for a in atts.iter_mut() {
+        if a.get("id").and_then(Value::as_str) == Some(attachment_id) {
+            a["deletedAt"] = json!(now_ms());
+            changed = true;
+            break;
+        }
+    }
+    changed
+}
+
+/// Restaura um anexo da lixeira (limpa `deletedAt`).
+pub fn restore_attachment(raw: &mut Value, item_id: &str, attachment_id: &str) -> bool {
+    let Some(it) = item_mut(raw, item_id) else {
+        return false;
+    };
+    let Some(atts) = it.get_mut("attachments").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for a in atts.iter_mut() {
+        if a.get("id").and_then(Value::as_str) == Some(attachment_id) {
+            a["deletedAt"] = Value::Null;
+            changed = true;
+            break;
+        }
+    }
+    changed
+}
+
+/// Exclui um anexo de vez (remove do array).
+pub fn delete_attachment_forever(raw: &mut Value, item_id: &str, attachment_id: &str) -> bool {
+    let Some(it) = item_mut(raw, item_id) else {
+        return false;
+    };
+    let Some(atts) = it.get_mut("attachments").and_then(Value::as_array_mut) else {
         return false;
     };
     let before = atts.len();
     atts.retain(|a| a.get("id").and_then(Value::as_str) != Some(attachment_id));
     atts.len() < before
+}
+
+/// Lista anexos na lixeira de um item.
+pub fn trashed_attachments(raw: &Value, item_id: &str) -> Vec<(String, String, u64)> {
+    let Some(it) = item(raw, item_id) else {
+        return Vec::new();
+    };
+    let Some(atts) = it.get("attachments").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    atts.iter()
+        .filter_map(|a| {
+            if a.get("deletedAt").is_none() || a.get("deletedAt") == Some(&Value::Null) {
+                return None;
+            }
+            Some((
+                a.get("id").and_then(Value::as_str)?.to_string(),
+                a.get("name").and_then(Value::as_str).unwrap_or("anexo").to_string(),
+                a.get("size").and_then(Value::as_u64).unwrap_or(0),
+            ))
+        })
+        .collect()
 }
 
 // ── pastas (folders) ─────────────────────────────────────────────────────
