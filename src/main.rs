@@ -646,7 +646,7 @@ fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
     let _ = menu.append(&quit_item);
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("Lab Keys")
+        .with_tooltip("LocalKeys")
         .with_icon(tray_icon().expect("ícone rgba"))
         .build();
 

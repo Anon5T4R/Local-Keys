@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, SW_HIDE, SW_SHOW,
 };
 
-/// HWND da janela egui ("Lab Keys"), descoberto no 1º frame e cacheado.
+/// HWND da janela egui ("LocalKeys"), descoberto no 1º frame e cacheado.
 static HWND_CACHE: AtomicIsize = AtomicIsize::new(0);
 
 struct EnumCtx {
@@ -36,7 +36,7 @@ unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
         // A janela do egui tem o título exato; o console do debug tem o
         // caminho do exe — não bate.
-        if title == "Lab Keys" {
+        if title == "LocalKeys" {
             ctx.found = hwnd.0 as isize;
             return BOOL(0); // para de enumerar
         }
