@@ -4,7 +4,6 @@ Name "LocalKeys"
 OutFile "local-keys-setup.exe"
 InstallDir "$PROGRAMFILES\LocalKeys"
 RequestExecutionLevel admin
-Unicode true
 
 !define VERSION "0.9.1"
 
@@ -17,12 +16,14 @@ Unicode true
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_UNPAGE_FINISH
 
+; ESSENCIAL: sem isto as páginas MUI ficam em branco (sem strings de idioma).
+!insertmacro MUI_LANGUAGE "English"
+
 Section "Install"
   SetOutPath "$INSTDIR"
   File "target\release\local-keys.exe"
 
   ; Atalhos no contexto do USUÁRIO (não do admin elevado).
-  ; Sem isto, $DESKTOP aponta pro desktop do Administrator.
   SetShellVarContext current
 
   ; Menu Iniciar
