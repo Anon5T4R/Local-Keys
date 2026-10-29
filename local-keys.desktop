@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LocalKeys
+Exec=local-keys
+Icon=local-keys
+Categories=Utility;Security;
+Comment=Gerenciador de senhas 100% local e offline
+Terminal=false
+StartupWMClass=local-keys

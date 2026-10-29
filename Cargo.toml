@@ -1,0 +1,68 @@
+[package]
+name = "local-keys"
+version = "0.9.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Anon5T4R/LocalKeys"
+description = "Gerenciador de senhas 100% local e offline — piloto egui da avaliação da suíte Local"
+
+[build-dependencies]
+# Embute o ícone no .exe (Windows) — sem isso o Explorer mostra ícone genérico.
+winresource = "0.1"
+
+[dependencies]
+eframe = "0.31"
+egui = "0.31"
+image = "0.25"
+lab-ui = { path = "lab-ui" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Cripto — MESMOS pins do LocalKeys oficial (crypto.rs/totp.rs copiados verbatim)
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+totp-rs = { version = "5", default-features = false }
+arboard = "3.6"
+# Base64 em TODAS as plataformas: anexos (vault.rs) e o import do export
+# cifrado do Bitwarden (bwdecrypt.rs) usam — o desbloqueio rápido no keyring
+# também, e continua funcionando.
+base64 = "0.22"
+# Import de cofres KeePass (.kdbx) — lê/decifra com a senha do usuário.
+keepass = "0.7"
+# Gerador de senha/passphrase + medidor de força (zxcvbn).
+zxcvbn = "3"
+# Import do export CIFRADO do Bitwarden (PBKDF2/Argon2id → HKDF → AES-CBC+HMAC).
+pbkdf2 = "0.12"
+hkdf = "0.12"
+sha2 = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+hmac = "0.12"
+# Autoupdate: HTTP sync + zip/tar.gz
+ureq = { version = "2", features = ["json"] }
+zip = "2"
+flate2 = "1"
+tar = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+# Desbloqueio rápido (chave no Credential Manager) — só no Windows: o
+# secret-service do Linux puxaria libdbus pro build/AppImage (runner nem tem
+# dbus-1 dev). Mesma política do tray/rfd: AppImage enxuto.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
+clipboard-win = "5.4"
+rfd = { version = "0.17", default-features = false }
+# Bandeja só no Windows (mesma política do lab-clip: no Linux o tray-icon
+# puxaria muda→gtk3 e engordaria o AppImage).
+tray-icon = "0.24"
+# Controle da janela fora do ciclo de pintura — janela oculta não recebe
+# WM_PAINT no Windows, o eframe congela; a thread da bandeja acorda a
+# janela com ShowWindow direto (ver winctl.rs).
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+panic = "abort"
