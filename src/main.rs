@@ -2782,6 +2782,27 @@ impl KeysApp {
 
 impl eframe::App for KeysApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Fechar (X) minimiza pra bandeja — SÓ no Windows, onde há bandeja.
+        // (No Linux o X fecha de verdade.) Sem lock ao esconder: o cofre fica
+        // destrancado na memória (decisão do lab — PC da própria pessoa).
+        // IMPORTANTE: isto precisa rodar ANTES de qualquer processamento, senão
+        // modais/jobs podem engolir o close_requested.
+        #[cfg(windows)]
+        if ctx.input(|i| i.viewport().close_requested()) {
+            let quitting = self.quit.load(Ordering::Relaxed);
+            if !quitting {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                winctl::hide();
+                return; // não processa o resto do frame
+            }
+        }
+
+        // "Sair" da bandeja: encerra pelo caminho limpo, com a janela visível.
+        if self.quit.load(Ordering::Relaxed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
         self.poll_update();
         self.poll_jobs(ctx);
 
@@ -2793,23 +2814,6 @@ impl eframe::App for KeysApp {
         #[cfg(windows)]
         winctl::discover();
 
-        // "Sair" da bandeja: encerra pelo caminho limpo, com a janela visível.
-        if self.quit.load(Ordering::Relaxed) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-
-        // Fechar (X) minimiza pra bandeja — SÓ no Windows, onde há bandeja.
-        // (No Linux o X fecha de verdade.) Sem lock ao esconder: o cofre fica
-        // destrancado na memória (decisão do lab — PC da própria pessoa).
-        #[cfg(windows)]
-        if ctx.input(|i| i.viewport().close_requested()) {
-            let quitting = self.quit.load(Ordering::Relaxed);
-            if !quitting {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                winctl::hide();
-            }
-        }
-
         // TOTP visível → repaint pra contagem andar (barato: 2×/s).
         let tem_totp = self.items.iter().any(|i| i.totp.is_some());
         if tem_totp {
@@ -2818,7 +2822,6 @@ impl eframe::App for KeysApp {
 
         // Job pesado em andamento: drena o que a thread devolveu e mantém o
         // spinner animado (a thread avisa no fim, mas o giro precisa de frames).
-        self.poll_jobs(ctx);
         if self.job_label.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
