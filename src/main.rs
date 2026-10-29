@@ -2825,7 +2825,7 @@ impl eframe::App for KeysApp {
 
         egui::TopBottomPanel::top("topo").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("Lab Keys");
+                ui.strong("LocalKeys");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (cfg_changed, forget_clicked) = lab_ui::settings_ui(ui, &mut self.cfg, self.quick_ativa);
                     if cfg_changed {
