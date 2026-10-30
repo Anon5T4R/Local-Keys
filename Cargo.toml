@@ -1,6 +1,26 @@
 [workspace]
+resolver = "3"
 members = ["xtask", "lab-ui"]
 default-members = [".", "lab-ui"]
+exclude = ["libs"]
+
+# Forks vendored (egui 6d518fc, winit a517b38) — receita no AGENTS.md do local-office.
+[patch.crates-io]
+ecolor = { path = "libs/egui/crates/ecolor/" }
+emath = { path = "libs/egui/crates/emath/" }
+epaint = { path = "libs/egui/crates/epaint/" }
+epaint_default_fonts = { path = "libs/egui/crates/epaint_default_fonts/" }
+egui = { path = "libs/egui/crates/egui/" }
+egui-winit = { path = "libs/egui/crates/egui-winit/" }
+egui-wgpu = { path = "libs/egui/crates/egui-wgpu/" }
+egui_glow = { path = "libs/egui/crates/egui_glow/" }
+egui_extras = { path = "libs/egui/crates/egui_extras/" }
+egui_kittest = { path = "libs/egui/crates/egui_kittest/" }
+egui_system_font_provider = { path = "libs/egui/crates/egui_system_font_provider/" }
+eframe = { path = "libs/egui/crates/eframe/" }
+egui_demo_lib = { path = "libs/egui/crates/egui_demo_lib/" }
+egui_inspection = { path = "libs/egui/crates/egui_inspection/" }
+winit = { path = "libs/winit/" }
 
 [package]
 name = "local-keys"
@@ -16,8 +36,8 @@ description = "Gerenciador de senhas 100% local e offline — piloto egui da ava
 winresource = "0.1"
 
 [dependencies]
-eframe = "0.31"
-egui = "0.31"
+eframe = "0.37"
+egui = "0.37"
 image = "0.25"
 lab-ui = { path = "lab-ui" }
 serde = { version = "1", features = ["derive"] }
