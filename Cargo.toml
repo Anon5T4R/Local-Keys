@@ -3,6 +3,7 @@ name = "local-keys"
 version = "0.9.6"
 edition = "2021"
 license = "GPL-3.0-or-later"
+publish = false
 repository = "https://github.com/Anon5T4R/LocalKeys"
 description = "Gerenciador de senhas 100% local e offline — piloto egui da avaliação da suíte Local"
 
