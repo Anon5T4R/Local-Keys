@@ -1,11 +1,11 @@
 !include "MUI2.nsh"
 
 Name "LocalKeys"
-OutFile "local-keys-setup.exe"
+OutFile "..\..\local-keys-setup.exe"
 InstallDir "$PROGRAMFILES64\LocalKeys"
 RequestExecutionLevel admin
 
-!define VERSION "0.9.7"
+!define VERSION "0.9.8"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
