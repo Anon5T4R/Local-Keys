@@ -16,10 +16,7 @@ use serde::{Deserialize, Serialize};
 const EFF_LARGE_EN: &str = include_str!("wordlists/eff_large_en.txt");
 
 fn wordlist() -> Vec<&'static str> {
-    EFF_LARGE_EN
-        .lines()
-        .filter_map(|l| l.split_whitespace().last())
-        .collect()
+    EFF_LARGE_EN.lines().filter_map(|l| l.split_whitespace().last()).collect()
 }
 
 const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
@@ -39,13 +36,7 @@ pub struct PasswordOptions {
 
 impl Default for PasswordOptions {
     fn default() -> Self {
-        PasswordOptions {
-            length: 20,
-            lowercase: true,
-            uppercase: true,
-            digits: true,
-            symbols: true,
-        }
+        PasswordOptions { length: 20, lowercase: true, uppercase: true, digits: true, symbols: true }
     }
 }
 
@@ -106,12 +97,7 @@ pub struct PassphraseOptions {
 
 impl Default for PassphraseOptions {
     fn default() -> Self {
-        PassphraseOptions {
-            words: 5,
-            separator: "-".into(),
-            capitalize: false,
-            include_number: true,
-        }
+        PassphraseOptions { words: 5, separator: "-".into(), capitalize: false, include_number: true }
     }
 }
 
@@ -146,11 +132,7 @@ pub fn generate_passphrase(opts: &PassphraseOptions) -> Result<String, String> {
         words[idx].push_str(&digit.to_string());
     }
 
-    let sep = if opts.separator.is_empty() {
-        "-"
-    } else {
-        &opts.separator
-    };
+    let sep = if opts.separator.is_empty() { "-" } else { &opts.separator };
     Ok(words.join(sep))
 }
 
@@ -167,10 +149,7 @@ pub struct Strength {
 /// (nome do item, URL) que o atacante provavelmente conhece.
 pub fn password_strength(password: &str, user_inputs: &[&str]) -> Strength {
     let entropy = zxcvbn::zxcvbn(password, user_inputs);
-    Strength {
-        score: u8::from(entropy.score()),
-        guesses_log10: entropy.guesses_log10(),
-    }
+    Strength { score: u8::from(entropy.score()), guesses_log10: entropy.guesses_log10() }
 }
 
 #[cfg(test)]
@@ -184,13 +163,7 @@ mod tests {
 
     #[test]
     fn senha_respeita_comprimento_e_classes() {
-        let opts = PasswordOptions {
-            length: 24,
-            lowercase: true,
-            uppercase: true,
-            digits: true,
-            symbols: true,
-        };
+        let opts = PasswordOptions { length: 24, lowercase: true, uppercase: true, digits: true, symbols: true };
         let pw = generate_password(&opts).unwrap();
         assert_eq!(pw.chars().count(), 24);
         assert!(pw.chars().any(|c| c.is_ascii_lowercase()));
@@ -201,13 +174,7 @@ mod tests {
 
     #[test]
     fn senha_sem_classe_falha() {
-        let opts = PasswordOptions {
-            length: 10,
-            lowercase: false,
-            uppercase: false,
-            digits: false,
-            symbols: false,
-        };
+        let opts = PasswordOptions { length: 10, lowercase: false, uppercase: false, digits: false, symbols: false };
         assert!(generate_password(&opts).is_err());
     }
 
@@ -221,12 +188,7 @@ mod tests {
 
     #[test]
     fn passphrase_tem_o_numero_de_palavras() {
-        let opts = PassphraseOptions {
-            words: 5,
-            separator: "-".into(),
-            capitalize: true,
-            include_number: false,
-        };
+        let opts = PassphraseOptions { words: 5, separator: "-".into(), capitalize: true, include_number: false };
         let p = generate_passphrase(&opts).unwrap();
         assert_eq!(p.split('-').count(), 5);
     }

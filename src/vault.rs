@@ -76,20 +76,13 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                         id: ri.id,
                         name: ri.name,
                         username: ri.login.as_ref().map(|l| l.username.clone()),
-                        totp: ri.login.and_then(|l| {
-                            if l.totp.is_empty() {
-                                None
-                            } else {
-                                Some(l.totp)
-                            }
-                        }),
+                        totp: ri.login.and_then(|l| if l.totp.is_empty() { None } else { Some(l.totp) }),
                         favorite: ri.favorite,
                         folder_id: ri.folder_id,
-                        has_attachments: ri.attachments.as_ref().is_some_and(|a| {
-                        a.iter().any(|att| {
-                            att.get("deletedAt").is_none() || att.get("deletedAt") == Some(&Value::Null)
-                        })
-                    }),
+                        has_attachments: ri
+                            .attachments
+                            .as_ref()
+                            .is_some_and(|a| a.iter().any(|att| att.get("deletedAt").is_none() || att.get("deletedAt") == Some(&Value::Null))),
                     })
                 })
                 .collect()
@@ -98,10 +91,7 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 /// Id no MESMO formato do oficial (`crypto.randomUUID()` do TS): UUID v4
@@ -112,14 +102,7 @@ fn gen_id() -> String {
     b[6] = (b[6] & 0x0f) | 0x40; // version 4
     b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
     let h = |x: &[u8]| x.iter().map(|c| format!("{c:02x}")).collect::<String>();
-    format!(
-        "{}-{}-{}-{}-{}",
-        h(&b[0..4]),
-        h(&b[4..6]),
-        h(&b[6..8]),
-        h(&b[8..10]),
-        h(&b[10..16])
-    )
+    format!("{}-{}-{}-{}-{}", h(&b[0..4]), h(&b[4..6]), h(&b[6..8]), h(&b[8..10]), h(&b[10..16]))
 }
 
 /// Campos do login de um item novo (só faz sentido para `kind = "login"`).
@@ -183,10 +166,7 @@ pub fn push_item(raw: &mut Value, item: Value) {
     if !raw["items"].is_array() {
         raw["items"] = json!([]);
     }
-    raw["items"]
-        .as_array_mut()
-        .expect("items é array (garantido acima)")
-        .push(item);
+    raw["items"].as_array_mut().expect("items é array (garantido acima)").push(item);
 }
 
 /// Acrescenta um lote de itens — caminho dos importadores.
@@ -256,11 +236,7 @@ pub fn login_triple(raw: &Value, id: &str) -> Option<(String, String, String)> {
         Some((
             login.get("username").and_then(Value::as_str)?.to_string(),
             login.get("password").and_then(Value::as_str)?.to_string(),
-            login
-                .get("totp")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
+            login.get("totp").and_then(Value::as_str).unwrap_or("").to_string(),
         ))
     })
 }
@@ -272,32 +248,11 @@ pub fn login_full(raw: &Value, id: &str) -> Option<LoginFull> {
     let it = item(raw, id)?;
     let login = it.get("login");
     Some(LoginFull {
-        username: login
-            .and_then(|l| l.get("username"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        password: login
-            .and_then(|l| l.get("password"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        totp: login
-            .and_then(|l| l.get("totp"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        url: login
-            .and_then(|l| l.get("uris"))
-            .and_then(|u| u.get(0))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        notes: it
-            .get("notes")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+        username: login.and_then(|l| l.get("username")).and_then(Value::as_str).unwrap_or("").to_string(),
+        password: login.and_then(|l| l.get("password")).and_then(Value::as_str).unwrap_or("").to_string(),
+        totp: login.and_then(|l| l.get("totp")).and_then(Value::as_str).unwrap_or("").to_string(),
+        url: login.and_then(|l| l.get("uris")).and_then(|u| u.get(0)).and_then(Value::as_str).unwrap_or("").to_string(),
+        notes: it.get("notes").and_then(Value::as_str).unwrap_or("").to_string(),
     })
 }
 
@@ -311,14 +266,7 @@ pub fn login_full(raw: &Value, id: &str) -> Option<LoginFull> {
 /// `uris`: só a PRIMEIRA posição entra pelo form — as outras (que o lab não
 /// mostra) continuam onde estão; lista vazia vira `[""]`, como o `emptyItem`.
 pub fn edit_login(raw: &mut Value, id: &str, form: LoginForm<'_>) -> bool {
-    let LoginForm {
-        name,
-        username,
-        password,
-        totp,
-        url,
-        notes,
-    } = form;
+    let LoginForm { name, username, password, totp, url, notes } = form;
     let Some(items) = raw.get_mut("items").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -329,12 +277,7 @@ pub fn edit_login(raw: &mut Value, id: &str, form: LoginForm<'_>) -> bool {
         // Histórico: guardar a senha anterior ANTES de sobrescrever
         // (condições idênticas às do oficial: kind login + senha antiga não
         // vazia + senha de fato mudou).
-        let old_pass = it
-            .get("login")
-            .and_then(|l| l.get("password"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
+        let old_pass = it.get("login").and_then(|l| l.get("password")).and_then(Value::as_str).unwrap_or("").to_string();
         let is_login = it.get("kind").and_then(Value::as_str) == Some("login");
 
         it["name"] = json!(name);
@@ -350,11 +293,7 @@ pub fn edit_login(raw: &mut Value, id: &str, form: LoginForm<'_>) -> bool {
             login.insert("password".into(), json!(password));
             login.insert("totp".into(), json!(totp));
             // uris: edita a primeira, preserva o resto da lista.
-            let mut uris: Vec<Value> = login
-                .get("uris")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let mut uris: Vec<Value> = login.get("uris").and_then(Value::as_array).cloned().unwrap_or_default();
             if uris.is_empty() {
                 uris.push(json!(""));
             }
@@ -363,11 +302,7 @@ pub fn edit_login(raw: &mut Value, id: &str, form: LoginForm<'_>) -> bool {
         }
 
         if is_login && !old_pass.is_empty() && old_pass != password {
-            let mut hist: Vec<Value> = it
-                .get("passwordHistory")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let mut hist: Vec<Value> = it.get("passwordHistory").and_then(Value::as_array).cloned().unwrap_or_default();
             hist.insert(0, json!({ "password": old_pass, "at": now_ms() }));
             hist.truncate(20); // cap do oficial
             it["passwordHistory"] = Value::Array(hist);
@@ -442,11 +377,7 @@ pub fn trashed_items(raw: &Value) -> Vec<TrashRow> {
                     }
                     Some(TrashRow {
                         id: it.get("id")?.as_str()?.to_string(),
-                        name: it
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
+                        name: it.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
                         deleted_at,
                     })
                 })
@@ -456,17 +387,11 @@ pub fn trashed_items(raw: &Value) -> Vec<TrashRow> {
 }
 
 fn item_mut<'a>(raw: &'a mut Value, id: &str) -> Option<&'a mut Value> {
-    raw.get_mut("items")?
-        .as_array_mut()?
-        .iter_mut()
-        .find(|it| it.get("id").and_then(Value::as_str) == Some(id))
+    raw.get_mut("items")?.as_array_mut()?.iter_mut().find(|it| it.get("id").and_then(Value::as_str) == Some(id))
 }
 
 fn item<'a>(raw: &'a Value, id: &str) -> Option<&'a Value> {
-    raw.get("items")?
-        .as_array()?
-        .iter()
-        .find(|it| it.get("id").and_then(Value::as_str) == Some(id))
+    raw.get("items")?.as_array()?.iter().find(|it| it.get("id").and_then(Value::as_str) == Some(id))
 }
 
 /// Anexa um arquivo a um item — escrita conservadora: só mexe no array
@@ -476,13 +401,7 @@ fn item<'a>(raw: &'a Value, id: &str) -> Option<&'a Value> {
 /// então o anexo não precisa de cifra própria). `size` é o tamanho dos bytes
 /// DECODIFICADOS, como o oficial espera. Base64 inválido ou item inexistente →
 /// `false` e nada muda.
-pub fn add_attachment(
-    raw: &mut Value,
-    item_id: &str,
-    name: &str,
-    mime: &str,
-    data_b64: &str,
-) -> bool {
+pub fn add_attachment(raw: &mut Value, item_id: &str, name: &str, mime: &str, data_b64: &str) -> bool {
     use base64::Engine as _;
 
     let data_b64 = data_b64.trim();
@@ -503,31 +422,18 @@ pub fn add_attachment(
     if !it.get("attachments").is_some_and(Value::is_array) {
         it["attachments"] = json!([]);
     }
-    it["attachments"]
-        .as_array_mut()
-        .expect("attachments é array (garantido acima)")
-        .push(att);
+    it["attachments"].as_array_mut().expect("attachments é array (garantido acima)").push(att);
     true
 }
 
 /// `(name, dataB64)` de um anexo — o que a UI precisa pra salvar em disco.
 /// Só anexos vivos (não na lixeira).
-pub fn attachment_data(
-    raw: &Value,
-    item_id: &str,
-    attachment_id: &str,
-) -> Option<(String, String)> {
+pub fn attachment_data(raw: &Value, item_id: &str, attachment_id: &str) -> Option<(String, String)> {
     let atts = item(raw, item_id)?.get("attachments")?.as_array()?;
-    let att = atts
-        .iter()
-        .find(|a| {
-            a.get("id").and_then(Value::as_str) == Some(attachment_id)
-                && (a.get("deletedAt").is_none() || a.get("deletedAt") == Some(&Value::Null))
-        })?;
-    Some((
-        att.get("name").and_then(Value::as_str)?.to_string(),
-        att.get("dataB64").and_then(Value::as_str)?.to_string(),
-    ))
+    let att = atts.iter().find(|a| {
+        a.get("id").and_then(Value::as_str) == Some(attachment_id) && (a.get("deletedAt").is_none() || a.get("deletedAt") == Some(&Value::Null))
+    })?;
+    Some((att.get("name").and_then(Value::as_str)?.to_string(), att.get("dataB64").and_then(Value::as_str)?.to_string()))
 }
 
 /// Remove um anexo do item (escrita conservadora: só o array do item alvo).
@@ -582,6 +488,7 @@ pub fn delete_attachment_forever(raw: &mut Value, item_id: &str, attachment_id: 
 }
 
 /// Lista anexos na lixeira de um item.
+#[allow(dead_code)] // API simétrica a attachment_data; ainda sem tela que use
 pub fn trashed_attachments(raw: &Value, item_id: &str) -> Vec<(String, String, u64)> {
     let Some(it) = item(raw, item_id) else {
         return Vec::new();
@@ -633,10 +540,7 @@ pub fn add_folder(raw: &mut Value, name: &str) {
     if !raw["folders"].is_array() {
         raw["folders"] = json!([]);
     }
-    raw["folders"]
-        .as_array_mut()
-        .expect("folders é array (garantido acima)")
-        .push(json!({ "id": gen_id(), "name": name }));
+    raw["folders"].as_array_mut().expect("folders é array (garantido acima)").push(json!({ "id": gen_id(), "name": name }));
 }
 
 /// Renomeia uma pasta.
@@ -699,14 +603,7 @@ mod tests {
 
     /// Form mínimo pra maioria dos testes (sem url/notas/totp).
     fn form<'a>(name: &'a str, username: &'a str, password: &'a str) -> LoginForm<'a> {
-        LoginForm {
-            name,
-            username,
-            password,
-            totp: "",
-            url: "",
-            notes: "",
-        }
+        LoginForm { name, username, password, totp: "", url: "", notes: "" }
     }
 
     fn vault_com_item() -> Value {
@@ -740,10 +637,7 @@ mod tests {
     fn login_triple_devolve_as_credenciais() {
         let v = vault_com_item();
         let id = v["items"][0]["id"].as_str().unwrap().to_string();
-        assert_eq!(
-            login_triple(&v, &id),
-            Some(("joao".into(), "secreta".into(), "".into()))
-        );
+        assert_eq!(login_triple(&v, &id), Some(("joao".into(), "secreta".into(), "".into())));
         assert_eq!(login_triple(&v, "id-que-nao-existe"), None);
     }
 
@@ -830,18 +724,8 @@ mod tests {
                "uris":["https://velho","https://segundo","https://terceiro"],"totp":""}}]}"#,
         )
         .unwrap();
-        assert!(edit_login(
-            &mut v,
-            "x",
-            LoginForm {
-                url: "https://novo",
-                ..form("N", "u", "p")
-            }
-        ));
-        assert_eq!(
-            v["items"][0]["login"]["uris"],
-            json!(["https://novo", "https://segundo", "https://terceiro"])
-        );
+        assert!(edit_login(&mut v, "x", LoginForm { url: "https://novo", ..form("N", "u", "p") }));
+        assert_eq!(v["items"][0]["login"]["uris"], json!(["https://novo", "https://segundo", "https://terceiro"]));
     }
 
     #[test]
@@ -865,20 +749,10 @@ mod tests {
                "login":{"username":"joao","password":"secreta","uris":["https://a"],"totp":""}}]}"#,
         )
         .unwrap();
-        assert!(edit_login(
-            &mut v,
-            "x",
-            LoginForm {
-                notes: "recado novo\nsegunda linha",
-                ..form("Gmail", "joao", "secreta")
-            }
-        ));
+        assert!(edit_login(&mut v, "x", LoginForm { notes: "recado novo\nsegunda linha", ..form("Gmail", "joao", "secreta") }));
         assert_eq!(v["items"][0]["notes"], "recado novo\nsegunda linha");
         // editar nota/url não mexe no histórico (senha não mudou)
-        assert_eq!(
-            v["items"][0]["passwordHistory"],
-            json!([{ "password": "mais-velha", "at": 1 }])
-        );
+        assert_eq!(v["items"][0]["passwordHistory"], json!([{ "password": "mais-velha", "at": 1 }]));
     }
 
     #[test]
@@ -925,11 +799,7 @@ mod tests {
         v["items"][0]["updatedAt"] = json!(1);
         assert!(set_favorite(&mut v, &id, true));
         assert_eq!(v["items"][0]["favorite"], true);
-        assert_ne!(
-            v["items"][0]["updatedAt"],
-            json!(1),
-            "updateItem grava updatedAt"
-        );
+        assert_ne!(v["items"][0]["updatedAt"], json!(1), "updateItem grava updatedAt");
         assert!(set_favorite(&mut v, &id, false));
         assert_eq!(v["items"][0]["favorite"], false);
         assert!(!set_favorite(&mut v, "não-existe", true));
@@ -943,10 +813,7 @@ mod tests {
         let updated_antes = v["items"][0]["updatedAt"].clone();
         assert!(restore_item(&mut v, &id));
         assert_eq!(v["items"][0]["deletedAt"], Value::Null);
-        assert_eq!(
-            v["items"][0]["updatedAt"], updated_antes,
-            "restoreItem não toca updatedAt"
-        );
+        assert_eq!(v["items"][0]["updatedAt"], updated_antes, "restoreItem não toca updatedAt");
         assert_eq!(items_view(&v).len(), 1, "volta pra lista");
         assert!(!restore_item(&mut v, "não-existe"));
     }
@@ -1015,16 +882,10 @@ mod tests {
         // exato de crypto.randomUUID() no TS.
         let id = gen_id();
         let part: Vec<&str> = id.split('-').collect();
-        assert_eq!(
-            part.iter().map(|p| p.len()).collect::<Vec<_>>(),
-            vec![8, 4, 4, 4, 12]
-        );
+        assert_eq!(part.iter().map(|p| p.len()).collect::<Vec<_>>(), vec![8, 4, 4, 4, 12]);
         assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
         assert_eq!(&id[14..15], "4", "version nibble");
-        assert!(
-            ['8', '9', 'a', 'b'].contains(&id.chars().nth(19).unwrap()),
-            "variante RFC 4122"
-        );
+        assert!(['8', '9', 'a', 'b'].contains(&id.chars().nth(19).unwrap()), "variante RFC 4122");
         assert_ne!(gen_id(), gen_id());
     }
 
@@ -1061,10 +922,7 @@ mod tests {
         )
         .unwrap();
         assert!(edit_login(&mut v, "x", form("Outro nome", "u2", "igual")));
-        assert!(
-            v["items"][0].get("passwordHistory").is_none(),
-            "senha não mudou → sem histórico (igual ao oficial)"
-        );
+        assert!(v["items"][0].get("passwordHistory").is_none(), "senha não mudou → sem histórico (igual ao oficial)");
         assert_eq!(v["items"][0]["name"], "Outro nome");
     }
 
@@ -1072,14 +930,7 @@ mod tests {
     fn item_de_nota_nao_carrega_login() {
         // O emptyItem("note") do oficial não tem `login` — os importadores
         // dependem disso pra nota não virar login sem senha.
-        let item = make_item(NewItem {
-            kind: "note",
-            name: "Nota",
-            notes: "texto",
-            favorite: true,
-            login: None,
-            custom_fields: Vec::new(),
-        });
+        let item = make_item(NewItem { kind: "note", name: "Nota", notes: "texto", favorite: true, login: None, custom_fields: Vec::new() });
         assert_eq!(item["kind"], "note");
         assert_eq!(item["notes"], "texto");
         assert_eq!(item["favorite"], true);
@@ -1102,10 +953,7 @@ mod tests {
         // id no formato UUID do oficial
         let att_id = atts[0]["id"].as_str().unwrap();
         assert_eq!(att_id.len(), 36);
-        assert_eq!(
-            attachment_data(&v, &id, att_id),
-            Some(("f.txt".into(), "aGk=".into()))
-        );
+        assert_eq!(attachment_data(&v, &id, att_id), Some(("f.txt".into(), "aGk=".into())));
     }
 
     #[test]
@@ -1118,13 +966,7 @@ mod tests {
                           "login":{"username":"u","password":"p","uris":["https://a"],"totp":""}}]}"#,
         )
         .unwrap();
-        assert!(add_attachment(
-            &mut v,
-            "x",
-            "novo.txt",
-            "text/plain",
-            "aGk="
-        ));
+        assert!(add_attachment(&mut v, "x", "novo.txt", "text/plain", "aGk="));
         assert_eq!(v["folders"][0]["name"], "Pessoal");
         assert_eq!(v["items"][0]["notes"], "keep");
         assert_eq!(v["items"][0]["customFields"][0]["value"], "v");
@@ -1139,20 +981,8 @@ mod tests {
         let mut v = vault_com_item();
         let id = v["items"][0]["id"].as_str().unwrap().to_string();
         let antes = serde_json::to_string(&v).unwrap();
-        assert!(!add_attachment(
-            &mut v,
-            &id,
-            "f",
-            "text/plain",
-            "não-é-base64!!"
-        ));
-        assert!(!add_attachment(
-            &mut v,
-            "id-que-nao-existe",
-            "f",
-            "text/plain",
-            "aGk="
-        ));
+        assert!(!add_attachment(&mut v, &id, "f", "text/plain", "não-é-base64!!"));
+        assert!(!add_attachment(&mut v, "id-que-nao-existe", "f", "text/plain", "aGk="));
         assert_eq!(serde_json::to_string(&v).unwrap(), antes);
         assert_eq!(attachment_data(&v, &id, "a-nao-existe"), None);
         assert_eq!(attachment_data(&v, "id-que-nao-existe", "a1"), None);
@@ -1167,22 +997,10 @@ mod tests {
                 name: "A",
                 notes: "",
                 favorite: false,
-                login: Some(LoginFields {
-                    username: "u".into(),
-                    password: "p".into(),
-                    uris: vec!["https://a".into()],
-                    totp: String::new(),
-                }),
+                login: Some(LoginFields { username: "u".into(), password: "p".into(), uris: vec!["https://a".into()], totp: String::new() }),
                 custom_fields: vec![custom_field("pin", "1234", true)],
             }),
-            make_item(NewItem {
-                kind: "note",
-                name: "B",
-                notes: "",
-                favorite: false,
-                login: None,
-                custom_fields: Vec::new(),
-            }),
+            make_item(NewItem { kind: "note", name: "B", notes: "", favorite: false, login: None, custom_fields: Vec::new() }),
         ];
         push_items(&mut v, lote);
         assert_eq!(v["items"].as_array().unwrap().len(), 3);
@@ -1193,13 +1011,8 @@ mod tests {
 
     #[test]
     fn atomic_write_escreve_e_reescreve() {
-        let dir = std::env::temp_dir().join(format!(
-            "lab-keys-aw-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = std::env::temp_dir()
+            .join(format!("lab-keys-aw-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("v.tkeys");
         atomic_write(&p, b"um").unwrap();

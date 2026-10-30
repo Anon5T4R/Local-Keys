@@ -35,36 +35,19 @@ fn build(secret_b32: &str) -> Result<TOTP, String> {
     if cleaned.is_empty() {
         return Err("chave TOTP vazia".into());
     }
-    let bytes = Secret::Encoded(cleaned)
-        .to_bytes()
-        .map_err(|_| "chave TOTP inválida (não é base32)".to_string())?;
+    let bytes = Secret::Encoded(cleaned).to_bytes().map_err(|_| "chave TOTP inválida (não é base32)".to_string())?;
     // new_unchecked (não new): o `new` exige segredo >= 128 bits, mas segredos
     // reais (Google Authenticator etc.) costumam ter 80 bits (16 chars base32) —
     // rejeitá-los quebraria o import. skew=1 tolera 1 passo de diferença de relógio.
-    Ok(TOTP::new_unchecked(
-        Algorithm::SHA1,
-        DIGITS,
-        1,
-        PERIOD,
-        bytes,
-    ))
+    Ok(TOTP::new_unchecked(Algorithm::SHA1, DIGITS, 1, PERIOD, bytes))
 }
 
 /// Código atual + quanto falta para virar. Erro se a chave não for base32 válida.
 pub fn now(secret_b32: &str) -> Result<TotpCode, String> {
     let totp = build(secret_b32)?;
-    let code = totp
-        .generate_current()
-        .map_err(|e| format!("relógio do sistema: {e}"))?;
-    let unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    Ok(TotpCode {
-        code,
-        period: PERIOD,
-        seconds_remaining: PERIOD - (unix % PERIOD),
-    })
+    let code = totp.generate_current().map_err(|e| format!("relógio do sistema: {e}"))?;
+    let unix = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+    Ok(TotpCode { code, period: PERIOD, seconds_remaining: PERIOD - (unix % PERIOD) })
 }
 
 #[cfg(test)]
@@ -76,9 +59,7 @@ mod tests {
     /// nosso TOTP casa com a referência oficial.
     #[test]
     fn rfc6238_vetores_sha1() {
-        let secret = Secret::Raw(b"12345678901234567890".to_vec())
-            .to_bytes()
-            .unwrap();
+        let secret = Secret::Raw(b"12345678901234567890".to_vec()).to_bytes().unwrap();
         let totp = TOTP::new(Algorithm::SHA1, 8, 1, 30, secret).unwrap();
         assert_eq!(totp.generate(59), "94287082");
         assert_eq!(totp.generate(1_111_111_109), "07081804");

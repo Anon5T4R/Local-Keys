@@ -157,44 +157,12 @@ struct Cols {
 /// Cabeçalhos reconhecidos — idênticos ao `COLS` do TS (incl. os em pt).
 const COLS: Cols = Cols {
     name: &["name", "title", "account", "item name"],
-    username: &[
-        "username",
-        "user",
-        "login_username",
-        "user name",
-        "login",
-        "usuário",
-        "usuario",
-    ],
+    username: &["username", "user", "login_username", "user name", "login", "usuário", "usuario"],
     email: &["email", "e-mail", "e mail"],
     password: &["password", "pass", "login_password", "senha"],
-    url: &[
-        "url",
-        "uri",
-        "website",
-        "login_uri",
-        "web site",
-        "site",
-        "endereço",
-    ],
-    totp: &[
-        "totp",
-        "otpauth",
-        "otp",
-        "one-time password",
-        "verification code",
-        "otp secret",
-        "2fa",
-    ],
-    notes: &[
-        "notes",
-        "note",
-        "extra",
-        "comment",
-        "comments",
-        "nota",
-        "observações",
-    ],
+    url: &["url", "uri", "website", "login_uri", "web site", "site", "endereço"],
+    totp: &["totp", "otpauth", "otp", "one-time password", "verification code", "otp secret", "2fa"],
+    notes: &["notes", "note", "extra", "comment", "comments", "nota", "observações"],
 };
 
 /// Cabeçalhos de metadados que NÃO viram campo personalizado (só ruído).
@@ -219,11 +187,7 @@ const IGNORE: &[&str] = &[
 /// Equivalente ao regex `/pass|senha|secret|otp|totp|2fa|key|cvv|pin|seed/`
 /// do TS — sem a dep `regex` só pra uma alternação de substrings.
 fn is_secret_header(norm: &str) -> bool {
-    [
-        "pass", "senha", "secret", "otp", "totp", "2fa", "key", "cvv", "pin", "seed",
-    ]
-    .iter()
-    .any(|k| norm.contains(k))
+    ["pass", "senha", "secret", "otp", "totp", "2fa", "key", "cvv", "pin", "seed"].iter().any(|k| norm.contains(k))
 }
 
 fn exact_index(norm: &[String], consumed: &mut [bool], keys: &[&str]) -> Option<usize> {
@@ -344,11 +308,7 @@ pub fn parse_csv_items(text: &str) -> Vec<Value> {
                 continue;
             }
             let header = header.trim();
-            let field_name = if header.is_empty() {
-                format!("campo {}", i + 1)
-            } else {
-                header.to_string()
-            };
+            let field_name = if header.is_empty() { format!("campo {}", i + 1) } else { header.to_string() };
             extras.push(custom_field(&field_name, value, is_secret_header(&norm[i])));
         }
 
@@ -360,11 +320,7 @@ pub fn parse_csv_items(text: &str) -> Vec<Value> {
             login: Some(LoginFields {
                 username: username.to_string(),
                 password: cell(row, idx.password).to_string(),
-                uris: if url.is_empty() {
-                    vec![String::new()]
-                } else {
-                    vec![url.to_string()]
-                },
+                uris: if url.is_empty() { vec![String::new()] } else { vec![url.to_string()] },
                 totp,
             }),
             custom_fields: extras,
@@ -387,12 +343,7 @@ fn bw_kind(t: Option<&Value>) -> &'static str {
 
 fn bitwarden_login(b: &Value) -> LoginFields {
     let login = b.get("login");
-    let get = |k: &str| {
-        login
-            .and_then(|l| l.get(k))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-    };
+    let get = |k: &str| login.and_then(|l| l.get(k)).and_then(Value::as_str).unwrap_or("");
     let mut uris: Vec<String> = login
         .and_then(|l| l.get("uris"))
         .and_then(Value::as_array)
@@ -407,24 +358,13 @@ fn bitwarden_login(b: &Value) -> LoginFields {
     if uris.is_empty() {
         uris.push(String::new());
     }
-    LoginFields {
-        username: get("username").to_string(),
-        password: get("password").to_string(),
-        uris,
-        totp: extract_secret(get("totp")),
-    }
+    LoginFields { username: get("username").to_string(), password: get("password").to_string(), uris, totp: extract_secret(get("totp")) }
 }
 
 /// Array na raiz OU `{ "items": [...] }` (os dois formatos de export).
 pub fn parse_bitwarden_json(text: &str) -> Result<ImportReport, String> {
     let data: Value = serde_json::from_str(text).map_err(|e| format!("JSON inválido: {e}"))?;
-    let arr: &[Value] = if let Some(a) = data.as_array() {
-        a
-    } else {
-        data.get("items")
-            .and_then(Value::as_array)
-            .map_or(&[], Vec::as_slice)
-    };
+    let arr: &[Value] = if let Some(a) = data.as_array() { a } else { data.get("items").and_then(Value::as_array).map_or(&[], Vec::as_slice) };
 
     let mut report = ImportReport::default();
     for b in arr {
@@ -434,10 +374,7 @@ pub fn parse_bitwarden_json(text: &str) -> Result<ImportReport, String> {
             report.skipped_card_identity += 1;
             continue;
         }
-        let name = b
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("(sem nome)");
+        let name = b.get("name").and_then(Value::as_str).unwrap_or("(sem nome)");
         let notes = b.get("notes").and_then(Value::as_str).unwrap_or("");
         let favorite = b.get("favorite").and_then(Value::as_bool).unwrap_or(false);
         report.items.push(make_item(NewItem {
@@ -445,11 +382,7 @@ pub fn parse_bitwarden_json(text: &str) -> Result<ImportReport, String> {
             name,
             notes,
             favorite,
-            login: if kind == "login" {
-                Some(bitwarden_login(b))
-            } else {
-                None
-            },
+            login: if kind == "login" { Some(bitwarden_login(b)) } else { None },
             custom_fields: Vec::new(),
         }));
     }
@@ -480,11 +413,7 @@ pub fn kdbx_to_items(entries: &[KdbxEntry]) -> Vec<Value> {
                 login: Some(LoginFields {
                     username: e.username.clone(),
                     password: e.password.clone(),
-                    uris: if e.url.is_empty() {
-                        vec![String::new()]
-                    } else {
-                        vec![e.url.clone()]
-                    },
+                    uris: if e.url.is_empty() { vec![String::new()] } else { vec![e.url.clone()] },
                     totp: e.totp.clone(),
                 }),
                 custom_fields: Vec::new(),
@@ -496,22 +425,13 @@ pub fn kdbx_to_items(entries: &[KdbxEntry]) -> Vec<Value> {
 /// Import de TEXTO (JSON/CSV). Para `.kdbx` use `kdbx::import` + `kdbx_to_items`.
 // Paridade com o `parseText` do TS; a UI da onda 6 chama os parsers diretos.
 #[allow(dead_code)]
-pub fn parse_text(
-    filename: &str,
-    content: &str,
-) -> Result<(ImportReport, ImportFormat), String> {
+pub fn parse_text(filename: &str, content: &str) -> Result<(ImportReport, ImportFormat), String> {
     // Mesmo contrato do TS: o que não é Bitwarden-JSON cai no parser de CSV e
     // o formato devolvido é "csv" (kdbx não passa por aqui).
     if detect_format(filename, Some(content)) == ImportFormat::BitwardenJson {
         Ok((parse_bitwarden_json(content)?, ImportFormat::BitwardenJson))
     } else {
-        Ok((
-            ImportReport {
-                items: parse_csv_items(content),
-                skipped_card_identity: 0,
-            },
-            ImportFormat::Csv,
-        ))
+        Ok((ImportReport { items: parse_csv_items(content), skipped_card_identity: 0 }, ImportFormat::Csv))
     }
 }
 
@@ -564,9 +484,7 @@ mod tests {
         assert_eq!(items[0]["login"]["uris"][0], "https://b.com");
         assert_eq!(items[0]["notes"], "conta principal");
         let extras = items[0]["customFields"].as_array().unwrap();
-        assert!(extras
-            .iter()
-            .any(|c| c["name"] == "nome" && c["value"] == "Meu banco"));
+        assert!(extras.iter().any(|c| c["name"] == "nome" && c["value"] == "Meu banco"));
     }
 
     #[test]
@@ -600,10 +518,7 @@ mod tests {
 
     #[test]
     fn extract_secret_aceita_otpauth_e_chave_crua() {
-        assert_eq!(
-            extract_secret("otpauth://totp/Acme:joe?secret=JBSWY3DP&issuer=Acme"),
-            "JBSWY3DP"
-        );
+        assert_eq!(extract_secret("otpauth://totp/Acme:joe?secret=JBSWY3DP&issuer=Acme"), "JBSWY3DP");
         assert_eq!(extract_secret("key=ABC123&step=30"), "ABC123");
         assert_eq!(extract_secret("OTPAUTH://totp/x?SECRET=XYZ789&period=30"), "XYZ789");
         assert_eq!(extract_secret("JBSWY3DP"), "JBSWY3DP");
@@ -693,10 +608,7 @@ mod tests {
         assert_eq!(detect_format("x.kdbx", None), ImportFormat::Kdbx);
         assert_eq!(detect_format("x.JSON", None), ImportFormat::BitwardenJson);
         assert_eq!(detect_format("x.csv", None), ImportFormat::Csv);
-        assert_eq!(
-            detect_format("sem-ext", Some("  [{\"a\":1}]")),
-            ImportFormat::BitwardenJson
-        );
+        assert_eq!(detect_format("sem-ext", Some("  [{\"a\":1}]")), ImportFormat::BitwardenJson);
         assert_eq!(detect_format("sem-ext", Some("a,b\n1,2")), ImportFormat::Csv);
         assert_eq!(detect_format("sem-ext", None), ImportFormat::Unknown);
     }

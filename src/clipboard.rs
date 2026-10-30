@@ -13,16 +13,11 @@ mod imp {
     //! Clipboard no Windows com **exclusão do histórico (Win+V) e da nuvem**.
     use std::time::Duration;
 
-    use clipboard_win::{
-        empty, get_clipboard_string, raw, register_format, with_clipboard, Clipboard,
-    };
+    use clipboard_win::{empty, get_clipboard_string, raw, register_format, with_clipboard, Clipboard};
 
     /// Formatos que instruem o Windows a não guardar/sincronizar o conteúdo.
-    const EXCLUSION_FORMATS: [&str; 3] = [
-        "ExcludeClipboardContentFromMonitorProcessing",
-        "CanIncludeInClipboardHistory",
-        "CanUploadToCloudClipboard",
-    ];
+    const EXCLUSION_FORMATS: [&str; 3] =
+        ["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
     const CLEAR_AFTER: Duration = Duration::from_secs(30);
 

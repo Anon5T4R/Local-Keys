@@ -5,7 +5,7 @@ OutFile "local-keys-setup.exe"
 InstallDir "$PROGRAMFILES64\LocalKeys"
 RequestExecutionLevel admin
 
-!define VERSION "0.9.5"
+!define VERSION "0.9.6"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY

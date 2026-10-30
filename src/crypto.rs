@@ -98,28 +98,17 @@ pub struct KdfParams {
 
 impl Default for KdfParams {
     fn default() -> Self {
-        KdfParams {
-            m_cost: DEFAULT_M_COST,
-            t_cost: DEFAULT_T_COST,
-            p_cost: DEFAULT_P_COST,
-        }
+        KdfParams { m_cost: DEFAULT_M_COST, t_cost: DEFAULT_T_COST, p_cost: DEFAULT_P_COST }
     }
 }
 
 /// Deriva a chave de 32 bytes da master password com Argon2id.
 /// O retorno é `Zeroizing`: a chave é apagada da memória ao sair de escopo.
-fn derive_key(
-    password: &[u8],
-    salt: &[u8],
-    params: KdfParams,
-) -> Result<Zeroizing<[u8; KEY_LEN]>, CryptoError> {
-    let p = Params::new(params.m_cost, params.t_cost, params.p_cost, Some(KEY_LEN))
-        .map_err(|_| CryptoError::Kdf)?;
+fn derive_key(password: &[u8], salt: &[u8], params: KdfParams) -> Result<Zeroizing<[u8; KEY_LEN]>, CryptoError> {
+    let p = Params::new(params.m_cost, params.t_cost, params.p_cost, Some(KEY_LEN)).map_err(|_| CryptoError::Kdf)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, p);
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
-    argon
-        .hash_password_into(password, salt, key.as_mut_slice())
-        .map_err(|_| CryptoError::Kdf)?;
+    argon.hash_password_into(password, salt, key.as_mut_slice()).map_err(|_| CryptoError::Kdf)?;
     Ok(key)
 }
 
@@ -185,55 +174,24 @@ fn parse_header(file: &[u8]) -> Result<(KdfParams, [u8; SALT_LEN], [u8; NONCE_LE
 
 /// Decifra um `.tkeys` com a **chave bruta** (sem re-rodar o Argon2) — usado pelo
 /// desbloqueio rápido, que guarda a chave no cofre do SO em vez da master password.
-pub fn open_with_key(
-    raw_key: &[u8; KEY_LEN],
-    file: &[u8],
-) -> Result<(Zeroizing<Vec<u8>>, SessionKey), CryptoError> {
+pub fn open_with_key(raw_key: &[u8; KEY_LEN], file: &[u8]) -> Result<(Zeroizing<Vec<u8>>, SessionKey), CryptoError> {
     let (params, salt, nonce) = parse_header(file)?;
     let header = &file[0..HEADER_LEN];
     let ciphertext = &file[HEADER_LEN..];
     let cipher = XChaCha20Poly1305::new(Key::from_slice(raw_key));
-    let plaintext = cipher
-        .decrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: ciphertext,
-                aad: header,
-            },
-        )
-        .map_err(|_| CryptoError::Decrypt)?;
-    Ok((
-        Zeroizing::new(plaintext),
-        SessionKey {
-            key: Zeroizing::new(*raw_key),
-            salt,
-            params,
-        },
-    ))
+    let plaintext = cipher.decrypt(XNonce::from_slice(&nonce), Payload { msg: ciphertext, aad: header }).map_err(|_| CryptoError::Decrypt)?;
+    Ok((Zeroizing::new(plaintext), SessionKey { key: Zeroizing::new(*raw_key), salt, params }))
 }
 
 /// Passo comum de cifragem: sorteia nonce, monta o header (que vira AAD) e roda
 /// o AEAD. Devolve `header || ciphertext+tag`.
-fn seal_bytes(
-    key: &[u8; KEY_LEN],
-    salt: &[u8; SALT_LEN],
-    params: KdfParams,
-    plaintext: &[u8],
-) -> Result<Vec<u8>, CryptoError> {
+fn seal_bytes(key: &[u8; KEY_LEN], salt: &[u8; SALT_LEN], params: KdfParams, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let mut nonce = [0u8; NONCE_LEN];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     let header = build_header(params, salt, &nonce);
 
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
-    let ciphertext = cipher
-        .encrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: plaintext,
-                aad: &header,
-            },
-        )
-        .map_err(|_| CryptoError::Decrypt)?;
+    let ciphertext = cipher.encrypt(XNonce::from_slice(&nonce), Payload { msg: plaintext, aad: &header }).map_err(|_| CryptoError::Decrypt)?;
 
     let mut out = header;
     out.extend_from_slice(&ciphertext);
@@ -242,18 +200,11 @@ fn seal_bytes(
 
 /// Cria um vault novo: deriva a chave da `password`, cifra o `plaintext` inicial
 /// e devolve o arquivo + a `SessionKey` (o vault já fica "destrancado").
-pub fn create_vault(
-    password: &str,
-    plaintext: &[u8],
-) -> Result<(Vec<u8>, SessionKey), CryptoError> {
+pub fn create_vault(password: &str, plaintext: &[u8]) -> Result<(Vec<u8>, SessionKey), CryptoError> {
     create_vault_with(password, plaintext, KdfParams::default())
 }
 
-fn create_vault_with(
-    password: &str,
-    plaintext: &[u8],
-    params: KdfParams,
-) -> Result<(Vec<u8>, SessionKey), CryptoError> {
+fn create_vault_with(password: &str, plaintext: &[u8], params: KdfParams) -> Result<(Vec<u8>, SessionKey), CryptoError> {
     let mut salt = [0u8; SALT_LEN];
     rand::rngs::OsRng.fill_bytes(&mut salt);
     let key = derive_key(password.as_bytes(), &salt, params)?;
@@ -264,21 +215,14 @@ fn create_vault_with(
 
 /// Cifra avulsa (sem sessão) — usada só nos testes e onde não há sessão viva.
 #[cfg(test)]
-fn encrypt_vault_with(
-    password: &str,
-    plaintext: &[u8],
-    params: KdfParams,
-) -> Result<Vec<u8>, CryptoError> {
+fn encrypt_vault_with(password: &str, plaintext: &[u8], params: KdfParams) -> Result<Vec<u8>, CryptoError> {
     Ok(create_vault_with(password, plaintext, params)?.0)
 }
 
 /// Abre um arquivo `.tkeys`: valida o header, deriva a chave e decifra. Devolve o
 /// plaintext (`Zeroizing`, apagado ao sair de escopo) e a `SessionKey` para salvar
 /// depois. Falha **genérica** em senha errada OU adulteração (não distingue).
-pub fn open_vault(
-    password: &str,
-    file: &[u8],
-) -> Result<(Zeroizing<Vec<u8>>, SessionKey), CryptoError> {
+pub fn open_vault(password: &str, file: &[u8]) -> Result<(Zeroizing<Vec<u8>>, SessionKey), CryptoError> {
     if file.len() < HEADER_LEN || file[0..6] != MAGIC {
         return Err(CryptoError::BadFormat);
     }
@@ -305,15 +249,7 @@ pub fn open_vault(
 
     let key = derive_key(password.as_bytes(), &salt, params)?;
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key.as_slice()));
-    let plaintext = cipher
-        .decrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: ciphertext,
-                aad: header,
-            },
-        )
-        .map_err(|_| CryptoError::Decrypt)?;
+    let plaintext = cipher.decrypt(XNonce::from_slice(&nonce), Payload { msg: ciphertext, aad: header }).map_err(|_| CryptoError::Decrypt)?;
 
     Ok((Zeroizing::new(plaintext), SessionKey { key, salt, params }))
 }
@@ -326,11 +262,7 @@ pub fn decrypt_vault(password: &str, file: &[u8]) -> Result<Zeroizing<Vec<u8>>, 
 
 /// Troca a master password: decifra com a antiga e recifra com a nova (salt e
 /// nonce novos). Não expõe o plaintext ao chamador.
-pub fn change_password(
-    old_password: &str,
-    new_password: &str,
-    file: &[u8],
-) -> Result<Vec<u8>, CryptoError> {
+pub fn change_password(old_password: &str, new_password: &str, file: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let plaintext = decrypt_vault(old_password, file)?;
     Ok(create_vault(new_password, &plaintext)?.0)
 }
@@ -352,11 +284,7 @@ mod tests {
     use super::*;
 
     // Params baratos só para os testes rodarem rápido no CI (o KDF real usa 64 MiB).
-    const TEST_PARAMS: KdfParams = KdfParams {
-        m_cost: 512,
-        t_cost: 1,
-        p_cost: 1,
-    };
+    const TEST_PARAMS: KdfParams = KdfParams { m_cost: 512, t_cost: 1, p_cost: 1 };
 
     fn enc(pw: &str, pt: &[u8]) -> Vec<u8> {
         encrypt_vault_with(pw, pt, TEST_PARAMS).unwrap()
@@ -373,10 +301,7 @@ mod tests {
     #[test]
     fn senha_errada_falha() {
         let file = enc("certa", b"segredo");
-        assert_eq!(
-            decrypt_vault("errada", &file).unwrap_err(),
-            CryptoError::Decrypt
-        );
+        assert_eq!(decrypt_vault("errada", &file).unwrap_err(), CryptoError::Decrypt);
     }
 
     #[test]
@@ -384,10 +309,7 @@ mod tests {
         let mut file = enc("pw", b"segredo importante");
         let last = file.len() - 1;
         file[last] ^= 0x01; // vira um bit do tag/ciphertext
-        assert_eq!(
-            decrypt_vault("pw", &file).unwrap_err(),
-            CryptoError::Decrypt
-        );
+        assert_eq!(decrypt_vault("pw", &file).unwrap_err(), CryptoError::Decrypt);
     }
 
     #[test]
@@ -396,28 +318,19 @@ mod tests {
         // autenticação: o header é AAD, então o AEAD rejeita.
         let mut file = enc("pw", b"segredo");
         file[8] ^= 0x01;
-        assert_eq!(
-            decrypt_vault("pw", &file).unwrap_err(),
-            CryptoError::Decrypt
-        );
+        assert_eq!(decrypt_vault("pw", &file).unwrap_err(), CryptoError::Decrypt);
     }
 
     #[test]
     fn salt_adulterado_falha() {
         let mut file = enc("pw", b"segredo");
         file[20] ^= 0x01; // 1º byte do salt
-        assert_eq!(
-            decrypt_vault("pw", &file).unwrap_err(),
-            CryptoError::Decrypt
-        );
+        assert_eq!(decrypt_vault("pw", &file).unwrap_err(), CryptoError::Decrypt);
     }
 
     #[test]
     fn arquivo_nao_tkeys_falha() {
-        assert_eq!(
-            decrypt_vault("pw", b"isto nao eh um vault").unwrap_err(),
-            CryptoError::BadFormat
-        );
+        assert_eq!(decrypt_vault("pw", b"isto nao eh um vault").unwrap_err(), CryptoError::BadFormat);
     }
 
     #[test]
@@ -449,10 +362,7 @@ mod tests {
     fn troca_de_senha_reencaminha_o_conteudo() {
         let file = encrypt_vault_with("velha", b"dados", TEST_PARAMS).unwrap();
         let renewed = change_password("velha", "nova", &file).unwrap();
-        assert_eq!(
-            decrypt_vault("velha", &renewed).unwrap_err(),
-            CryptoError::Decrypt
-        );
+        assert_eq!(decrypt_vault("velha", &renewed).unwrap_err(), CryptoError::Decrypt);
         let out = decrypt_vault("nova", &renewed).unwrap();
         assert_eq!(out.as_slice(), b"dados");
     }

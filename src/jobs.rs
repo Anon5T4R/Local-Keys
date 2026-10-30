@@ -134,13 +134,11 @@ pub enum JobResult {
 /// Sobe a thread do job. `ctx` é um clone do `egui::Context` (Send+Sync): o
 /// `request_repaint` no fim do trabalho é o que faz a UI acordar sem input.
 pub fn spawn(job: Job, tx: Sender<JobResult>, ctx: egui::Context) {
-    let spawned = std::thread::Builder::new()
-        .name("keys-job".into())
-        .spawn(move || {
-            let result = run(job);
-            let _ = tx.send(result);
-            ctx.request_repaint();
-        });
+    let spawned = std::thread::Builder::new().name("keys-job".into()).spawn(move || {
+        let result = run(job);
+        let _ = tx.send(result);
+        ctx.request_repaint();
+    });
     if let Err(e) = spawned {
         // Sem thread o `tx` morre junto: o `drain` vê o canal fechado e limpa
         // o spinner (o app não fica girando pra sempre).
@@ -163,30 +161,12 @@ pub fn drain(rx: &Receiver<JobResult>) -> (Vec<JobResult>, bool) {
 
 fn run(job: Job) -> JobResult {
     match job {
-        Job::Unlock {
-            path,
-            password,
-            quick,
-        } => JobResult::Unlocked(unlock(&path, &password, quick)),
-        Job::Create {
-            path,
-            password,
-            quick,
-        } => JobResult::Created(create(&path, &password, quick)),
-        Job::ChangeMaster { path, old, new } => {
-            JobResult::MasterChanged(change_master(&path, &old, &new))
-        }
-        Job::Import {
-            kind,
-            path,
-            password,
-        } => JobResult::Imported(import(&kind, &path, &password)),
-        Job::ReadAttachment { item_id, source } => {
-            JobResult::AttachmentRead(read_attachment(item_id, &source))
-        }
-        Job::SaveAttachment { target, data_b64 } => {
-            JobResult::AttachmentSaved(save_attachment(target, &data_b64))
-        }
+        Job::Unlock { path, password, quick } => JobResult::Unlocked(unlock(&path, &password, quick)),
+        Job::Create { path, password, quick } => JobResult::Created(create(&path, &password, quick)),
+        Job::ChangeMaster { path, old, new } => JobResult::MasterChanged(change_master(&path, &old, &new)),
+        Job::Import { kind, path, password } => JobResult::Imported(import(&kind, &path, &password)),
+        Job::ReadAttachment { item_id, source } => JobResult::AttachmentRead(read_attachment(item_id, &source)),
+        Job::SaveAttachment { target, data_b64 } => JobResult::AttachmentSaved(save_attachment(target, &data_b64)),
         Job::WriteExport { target, text } => JobResult::Exported(write_export(target, &text)),
     }
 }
@@ -203,71 +183,43 @@ fn crypto_err(e: crypto::CryptoError) -> JobError {
 fn unlock(path: &str, password: &str, quick: bool) -> Result<Unlocked, JobError> {
     let file = std::fs::read(path).map_err(|e| JobError::Msg(format!("{path}: {e}")))?;
     let (plaintext, session) = crypto::open_vault(password, &file).map_err(crypto_err)?;
-    let raw = serde_json::from_slice::<serde_json::Value>(&plaintext)
-        .map_err(|_| JobError::Msg("vault não é JSON válido".into()))?;
-    Ok(Unlocked {
-        path: path.to_string(),
-        raw,
-        session,
-        quick,
-    })
+    let raw = serde_json::from_slice::<serde_json::Value>(&plaintext).map_err(|_| JobError::Msg("vault não é JSON válido".into()))?;
+    Ok(Unlocked { path: path.to_string(), raw, session, quick })
 }
 
 /// Deriva a chave e devolve o `.tkeys` cifrado pronto; a gravação atômica fica
 /// no retorno (poucos KB — e é ela que decide se o app adota o cofre novo).
 fn create(path: &str, password: &str, quick: bool) -> Result<Created, JobError> {
-    let (file, session) =
-        crypto::create_vault(password, vault::EMPTY_VAULT.as_bytes()).map_err(crypto_err)?;
-    let raw = serde_json::from_str::<serde_json::Value>(vault::EMPTY_VAULT)
-        .map_err(|e| JobError::Msg(format!("semente do cofre inválida: {e}")))?;
-    Ok(Created {
-        path: path.to_string(),
-        file,
-        raw,
-        session,
-        quick,
-    })
+    let (file, session) = crypto::create_vault(password, vault::EMPTY_VAULT.as_bytes()).map_err(crypto_err)?;
+    let raw = serde_json::from_str::<serde_json::Value>(vault::EMPTY_VAULT).map_err(|e| JobError::Msg(format!("semente do cofre inválida: {e}")))?;
+    Ok(Created { path: path.to_string(), file, raw, session, quick })
 }
 
 /// Argon2id 2× (decifra com a antiga, recifra com a nova): ~600 ms fora da UI.
 fn change_master(path: &str, old: &str, new: &str) -> Result<Renewed, JobError> {
     if new.is_empty() {
-        return Err(JobError::Msg(
-            "a nova master password não pode ser vazia".into(),
-        ));
+        return Err(JobError::Msg("a nova master password não pode ser vazia".into()));
     }
-    let file =
-        std::fs::read(path).map_err(|e| JobError::Msg(format!("falha ao ler '{path}': {e}")))?;
+    let file = std::fs::read(path).map_err(|e| JobError::Msg(format!("falha ao ler '{path}': {e}")))?;
     let renewed = crypto::change_password(old, new, &file).map_err(crypto_err)?;
-    Ok(Renewed {
-        path: path.to_string(),
-        file: renewed,
-    })
+    Ok(Renewed { path: path.to_string(), file: renewed })
 }
 
 /// Lê e decifra/parseia o arquivo escolhido. É o job mais caro: PBKDF2 com
 /// 600k iterações (Bitwarden) e o Argon2id interno do keepass levam segundos.
 fn import(kind: &ImportKind, path: &str, password: &str) -> Result<Imported, JobError> {
     let (items, skipped) = match kind {
-        ImportKind::Kdbx => {
-            kdbx::import(path, password).map(|entries| (import::kdbx_to_items(&entries), 0))?
-        }
+        ImportKind::Kdbx => kdbx::import(path, password).map(|entries| (import::kdbx_to_items(&entries), 0))?,
         ImportKind::Bitwarden => {
-            let text =
-                std::fs::read_to_string(path).map_err(|e| format!("falha ao ler '{path}': {e}"))?;
+            let text = std::fs::read_to_string(path).map_err(|e| format!("falha ao ler '{path}': {e}"))?;
             // Export cifrado: decifra ANTES de mapear (o parse espera o mesmo
             // JSON claro do export não-cifrado).
-            let clear = if bitwarden_encrypted(&text) {
-                bwdecrypt::decrypt_export(&text, password)?
-            } else {
-                text
-            };
+            let clear = if bitwarden_encrypted(&text) { bwdecrypt::decrypt_export(&text, password)? } else { text };
             let report = import::parse_bitwarden_json(&clear)?;
             (report.items, report.skipped_card_identity)
         }
         ImportKind::Csv => {
-            let text =
-                std::fs::read_to_string(path).map_err(|e| format!("falha ao ler '{path}': {e}"))?;
+            let text = std::fs::read_to_string(path).map_err(|e| format!("falha ao ler '{path}': {e}"))?;
             (import::parse_csv_items(&text), 0)
         }
     };
@@ -279,49 +231,33 @@ fn read_attachment(item_id: String, source: &str) -> Result<AttachmentRead, JobE
     use base64::Engine as _;
 
     let name = file_name_of(source);
-    let meta = std::fs::metadata(source)
-        .map_err(|e| JobError::Msg(format!("falha ao ler '{source}': {e}")))?;
+    let meta = std::fs::metadata(source).map_err(|e| JobError::Msg(format!("falha ao ler '{source}': {e}")))?;
     if too_big(meta.len()) {
         return Err(JobError::AttachmentTooBig { name });
     }
-    let bytes = std::fs::read(source)
-        .map_err(|e| JobError::Msg(format!("falha ao ler '{source}': {e}")))?;
+    let bytes = std::fs::read(source).map_err(|e| JobError::Msg(format!("falha ao ler '{source}': {e}")))?;
     let data_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(AttachmentRead {
-        item_id,
-        name,
-        mime: mime_by_ext(source),
-        size: bytes.len(),
-        data_b64,
-    })
+    Ok(AttachmentRead { item_id, name, mime: mime_by_ext(source), size: bytes.len(), data_b64 })
 }
 
 /// Decodifica o base64 e grava — `fs::write` em pasta de rede também trava.
 fn save_attachment(target: String, data_b64: &str) -> Result<String, JobError> {
     use base64::Engine as _;
 
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_b64)
-        .map_err(|_| JobError::Msg("anexo com base64 inválido".into()))?;
-    std::fs::write(&target, &bytes)
-        .map_err(|e| JobError::Msg(format!("falha ao gravar '{target}': {e}")))?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data_b64).map_err(|_| JobError::Msg("anexo com base64 inválido".into()))?;
+    std::fs::write(&target, &bytes).map_err(|e| JobError::Msg(format!("falha ao gravar '{target}': {e}")))?;
     Ok(target)
 }
 
 /// Grava o texto do export (já pronto) no destino escolhido.
 fn write_export(target: String, text: &str) -> Result<String, JobError> {
-    std::fs::write(&target, text)
-        .map_err(|e| JobError::Msg(format!("falha ao gravar '{target}': {e}")))?;
+    std::fs::write(&target, text).map_err(|e| JobError::Msg(format!("falha ao gravar '{target}': {e}")))?;
     Ok(target)
 }
 
 /// Nome do arquivo pro anexo (o caminho inteiro não vai pro cofre).
 fn file_name_of(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| "anexo".to_string())
+    std::path::Path::new(path).file_name().and_then(|n| n.to_str()).map(str::to_string).unwrap_or_else(|| "anexo".to_string())
 }
 
 /// Regra do cap, isolada pra ter teste sem tocar em disco.
@@ -343,10 +279,7 @@ mod tests {
         assert!(done.is_empty());
         assert!(!closed);
 
-        let sent = tx.send(JobResult::MasterChanged(Ok(Renewed {
-            path: "cofre.tkeys".into(),
-            file: vec![1, 2, 3],
-        })));
+        let sent = tx.send(JobResult::MasterChanged(Ok(Renewed { path: "cofre.tkeys".into(), file: vec![1, 2, 3] })));
         assert!(sent.is_ok());
 
         let (done, closed) = drain(&rx);
@@ -356,10 +289,7 @@ mod tests {
         drop(tx);
         let (done, closed) = drain(&rx);
         assert!(done.is_empty());
-        assert!(
-            closed,
-            "canal sem remetente tem de ser reportado como fechado"
-        );
+        assert!(closed, "canal sem remetente tem de ser reportado como fechado");
     }
 
     #[test]
@@ -384,10 +314,7 @@ mod tests {
             Ok(_) => panic!("job devolveu a variante errada"),
             Err(e) => panic!("job não respondeu: {e}"),
         }
-        assert_eq!(
-            std::fs::read(&target).ok().as_deref(),
-            Some(b"hi".as_slice())
-        );
+        assert_eq!(std::fs::read(&target).ok().as_deref(), Some(b"hi".as_slice()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

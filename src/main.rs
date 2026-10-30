@@ -36,6 +36,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autoupdate;
 mod bwdecrypt;
 mod clipboard;
 mod crypto;
@@ -46,7 +47,6 @@ mod jobs;
 mod kdbx;
 mod totp;
 mod vault;
-mod autoupdate;
 
 #[cfg(windows)]
 mod winctl;
@@ -56,7 +56,6 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use eframe::egui;
-use autoupdate::{UpdateStatus, spawn_check};
 use jobs::{AttachmentRead, Created, Job, JobError, JobResult, Renewed, Unlocked};
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
@@ -70,7 +69,6 @@ use tray_icon::{TrayIcon, TrayIconBuilder};
 
 const APP_ID: &str = "local-keys";
 const KEYRING_SERVICE: &str = "LocalKeys";
-const GITHUB_REPO: &str = "Anon5T4R/Local-Keys";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Comando vindo da bandeja (thread própria → handlers do tray-icon).
@@ -87,11 +85,7 @@ fn load_window_icon() -> egui::IconData {
         Ok(img) => {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            egui::IconData {
-                rgba: rgba.into_raw(),
-                width: w,
-                height: h,
-            }
+            egui::IconData { rgba: rgba.into_raw(), width: w, height: h }
         }
         Err(e) => {
             eprintln!("ícone: falha ao decodificar icon.ico: {e}");
@@ -110,11 +104,7 @@ fn main() -> eframe::Result<()> {
     {
         let dir = config::config_dir(APP_ID);
         let _ = std::fs::create_dir_all(&dir);
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(dir.join("instance.lock"));
+        let lock = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(dir.join("instance.lock"));
         let segunda = match &lock {
             Ok(f) => f.try_lock().is_err(),
             // Sem conseguir abrir o lock: segue SEM guarda — melhor rodar
@@ -132,10 +122,7 @@ fn main() -> eframe::Result<()> {
 
     let cfg = config::load(APP_ID);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("LocalKeys")
-            .with_inner_size([480.0, 660.0])
-            .with_icon(load_window_icon()),
+        viewport: egui::ViewportBuilder::default().with_title("LocalKeys").with_inner_size([480.0, 660.0]).with_icon(load_window_icon()),
         ..Default::default()
     };
     eframe::run_native(
@@ -152,10 +139,7 @@ fn main() -> eframe::Result<()> {
 /// digitado — bundlar gtk3 no AppImage engordaria dezenas de MB à toa.
 #[cfg(windows)]
 fn pick_open() -> Option<String> {
-    rfd::FileDialog::new()
-        .add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"])
-        .pick_file()
-        .map(|p| p.display().to_string())
+    rfd::FileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).pick_file().map(|p| p.display().to_string())
 }
 
 #[cfg(windows)]
@@ -191,30 +175,20 @@ fn pick_import_file(kind: ImportKind) -> Option<String> {
 /// (`pick_files`): cada arquivo escolhido vira um anexdo do item.
 #[cfg(windows)]
 fn pick_open_attachments() -> Vec<String> {
-    rfd::FileDialog::new()
-        .pick_files()
-        .map(|paths| paths.iter().map(|p| p.display().to_string()).collect())
-        .unwrap_or_default()
+    rfd::FileDialog::new().pick_files().map(|paths| paths.iter().map(|p| p.display().to_string()).collect()).unwrap_or_default()
 }
 
 /// Linux: os caminhos digitados no campo vêm separados por `;` — separa,
 /// tira os espaços das pontas e descarta os vazios. (No Windows sobrevive
 /// como fallback do campo — que lá não é renderizado.)
 fn split_attachment_paths(text: &str) -> Vec<String> {
-    text.split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
+    text.split(';').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
 /// Windows: diálogo nativo pra salvar o anexo com o nome sugerido.
 #[cfg(windows)]
 fn pick_save_attachment(name: &str) -> Option<String> {
-    rfd::FileDialog::new()
-        .set_file_name(name)
-        .save_file()
-        .map(|p| p.display().to_string())
+    rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.display().to_string())
 }
 
 /// Formato do export em claro — o oficial só tem estes dois (`export.ts`).
@@ -246,11 +220,7 @@ fn pick_save_export(kind: ExportKind) -> Option<String> {
 /// MIME mínimo por extensão (o anexo vai pro JSON do vault; sem adivinhar
 /// demais, o resto cai em `application/octet-stream`).
 fn mime_by_ext(path: &str) -> &'static str {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -281,10 +251,7 @@ fn human_size(bytes: usize) -> String {
 fn item_name(raw: &serde_json::Value, id: &str) -> String {
     raw.get("items")
         .and_then(serde_json::Value::as_array)
-        .and_then(|arr| {
-            arr.iter()
-                .find(|it| it.get("id").and_then(serde_json::Value::as_str) == Some(id))
-        })
+        .and_then(|arr| arr.iter().find(|it| it.get("id").and_then(serde_json::Value::as_str) == Some(id)))
         .and_then(|it| it.get("name"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
@@ -295,15 +262,7 @@ fn item_name(raw: &serde_json::Value, id: &str) -> String {
 fn item_ids(raw: &serde_json::Value) -> Vec<String> {
     raw.get("items")
         .and_then(serde_json::Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|it| {
-                    it.get("id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                })
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|it| it.get("id").and_then(serde_json::Value::as_str).map(str::to_string)).collect())
         .unwrap_or_default()
 }
 
@@ -374,41 +333,19 @@ impl Skin {
     }
 
     fn from_visuals(v: &egui::Visuals) -> Self {
-        let text = v
-            .override_text_color
-            .unwrap_or(v.widgets.noninteractive.fg_stroke.color);
+        let text = v.override_text_color.unwrap_or(v.widgets.noninteractive.fg_stroke.color);
         let accent = v.selection.bg_fill;
         Self {
             card: v.extreme_bg_color,
             field: v.panel_fill,
             accent,
-            on_accent: if luminance(accent) > 150.0 {
-                egui::Color32::BLACK
-            } else {
-                egui::Color32::WHITE
-            },
+            on_accent: if luminance(accent) > 150.0 { egui::Color32::BLACK } else { egui::Color32::WHITE },
             text,
             muted: text.gamma_multiply(0.6),
-            border: if v.dark_mode {
-                egui::Color32::from_white_alpha(30)
-            } else {
-                egui::Color32::from_black_alpha(30)
-            },
-            hover: if v.dark_mode {
-                egui::Color32::from_white_alpha(18)
-            } else {
-                egui::Color32::from_black_alpha(14)
-            },
-            inverted_fill: if v.dark_mode {
-                egui::Color32::from_rgb(0xEC, 0xEC, 0xEF)
-            } else {
-                egui::Color32::from_rgb(0x2A, 0x2A, 0x2F)
-            },
-            inverted_text: if v.dark_mode {
-                egui::Color32::from_rgb(0x22, 0x22, 0x26)
-            } else {
-                egui::Color32::WHITE
-            },
+            border: if v.dark_mode { egui::Color32::from_white_alpha(30) } else { egui::Color32::from_black_alpha(30) },
+            hover: if v.dark_mode { egui::Color32::from_white_alpha(18) } else { egui::Color32::from_black_alpha(14) },
+            inverted_fill: if v.dark_mode { egui::Color32::from_rgb(0xEC, 0xEC, 0xEF) } else { egui::Color32::from_rgb(0x2A, 0x2A, 0x2F) },
+            inverted_text: if v.dark_mode { egui::Color32::from_rgb(0x22, 0x22, 0x26) } else { egui::Color32::WHITE },
         }
     }
 }
@@ -420,9 +357,7 @@ fn luminance(c: egui::Color32) -> f32 {
 
 /// Campo de uma linha com altura de clique decente.
 fn line(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
-    egui::TextEdit::singleline(text)
-        .margin(FIELD_MARGIN)
-        .min_size(egui::vec2(0.0, FIELD_MIN_HEIGHT))
+    egui::TextEdit::singleline(text).margin(FIELD_MARGIN).min_size(egui::vec2(0.0, FIELD_MIN_HEIGHT))
 }
 
 /// Campo multilinha (notas) com o mesmo recuo horizontal.
@@ -472,32 +407,17 @@ fn pill(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
 
 /// Pill de ação destrutiva (vermelho fixo: legível nos dois temas).
 fn pill_danger(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    pill_colored(
-        ui,
-        label,
-        egui::Color32::from_rgb(0xC0, 0x3A, 0x3A),
-        egui::Color32::WHITE,
-        false,
-    )
+    pill_colored(ui, label, egui::Color32::from_rgb(0xC0, 0x3A, 0x3A), egui::Color32::WHITE, false)
 }
 
 /// Pill com cores explícitas; `outline` desenha só a borda.
-fn pill_colored(
-    ui: &mut egui::Ui,
-    label: &str,
-    fill: egui::Color32,
-    ink: egui::Color32,
-    outline: bool,
-) -> egui::Response {
+fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::Color32, outline: bool) -> egui::Response {
     let skin = Skin::of(ui);
     let enabled = ui.is_enabled();
     let ink = if enabled { ink } else { skin.muted };
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 28.0, 28.0),
-        egui::Sense::click(),
-    );
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 28.0, 28.0), egui::Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     let hovered = resp.hovered() && enabled;
     let fill = if !enabled {
@@ -516,18 +436,8 @@ fn pill_colored(
     } else {
         fill
     };
-    let stroke = if outline {
-        egui::Stroke::new(1.0_f32, skin.border)
-    } else {
-        egui::Stroke::NONE
-    };
-    ui.painter().rect(
-        rect,
-        egui::CornerRadius::same(14),
-        fill,
-        stroke,
-        egui::StrokeKind::Inside,
-    );
+    let stroke = if outline { egui::Stroke::new(1.0_f32, skin.border) } else { egui::Stroke::NONE };
+    ui.painter().rect(rect, egui::CornerRadius::same(14), fill, stroke, egui::StrokeKind::Inside);
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter().galley(pos, galley, ink);
     resp
@@ -543,16 +453,10 @@ fn ghost_ink(ui: &mut egui::Ui, label: &str, ink: egui::Color32) -> egui::Respon
     let skin = Skin::of(ui);
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 14.0, 24.0),
-        egui::Sense::click(),
-    );
-    resp.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
-    });
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 14.0, 24.0), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
     if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(6), skin.hover);
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(6), skin.hover);
     }
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter().galley(pos, galley, ink);
@@ -581,9 +485,7 @@ fn date_from_ms(ms: i64) -> String {
 fn bitwarden_encrypted(text: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(text)
         .map(|v| {
-            v.get("passwordProtected")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
+            v.get("passwordProtected").and_then(serde_json::Value::as_bool) == Some(true)
                 || v.get("encrypted").and_then(serde_json::Value::as_bool) == Some(true)
         })
         .unwrap_or(false)
@@ -603,8 +505,7 @@ fn remember_last_path(path: &str) {
 }
 
 fn last_path() -> Option<String> {
-    let v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(state_path()).ok()?).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(state_path()).ok()?).ok()?;
     v.get("lastPath")?.as_str().map(str::to_string)
 }
 
@@ -644,11 +545,7 @@ fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
     let menu = Menu::new();
     let _ = menu.append(&show);
     let _ = menu.append(&quit_item);
-    let tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_tooltip("LocalKeys")
-        .with_icon(tray_icon().expect("ícone rgba"))
-        .build();
+    let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("LocalKeys").with_icon(tray_icon().expect("ícone rgba")).build();
 
     let tray = match tray {
         Ok(t) => {
@@ -656,12 +553,7 @@ fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
                 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
                 let tx = tx.clone();
                 tray_icon::TrayIconEvent::set_event_handler(Some(move |ev: TrayIconEvent| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = ev
-                    {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
                         let _ = tx.send(TrayCmd::ShowHide);
                     }
                 }));
@@ -983,10 +875,7 @@ impl KeysApp {
     #[cfg(windows)]
     fn path_has_stored_key(&self) -> bool {
         let path = self.path.trim();
-        !path.is_empty()
-            && keyring::Entry::new(KEYRING_SERVICE, path)
-                .and_then(|e| e.get_password())
-                .is_ok()
+        !path.is_empty() && keyring::Entry::new(KEYRING_SERVICE, path).and_then(|e| e.get_password()).is_ok()
     }
 
     #[cfg(not(windows))]
@@ -1008,9 +897,7 @@ impl KeysApp {
         let Some(path) = last_path() else {
             return;
         };
-        let Ok(b64) =
-            (|| keyring::Entry::new(KEYRING_SERVICE, &path).and_then(|e| e.get_password()))()
-        else {
+        let Ok(b64) = keyring::Entry::new(KEYRING_SERVICE, &path).and_then(|e| e.get_password()) else {
             return;
         };
         let Ok(key) = base64::engine::general_purpose::STANDARD.decode(b64) else {
@@ -1023,16 +910,14 @@ impl KeysApp {
             return;
         };
         match crypto::open_with_key(&key, &file) {
-            Ok((plaintext, session)) => {
-                match serde_json::from_slice::<serde_json::Value>(&plaintext) {
-                    Ok(raw) => {
-                        self.path = path.clone();
-                        self.adopt(session, raw);
-                        remember_last_path(&path);
-                    }
-                    Err(_) => self.err = Some("vault não é JSON válido".into()),
+            Ok((plaintext, session)) => match serde_json::from_slice::<serde_json::Value>(&plaintext) {
+                Ok(raw) => {
+                    self.path = path.clone();
+                    self.adopt(session, raw);
+                    remember_last_path(&path);
                 }
-            }
+                Err(_) => self.err = Some("vault não é JSON válido".into()),
+            },
             Err(_) => {
                 // chave guardada não serve mais (senha trocada / arquivo outro)
                 if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &path) {
@@ -1094,15 +979,7 @@ impl KeysApp {
         }
         let password = Zeroizing::new(std::mem::take(&mut self.master));
         let quick = self.quick_unlock;
-        self.start_job(
-            ctx,
-            Key::Unlocking,
-            Job::Unlock {
-                path,
-                password,
-                quick,
-            },
-        );
+        self.start_job(ctx, Key::Unlocking, Job::Unlock { path, password, quick });
     }
 
     fn create(&mut self, ctx: &egui::Context) {
@@ -1121,15 +998,7 @@ impl KeysApp {
         self.confirm.clear();
         let quick = self.quick_unlock;
         let path = self.path.trim().to_string();
-        self.start_job(
-            ctx,
-            Key::Working,
-            Job::Create {
-                path,
-                password,
-                quick,
-            },
-        );
+        self.start_job(ctx, Key::Working, Job::Create { path, password, quick });
     }
 
     /// Cifra + grava um novo estado do vault. Se o salvamento falhar, o raw em
@@ -1182,14 +1051,7 @@ impl KeysApp {
         };
         // "antes" do add — com ele achamos o id gerado pelo `add_login` depois.
         let antes = item_ids(&next);
-        let form = vault::LoginForm {
-            name: &name,
-            username: &username,
-            password: &password,
-            totp: &totp,
-            url: &url,
-            notes: &notes,
-        };
+        let form = vault::LoginForm { name: &name, username: &username, password: &password, totp: &totp, url: &url, notes: &notes };
         let ok = match self.form_edit_id.clone() {
             Some(id) => vault::edit_login(&mut next, &id, form),
             None => {
@@ -1211,13 +1073,7 @@ impl KeysApp {
             // `set_item_folder` grava `updatedAt` — só tocar se de fato mudou
             // (no item novo, sempre aplica).
             let igual = self.form_edit_id.is_some()
-                && self
-                    .items
-                    .iter()
-                    .find(|i| i.id == id)
-                    .and_then(|i| i.folder_id.clone())
-                    .as_deref()
-                    == self.add_folder_id.as_deref();
+                && self.items.iter().find(|i| i.id == id).and_then(|i| i.folder_id.clone()).as_deref() == self.add_folder_id.as_deref();
             if !igual {
                 vault::set_item_folder(&mut next, &id, self.add_folder_id.as_deref());
             }
@@ -1257,17 +1113,8 @@ impl KeysApp {
             return;
         };
         self.form_edit_id = Some(id.to_string());
-        self.add_folder_id = self
-            .items
-            .iter()
-            .find(|i| i.id == id)
-            .and_then(|i| i.folder_id.clone());
-        self.add_name = self
-            .items
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| i.name.clone())
-            .unwrap_or_default();
+        self.add_folder_id = self.items.iter().find(|i| i.id == id).and_then(|i| i.folder_id.clone());
+        self.add_name = self.items.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_default();
         self.add_user = full.username;
         self.add_pass = full.password;
         self.add_totp = full.totp;
@@ -1375,15 +1222,7 @@ impl KeysApp {
         // errado, o usuário não redigita): vai pra thread uma cópia que se
         // apaga sozinha.
         let password = Zeroizing::new(self.import_password.clone());
-        self.start_job(
-            ctx,
-            Key::Importing,
-            Job::Import {
-                kind: self.import_kind,
-                path,
-                password,
-            },
-        );
+        self.start_job(ctx, Key::Importing, Job::Import { kind: self.import_kind, path, password });
     }
 
     // ── onda 6: troca de senha mestra ───────────────────────────────────
@@ -1437,18 +1276,8 @@ impl KeysApp {
         }
         // Multi-pick novo substitui o que tivesse sobrado da vez anterior.
         let primeiro = sources.remove(0);
-        self.attach_queue = sources
-            .into_iter()
-            .map(|source| (item_id.to_string(), source))
-            .collect();
-        self.start_job(
-            ctx,
-            Key::ReadingFile,
-            Job::ReadAttachment {
-                item_id: item_id.to_string(),
-                source: primeiro,
-            },
-        );
+        self.attach_queue = sources.into_iter().map(|source| (item_id.to_string(), source)).collect();
+        self.start_job(ctx, Key::ReadingFile, Job::ReadAttachment { item_id: item_id.to_string(), source: primeiro });
     }
 
     /// Continua a fila de anexos multi-selecionados (um job por vez) — chamada
@@ -1459,21 +1288,13 @@ impl KeysApp {
             return;
         }
         let (item_id, source) = self.attach_queue.remove(0);
-        self.start_job(
-            ctx,
-            Key::ReadingFile,
-            Job::ReadAttachment { item_id, source },
-        );
+        self.start_job(ctx, Key::ReadingFile, Job::ReadAttachment { item_id, source });
     }
 
     /// Decodifica o base64 do anexo e grava no destino escolhido — na thread
     /// (`fs::write` em pasta de rede tem a mesma lentidão da leitura).
     fn save_attachment(&mut self, item_id: &str, attachment_id: &str, ctx: &egui::Context) {
-        let Some((name, b64)) = self
-            .raw
-            .as_ref()
-            .and_then(|r| vault::attachment_data(r, item_id, attachment_id))
-        else {
+        let Some((name, b64)) = self.raw.as_ref().and_then(|r| vault::attachment_data(r, item_id, attachment_id)) else {
             self.err = Some("anexo não encontrado".into());
             return;
         };
@@ -1488,14 +1309,7 @@ impl KeysApp {
             self.err = Some("informe o destino do anexo".into());
             return;
         };
-        self.start_job(
-            ctx,
-            Key::Working,
-            Job::SaveAttachment {
-                target,
-                data_b64: b64,
-            },
-        );
+        self.start_job(ctx, Key::Working, Job::SaveAttachment { target, data_b64: b64 });
     }
 
     // ── feedback ────────────────────────────────────────────────────────
@@ -1557,12 +1371,7 @@ impl KeysApp {
                     .show(ui, |ui| {
                         // Um toast curto não pode impor largura ao próximo.
                         ui.set_max_width((screen.width() - 64.0).clamp(1.0, 560.0));
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(format!("✓ {msg}")).color(skin.inverted_text),
-                            )
-                            .wrap(),
-                        );
+                        ui.add(egui::Label::new(egui::RichText::new(format!("✓ {msg}")).color(skin.inverted_text)).wrap());
                     });
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -1611,12 +1420,7 @@ impl KeysApp {
         self.job_label = None;
         match result {
             JobResult::Unlocked(Ok(unlocked)) => {
-                let Unlocked {
-                    path,
-                    raw,
-                    session,
-                    quick,
-                } = unlocked;
+                let Unlocked { path, raw, session, quick } = unlocked;
                 if quick {
                     self.store_quick_key(&session);
                 }
@@ -1627,13 +1431,7 @@ impl KeysApp {
             }
             JobResult::Unlocked(Err(e)) => self.err = Some(self.job_error(e)),
             JobResult::Created(Ok(created)) => {
-                let Created {
-                    path,
-                    file,
-                    raw,
-                    session,
-                    quick,
-                } = created;
+                let Created { path, file, raw, session, quick } = created;
                 // Gravação atômica aqui: poucos KB e é ela que decide se o
                 // cofre novo é adotado (disco e memória não divergem).
                 match vault::atomic_write(std::path::Path::new(&path), &file) {
@@ -1709,13 +1507,7 @@ impl KeysApp {
     }
 
     fn apply_attachment(&mut self, read: AttachmentRead) {
-        let AttachmentRead {
-            item_id,
-            name,
-            mime,
-            size,
-            data_b64,
-        } = read;
+        let AttachmentRead { item_id, name, mime, size, data_b64 } = read;
         let Some(mut next) = self.raw.clone() else {
             return;
         };
@@ -1764,137 +1556,91 @@ impl KeysApp {
         if !self.form_open {
             return;
         }
-        let title = if self.form_edit_id.is_some() {
-            t(Key::Edit)
-        } else {
-            t(Key::Add)
-        };
+        let title = if self.form_edit_id.is_some() { t(Key::Edit) } else { t(Key::Add) };
         let mut cancel = false;
-        let resp = egui::Modal::new(egui::Id::new("form"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(400.0);
-                ui.heading(title);
-                ui.add_space(10.0);
-                egui::Grid::new("form-grid")
-                    .num_columns(2)
-                    .spacing([10.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label(t(Key::Name));
-                        ui.add(line(&mut self.add_name).desired_width(280.0));
-                        ui.end_row();
+        let resp = egui::Modal::new(egui::Id::new("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(400.0);
+            ui.heading(title);
+            ui.add_space(10.0);
+            egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label(t(Key::Name));
+                ui.add(line(&mut self.add_name).desired_width(280.0));
+                ui.end_row();
 
-                        ui.label(t(Key::Username));
-                        ui.add(line(&mut self.add_user).desired_width(280.0));
-                        ui.end_row();
+                ui.label(t(Key::Username));
+                ui.add(line(&mut self.add_user).desired_width(280.0));
+                ui.end_row();
 
-                        ui.label(t(Key::Password));
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                line(&mut self.add_pass)
-                                    .password(!self.reveal_form)
-                                    .desired_width(252.0),
-                            );
-                            // 👁 reveal: o campo volta a ocultar ao fechar.
-                            if ghost(ui, if self.reveal_form { "🙈" } else { "👁" })
-                                .on_hover_text(t(Key::Reveal))
-                                .clicked()
-                            {
-                                self.reveal_form = !self.reveal_form;
-                            }
-                        });
-                        ui.end_row();
-
-                        ui.label(t(Key::Url));
-                        ui.add(
-                            line(&mut self.add_url)
-                                .hint_text("https://…")
-                                .desired_width(280.0),
-                        );
-                        ui.end_row();
-
-                        ui.label(t(Key::Totp));
-                        ui.add(
-                            line(&mut self.add_totp)
-                                .hint_text("base32 (opcional)")
-                                .desired_width(280.0),
-                        );
-                        ui.end_row();
-
-                        ui.label(t(Key::Notes));
-                        ui.add(
-                            block(&mut self.add_notes)
-                                .desired_width(280.0)
-                                .desired_rows(3),
-                        );
-                        ui.end_row();
-
-                        // onda 24 — pasta do item: "Sem pasta" + existentes.
-                        // Pastas owned antes da closure (nenhum borrow de raw).
-                        ui.label(t(Key::Folder));
-                        let pastas = self.raw.as_ref().map(vault::folders).unwrap_or_default();
-                        let pasta_sel = pastas
-                            .iter()
-                            .find(|p| Some(&p.id) == self.add_folder_id.as_ref())
-                            .map(|p| p.name.clone())
-                            .unwrap_or_else(|| t(Key::NoFolder).to_string());
-                        egui::ComboBox::from_id_salt("form-pasta")
-                            .width(280.0)
-                            .selected_text(pasta_sel)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.add_folder_id,
-                                    None,
-                                    t(Key::NoFolder),
-                                );
-                                for p in &pastas {
-                                    ui.selectable_value(
-                                        &mut self.add_folder_id,
-                                        Some(p.id.clone()),
-                                        &p.name,
-                                    );
-                                }
-                            });
-                        ui.end_row();
-                    });
-                // Força ao vivo (zxcvbn) — só quando há senha.
-                if !self.add_pass.is_empty() {
-                    let strength =
-                        generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
-                    ui.add_space(8.0);
-                    ui.add(
-                        egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
-                            .desired_width(280.0)
-                            .fill(strength_color(strength.score))
-                            .text(t(strength_key(strength.score))),
-                    )
-                    .on_hover_text(format!(
-                        "zxcvbn: 10^{:.1} tentativas",
-                        strength.guesses_log10
-                    ));
-                }
-                ui.add_space(12.0);
+                ui.label(t(Key::Password));
                 ui.horizontal(|ui| {
-                    // Atalho pro gerador (abre por cima deste modal).
-                    if pill(ui, t(Key::Generate), false).clicked() {
-                        self.gen_open = true;
+                    ui.add(line(&mut self.add_pass).password(!self.reveal_form).desired_width(252.0));
+                    // 👁 reveal: o campo volta a ocultar ao fechar.
+                    if ghost(ui, if self.reveal_form { "🙈" } else { "👁" }).on_hover_text(t(Key::Reveal)).clicked() {
+                        self.reveal_form = !self.reveal_form;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let can_save = !self.add_name.trim().is_empty();
-                        let saved = ui
-                            .add_enabled_ui(can_save, |ui| pill(ui, t(Key::Save), true))
-                            .inner
-                            .clicked();
-                        if saved {
-                            self.save_form();
-                        }
-                        if pill(ui, t(Key::Cancel), false).clicked() {
-                            cancel = true;
-                        }
-                    });
+                });
+                ui.end_row();
+
+                ui.label(t(Key::Url));
+                ui.add(line(&mut self.add_url).hint_text("https://…").desired_width(280.0));
+                ui.end_row();
+
+                ui.label(t(Key::Totp));
+                ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(280.0));
+                ui.end_row();
+
+                ui.label(t(Key::Notes));
+                ui.add(block(&mut self.add_notes).desired_width(280.0).desired_rows(3));
+                ui.end_row();
+
+                // onda 24 — pasta do item: "Sem pasta" + existentes.
+                // Pastas owned antes da closure (nenhum borrow de raw).
+                ui.label(t(Key::Folder));
+                let pastas = self.raw.as_ref().map(vault::folders).unwrap_or_default();
+                let pasta_sel = pastas
+                    .iter()
+                    .find(|p| Some(&p.id) == self.add_folder_id.as_ref())
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| t(Key::NoFolder).to_string());
+                egui::ComboBox::from_id_salt("form-pasta").width(280.0).selected_text(pasta_sel).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.add_folder_id, None, t(Key::NoFolder));
+                    for p in &pastas {
+                        ui.selectable_value(&mut self.add_folder_id, Some(p.id.clone()), &p.name);
+                    }
+                });
+                ui.end_row();
+            });
+            // Força ao vivo (zxcvbn) — só quando há senha.
+            if !self.add_pass.is_empty() {
+                let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
+                ui.add_space(8.0);
+                ui.add(
+                    egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
+                        .desired_width(280.0)
+                        .fill(strength_color(strength.score))
+                        .text(t(strength_key(strength.score))),
+                )
+                .on_hover_text(format!("zxcvbn: 10^{:.1} tentativas", strength.guesses_log10));
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                // Atalho pro gerador (abre por cima deste modal).
+                if pill(ui, t(Key::Generate), false).clicked() {
+                    self.gen_open = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let can_save = !self.add_name.trim().is_empty();
+                    let saved = ui.add_enabled_ui(can_save, |ui| pill(ui, t(Key::Save), true)).inner.clicked();
+                    if saved {
+                        self.save_form();
+                    }
+                    if pill(ui, t(Key::Cancel), false).clicked() {
+                        cancel = true;
+                    }
                 });
             });
+        });
         if cancel || resp.should_close() {
             self.close_form();
         }
@@ -1907,25 +1653,23 @@ impl KeysApp {
         };
         let mut confirm = false;
         let mut cancel = false;
-        let resp = egui::Modal::new(egui::Id::new("delete"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(320.0);
-                ui.heading(t(Key::Delete));
-                ui.add_space(8.0);
-                ui.strong(&name);
-                ui.label(egui::RichText::new(t(Key::TrashHint)).weak());
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if pill_danger(ui, t(Key::Confirm)).clicked() {
-                        confirm = true;
-                    }
-                    if pill(ui, t(Key::Cancel), false).clicked() {
-                        cancel = true;
-                    }
-                });
+        let resp = egui::Modal::new(egui::Id::new("delete")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(320.0);
+            ui.heading(t(Key::Delete));
+            ui.add_space(8.0);
+            ui.strong(&name);
+            ui.label(egui::RichText::new(t(Key::TrashHint)).weak());
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if pill_danger(ui, t(Key::Confirm)).clicked() {
+                    confirm = true;
+                }
+                if pill(ui, t(Key::Cancel), false).clicked() {
+                    cancel = true;
+                }
             });
+        });
         if confirm {
             self.delete_item(&id);
             self.delete_ask = None;
@@ -1942,84 +1686,56 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cancel = false;
         let mut run = false;
-        let resp = egui::Modal::new(egui::Id::new("import"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(380.0);
-                ui.heading(t(Key::Import));
-                ui.add_space(8.0);
-                // Duas linhas: os três rótulos juntos estouram a largura.
+        let resp = egui::Modal::new(egui::Id::new("import")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(380.0);
+            ui.heading(t(Key::Import));
+            ui.add_space(8.0);
+            // Duas linhas: os três rótulos juntos estouram a largura.
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.import_kind, ImportKind::Kdbx, t(Key::ImportKdbx));
+                ui.selectable_value(&mut self.import_kind, ImportKind::Bitwarden, t(Key::ImportBitwarden));
+            });
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.import_kind, ImportKind::Csv, t(Key::ImportCsv));
+            });
+            ui.add_space(10.0);
+            egui::Grid::new("import-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label(t(Key::ImportFile));
                 ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut self.import_kind,
-                        ImportKind::Kdbx,
-                        t(Key::ImportKdbx),
-                    );
-                    ui.selectable_value(
-                        &mut self.import_kind,
-                        ImportKind::Bitwarden,
-                        t(Key::ImportBitwarden),
-                    );
+                    ui.add(line(&mut self.import_path).hint_text("C:\\...\\export").desired_width(214.0));
+                    #[cfg(windows)]
+                    if ui.button("…").clicked() {
+                        if let Some(p) = pick_import_file(self.import_kind) {
+                            self.import_path = p;
+                        }
+                    }
                 });
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.import_kind, ImportKind::Csv, t(Key::ImportCsv));
-                });
-                ui.add_space(10.0);
-                egui::Grid::new("import-grid")
-                    .num_columns(2)
-                    .spacing([10.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label(t(Key::ImportFile));
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                line(&mut self.import_path)
-                                    .hint_text("C:\\...\\export")
-                                    .desired_width(214.0),
-                            );
-                            #[cfg(windows)]
-                            if ui.button("…").clicked() {
-                                if let Some(p) = pick_import_file(self.import_kind) {
-                                    self.import_path = p;
-                                }
-                            }
-                        });
-                        ui.end_row();
-                        // CSV é texto claro; kdbx e Bitwarden cifrado
-                        // precisam da senha do arquivo.
-                        if self.import_kind != ImportKind::Csv {
-                            ui.label(t(Key::ImportPassword));
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    line(&mut self.import_password)
-                                        .password(!self.reveal_import)
-                                        .desired_width(214.0),
-                                );
-                                if ghost(ui, if self.reveal_import { "🙈" } else { "👁" })
-                                    .on_hover_text(t(Key::Reveal))
-                                    .clicked()
-                                {
-                                    self.reveal_import = !self.reveal_import;
-                                }
-                            });
-                            ui.end_row();
+                ui.end_row();
+                // CSV é texto claro; kdbx e Bitwarden cifrado
+                // precisam da senha do arquivo.
+                if self.import_kind != ImportKind::Csv {
+                    ui.label(t(Key::ImportPassword));
+                    ui.horizontal(|ui| {
+                        ui.add(line(&mut self.import_password).password(!self.reveal_import).desired_width(214.0));
+                        if ghost(ui, if self.reveal_import { "🙈" } else { "👁" }).on_hover_text(t(Key::Reveal)).clicked() {
+                            self.reveal_import = !self.reveal_import;
                         }
                     });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let ready = !busy && !self.import_path.trim().is_empty();
-                    if ui
-                        .add_enabled_ui(ready, |ui| pill(ui, t(Key::Import), true))
-                        .inner
-                        .clicked()
-                    {
-                        run = true;
-                    }
-                    if pill(ui, t(Key::Cancel), false).clicked() {
-                        cancel = true;
-                    }
-                });
+                    ui.end_row();
+                }
             });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let ready = !busy && !self.import_path.trim().is_empty();
+                if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::Import), true)).inner.clicked() {
+                    run = true;
+                }
+                if pill(ui, t(Key::Cancel), false).clicked() {
+                    cancel = true;
+                }
+            });
+        });
         if run {
             self.run_import(ctx);
         } else if cancel || resp.should_close() {
@@ -2036,26 +1752,20 @@ impl KeysApp {
             return;
         };
         let mut close = false;
-        let resp = egui::Modal::new(egui::Id::new("import-report"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(300.0);
-                ui.heading(t(Key::ImportReportTitle));
-                ui.add_space(8.0);
-                ui.label(format!("{imported} {}", t(Key::Imported)));
-                if skipped > 0 {
-                    ui.label(
-                        egui::RichText::new(format!("{skipped} {}", t(Key::SkippedCardIdentity)))
-                            .small()
-                            .weak(),
-                    );
-                }
-                ui.add_space(12.0);
-                if pill(ui, t(Key::Close), true).clicked() {
-                    close = true;
-                }
-            });
+        let resp = egui::Modal::new(egui::Id::new("import-report")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(300.0);
+            ui.heading(t(Key::ImportReportTitle));
+            ui.add_space(8.0);
+            ui.label(format!("{imported} {}", t(Key::Imported)));
+            if skipped > 0 {
+                ui.label(egui::RichText::new(format!("{skipped} {}", t(Key::SkippedCardIdentity))).small().weak());
+            }
+            ui.add_space(12.0);
+            if pill(ui, t(Key::Close), true).clicked() {
+                close = true;
+            }
+        });
         if close || resp.should_close() {
             self.import_report = None;
         }
@@ -2068,72 +1778,58 @@ impl KeysApp {
         }
         let mut close = false;
         let mut generate = false;
-        let resp = egui::Modal::new(egui::Id::new("generator"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(360.0);
-                ui.heading(t(Key::Generator));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.gen_passphrase, false, t(Key::Password));
-                    ui.selectable_value(&mut self.gen_passphrase, true, t(Key::Passphrase));
-                });
-                ui.add_space(8.0);
-                if self.gen_passphrase {
-                    ui.add(egui::Slider::new(&mut self.gen_pp.words, 3..=12).text(t(Key::Words)));
-                    ui.horizontal(|ui| {
-                        ui.label(t(Key::Separator));
-                        ui.add(line(&mut self.gen_pp.separator).desired_width(56.0));
-                    });
-                    ui.checkbox(&mut self.gen_pp.capitalize, t(Key::Capitalize));
-                    ui.checkbox(&mut self.gen_pp.include_number, t(Key::IncludeNumber));
-                } else {
-                    ui.add(
-                        egui::Slider::new(&mut self.gen_pw.length, 4..=128).text(t(Key::Length)),
-                    );
-                    ui.checkbox(&mut self.gen_pw.lowercase, t(Key::Lowercase));
-                    ui.checkbox(&mut self.gen_pw.uppercase, t(Key::Uppercase));
-                    ui.checkbox(&mut self.gen_pw.digits, t(Key::Digits));
-                    ui.checkbox(&mut self.gen_pw.symbols, t(Key::Symbols));
-                }
-                ui.add_space(10.0);
-                if pill(ui, t(Key::Generate), true).clicked() {
-                    generate = true;
-                }
-                if !self.gen_result.is_empty() {
-                    ui.add_space(10.0);
-                    ui.add(
-                        line(&mut self.gen_result)
-                            .desired_width(320.0)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                    ui.horizontal(|ui| {
-                        if ghost(ui, t(Key::Copy)).clicked()
-                            && clipboard::copy_secret(self.gen_result.clone()).is_ok()
-                        {
-                            self.copied(t(Key::Generator));
-                        }
-                        // "Usar" só faz sentido com o form aberto — é ele que
-                        // recebe a senha gerada.
-                        if self.form_open && ghost(ui, t(Key::Use)).clicked() {
-                            self.add_pass = self.gen_result.clone();
-                            self.gen_result.clear();
-                            close = true;
-                        }
-                    });
-                }
-                ui.add_space(12.0);
-                if pill(ui, t(Key::Close), false).clicked() {
-                    close = true;
-                }
+        let resp = egui::Modal::new(egui::Id::new("generator")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(360.0);
+            ui.heading(t(Key::Generator));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.gen_passphrase, false, t(Key::Password));
+                ui.selectable_value(&mut self.gen_passphrase, true, t(Key::Passphrase));
             });
-        if generate {
-            let made = if self.gen_passphrase {
-                generator::generate_passphrase(&self.gen_pp)
+            ui.add_space(8.0);
+            if self.gen_passphrase {
+                ui.add(egui::Slider::new(&mut self.gen_pp.words, 3..=12).text(t(Key::Words)));
+                ui.horizontal(|ui| {
+                    ui.label(t(Key::Separator));
+                    ui.add(line(&mut self.gen_pp.separator).desired_width(56.0));
+                });
+                ui.checkbox(&mut self.gen_pp.capitalize, t(Key::Capitalize));
+                ui.checkbox(&mut self.gen_pp.include_number, t(Key::IncludeNumber));
             } else {
-                generator::generate_password(&self.gen_pw)
-            };
+                ui.add(egui::Slider::new(&mut self.gen_pw.length, 4..=128).text(t(Key::Length)));
+                ui.checkbox(&mut self.gen_pw.lowercase, t(Key::Lowercase));
+                ui.checkbox(&mut self.gen_pw.uppercase, t(Key::Uppercase));
+                ui.checkbox(&mut self.gen_pw.digits, t(Key::Digits));
+                ui.checkbox(&mut self.gen_pw.symbols, t(Key::Symbols));
+            }
+            ui.add_space(10.0);
+            if pill(ui, t(Key::Generate), true).clicked() {
+                generate = true;
+            }
+            if !self.gen_result.is_empty() {
+                ui.add_space(10.0);
+                ui.add(line(&mut self.gen_result).desired_width(320.0).font(egui::TextStyle::Monospace));
+                ui.horizontal(|ui| {
+                    if ghost(ui, t(Key::Copy)).clicked() && clipboard::copy_secret(self.gen_result.clone()).is_ok() {
+                        self.copied(t(Key::Generator));
+                    }
+                    // "Usar" só faz sentido com o form aberto — é ele que
+                    // recebe a senha gerada.
+                    if self.form_open && ghost(ui, t(Key::Use)).clicked() {
+                        self.add_pass = self.gen_result.clone();
+                        self.gen_result.clear();
+                        close = true;
+                    }
+                });
+            }
+            ui.add_space(12.0);
+            if pill(ui, t(Key::Close), false).clicked() {
+                close = true;
+            }
+        });
+        if generate {
+            let made = if self.gen_passphrase { generator::generate_passphrase(&self.gen_pp) } else { generator::generate_password(&self.gen_pw) };
             match made {
                 Ok(s) => {
                     self.gen_result = s;
@@ -2156,46 +1852,33 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cancel = false;
         let mut confirm = false;
-        let resp = egui::Modal::new(egui::Id::new("change-master"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(360.0);
-                ui.heading(t(Key::ChangeMaster));
-                ui.add_space(10.0);
-                egui::Grid::new("change-grid")
-                    .num_columns(2)
-                    .spacing([10.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label(t(Key::OldPassword));
-                        ui.add(line(&mut self.chg_old).password(true).desired_width(220.0));
-                        ui.end_row();
-                        ui.label(t(Key::NewPassword));
-                        ui.add(line(&mut self.chg_new).password(true).desired_width(220.0));
-                        ui.end_row();
-                        ui.label(t(Key::NewPasswordConfirm));
-                        ui.add(
-                            line(&mut self.chg_confirm)
-                                .password(true)
-                                .desired_width(220.0),
-                        );
-                        ui.end_row();
-                    });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let ready = !busy && !self.chg_new.is_empty();
-                    if ui
-                        .add_enabled_ui(ready, |ui| pill(ui, t(Key::Confirm), true))
-                        .inner
-                        .clicked()
-                    {
-                        confirm = true;
-                    }
-                    if pill(ui, t(Key::Cancel), false).clicked() {
-                        cancel = true;
-                    }
-                });
+        let resp = egui::Modal::new(egui::Id::new("change-master")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(360.0);
+            ui.heading(t(Key::ChangeMaster));
+            ui.add_space(10.0);
+            egui::Grid::new("change-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label(t(Key::OldPassword));
+                ui.add(line(&mut self.chg_old).password(true).desired_width(220.0));
+                ui.end_row();
+                ui.label(t(Key::NewPassword));
+                ui.add(line(&mut self.chg_new).password(true).desired_width(220.0));
+                ui.end_row();
+                ui.label(t(Key::NewPasswordConfirm));
+                ui.add(line(&mut self.chg_confirm).password(true).desired_width(220.0));
+                ui.end_row();
             });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let ready = !busy && !self.chg_new.is_empty();
+                if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::Confirm), true)).inner.clicked() {
+                    confirm = true;
+                }
+                if pill(ui, t(Key::Cancel), false).clicked() {
+                    cancel = true;
+                }
+            });
+        });
         if confirm {
             self.change_master(ctx);
         } else if cancel || resp.should_close() {
@@ -2212,12 +1895,7 @@ impl KeysApp {
             return;
         };
         let ready = self.job_label.is_none();
-        let item_name = self
-            .items
-            .iter()
-            .find(|i| i.id == item_id)
-            .map(|i| i.name.clone())
-            .unwrap_or_default();
+        let item_name = self.items.iter().find(|i| i.id == item_id).map(|i| i.name.clone()).unwrap_or_default();
         // Owned antes do UI: nenhum borrow de self.raw na closure.
         // Separa vivos (para exibir) de deletados (lixeira).
         let mut atts: Vec<(String, String, u64)> = Vec::new();
@@ -2227,29 +1905,15 @@ impl KeysApp {
             .as_ref()
             .and_then(|r| r.get("items"))
             .and_then(|i| i.as_array())
-            .and_then(|arr| {
-                arr.iter()
-                    .find(|it| it.get("id").and_then(|v| v.as_str()) == Some(item_id.as_str()))
-            })
+            .and_then(|arr| arr.iter().find(|it| it.get("id").and_then(|v| v.as_str()) == Some(item_id.as_str())))
             .and_then(|item| item.get("attachments"))
             .and_then(|a| a.as_array())
         {
             for a in list {
-                let id = a
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let name = a
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("anexo")
-                    .to_string();
+                let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("anexo").to_string();
                 let size = a.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                let deleted = a
-                    .get("deletedAt")
-                    .map(|v| !v.is_null())
-                    .unwrap_or(false);
+                let deleted = a.get("deletedAt").map(|v| !v.is_null()).unwrap_or(false);
                 if deleted {
                     trashed.push((id, name, size));
                 } else {
@@ -2263,107 +1927,71 @@ impl KeysApp {
         let mut del: Option<String> = None;
         let mut restore: Option<String> = None;
         let mut del_forever: Option<String> = None;
-        let resp = egui::Modal::new(egui::Id::new("attachments"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(380.0);
-                ui.heading(format!("{} — {item_name}", t(Key::Attachments)));
+        let resp = egui::Modal::new(egui::Id::new("attachments")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(380.0);
+            ui.heading(format!("{} — {item_name}", t(Key::Attachments)));
+            ui.add_space(8.0);
+            if atts.is_empty() {
+                ui.label(egui::RichText::new(t(Key::NoAttachments)).weak());
+            } else {
+                for (att_id, name, size) in &atts {
+                    ui.horizontal(|ui| {
+                        ui.label(name);
+                        ui.label(egui::RichText::new(human_size(*size as usize)).small().weak());
+                        if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::SaveAttachment), false)).inner.clicked() {
+                            save = Some(att_id.clone());
+                        }
+                        // onda 24 — excluir anexo: sem confirmação (o
+                        // arquivo original continua no disco), mas com o
+                        // mesmo gate do resto (nenhum persist durante job).
+                        if ui.add_enabled_ui(ready, |ui| ghost(ui, "🗑")).inner.on_hover_text(t(Key::DeleteAttachment)).clicked() {
+                            del = Some(att_id.clone());
+                        }
+                    });
+                }
+            }
+            // Lixeira de anexos — anexos excluídos ficam aqui até serem
+            // restaurados ou excluídos de vez (padrão do item, onda 23).
+            if !trashed.is_empty() {
                 ui.add_space(8.0);
-                if atts.is_empty() {
-                    ui.label(egui::RichText::new(t(Key::NoAttachments)).weak());
-                } else {
-                    for (att_id, name, size) in &atts {
-                        ui.horizontal(|ui| {
-                            ui.label(name);
-                            ui.label(
-                                egui::RichText::new(human_size(*size as usize))
-                                    .small()
-                                    .weak(),
-                            );
-                            if ui
-                                .add_enabled_ui(ready, |ui| pill(ui, t(Key::SaveAttachment), false))
-                                .inner
-                                .clicked()
-                            {
-                                save = Some(att_id.clone());
-                            }
-                            // onda 24 — excluir anexo: sem confirmação (o
-                            // arquivo original continua no disco), mas com o
-                            // mesmo gate do resto (nenhum persist durante job).
-                            if ui
-                                .add_enabled_ui(ready, |ui| ghost(ui, "🗑"))
-                                .inner
-                                .on_hover_text(t(Key::DeleteAttachment))
-                                .clicked()
-                            {
-                                del = Some(att_id.clone());
-                            }
-                        });
-                    }
-                }
-                // Lixeira de anexos — anexos excluídos ficam aqui até serem
-                // restaurados ou excluídos de vez (padrão do item, onda 23).
-                if !trashed.is_empty() {
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(format!("🗑 {}", t(Key::Trash))).small().weak());
-                    ui.add_space(4.0);
-                    for (att_id, name, size) in &trashed {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(name).weak());
-                            ui.label(
-                                egui::RichText::new(human_size(*size as usize))
-                                    .small()
-                                    .weak(),
-                            );
-                            if ui
-                                .add_enabled_ui(ready, |ui| ghost(ui, t(Key::Restore)))
-                                .inner
-                                .clicked()
-                            {
-                                restore = Some(att_id.clone());
-                            }
-                            if ui
-                                .add_enabled_ui(ready, |ui| ghost(ui, "🗑"))
-                                .inner
-                                .on_hover_text(t(Key::DeleteForever))
-                                .clicked()
-                            {
-                                del_forever = Some(att_id.clone());
-                            }
-                        });
-                    }
-                }
-                ui.add_space(10.0);
                 ui.separator();
-                ui.add_space(6.0);
-                // No Linux o(s) caminho(s) são digitados (sem gtk no AppImage),
-                // MULTI: separados por `;` — o Windows tem picker nativo.
-                #[cfg(not(windows))]
-                ui.horizontal(|ui| {
-                    ui.label(t(Key::ImportFile));
-                    ui.add(
-                        line(&mut self.attach_path)
-                            .hint_text("C:\\...\\arquivo1;arquivo2")
-                            .desired_width(260.0),
-                    );
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled_ui(ready, |ui| pill(ui, t(Key::AddAttachment), true))
-                        .inner
-                        .clicked()
-                    {
-                        add = true;
-                    }
-                    if pill(ui, t(Key::Close), false).clicked() {
-                        close = true;
-                    }
-                });
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(format!("🗑 {}", t(Key::Trash))).small().weak());
+                ui.add_space(4.0);
+                for (att_id, name, size) in &trashed {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(name).weak());
+                        ui.label(egui::RichText::new(human_size(*size as usize)).small().weak());
+                        if ui.add_enabled_ui(ready, |ui| ghost(ui, t(Key::Restore))).inner.clicked() {
+                            restore = Some(att_id.clone());
+                        }
+                        if ui.add_enabled_ui(ready, |ui| ghost(ui, "🗑")).inner.on_hover_text(t(Key::DeleteForever)).clicked() {
+                            del_forever = Some(att_id.clone());
+                        }
+                    });
+                }
+            }
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+            // No Linux o(s) caminho(s) são digitados (sem gtk no AppImage),
+            // MULTI: separados por `;` — o Windows tem picker nativo.
+            #[cfg(not(windows))]
+            ui.horizontal(|ui| {
+                ui.label(t(Key::ImportFile));
+                ui.add(line(&mut self.attach_path).hint_text("C:\\...\\arquivo1;arquivo2").desired_width(260.0));
             });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::AddAttachment), true)).inner.clicked() {
+                    add = true;
+                }
+                if pill(ui, t(Key::Close), false).clicked() {
+                    close = true;
+                }
+            });
+        });
         if let Some(att_id) = save {
             self.save_attachment(&item_id, &att_id, ctx);
         } else if let Some(att_id) = del {
@@ -2404,33 +2032,23 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cria = false;
         let mut cancela = false;
-        let resp = egui::Modal::new(egui::Id::new("nova-pasta"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(320.0);
-                ui.heading(t(Key::NewFolder));
-                ui.add_space(8.0);
-                ui.add(
-                    line(&mut self.folder_new)
-                        .hint_text(t(Key::FolderName))
-                        .desired_width(290.0),
-                );
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let pronto = !busy && !self.folder_new.trim().is_empty();
-                    if ui
-                        .add_enabled_ui(pronto, |ui| pill(ui, t(Key::Add), true))
-                        .inner
-                        .clicked()
-                    {
-                        cria = true;
-                    }
-                    if pill(ui, t(Key::Cancel), false).clicked() {
-                        cancela = true;
-                    }
-                });
+        let resp = egui::Modal::new(egui::Id::new("nova-pasta")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(320.0);
+            ui.heading(t(Key::NewFolder));
+            ui.add_space(8.0);
+            ui.add(line(&mut self.folder_new).hint_text(t(Key::FolderName)).desired_width(290.0));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let pronto = !busy && !self.folder_new.trim().is_empty();
+                if ui.add_enabled_ui(pronto, |ui| pill(ui, t(Key::Add), true)).inner.clicked() {
+                    cria = true;
+                }
+                if pill(ui, t(Key::Cancel), false).clicked() {
+                    cancela = true;
+                }
             });
+        });
         if cria {
             self.create_folder();
             self.folder_new_open = false;
@@ -2471,101 +2089,64 @@ impl KeysApp {
         let mut cancela_rename = false;
         let mut deleta: Option<String> = None;
         let mut fecha = false;
-        let resp = egui::Modal::new(egui::Id::new("pastas"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(340.0);
-                ui.heading(t(Key::Folders));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        line(&mut self.folder_new)
-                            .hint_text(t(Key::FolderName))
-                            .desired_width(234.0),
-                    );
-                    if ui
-                        .add_enabled_ui(!busy && !self.folder_new.trim().is_empty(), |ui| {
-                            pill(ui, t(Key::Add), true)
-                        })
-                        .inner
-                        .clicked()
-                    {
-                        cria = true;
-                    }
-                });
-                ui.add_space(6.0);
-                if pastas.is_empty() {
-                    ui.label(egui::RichText::new(t(Key::NoFolder)).weak());
-                } else {
-                    egui::ScrollArea::vertical()
-                        .max_height(240.0)
-                        .show(ui, |ui| {
-                            for p in &pastas {
-                                ui.horizontal(|ui| {
-                                    if Some(&p.id) == self.folder_edit_id.as_ref() {
-                                        // Renomear: campo inline + confirmar/cancelar.
-                                        ui.add(
-                                            line(&mut self.folder_edit_name).desired_width(196.0),
-                                        );
-                                        if ui
-                                            .add_enabled_ui(
-                                                !busy && !self.folder_edit_name.trim().is_empty(),
-                                                |ui| pill(ui, t(Key::Save), true),
-                                            )
-                                            .inner
-                                            .clicked()
-                                        {
-                                            confirma_rename = Some(p.id.clone());
-                                        }
-                                        if ghost(ui, "✕").on_hover_text(t(Key::Cancel)).clicked()
-                                        {
-                                            cancela_rename = true;
-                                        }
-                                    } else {
-                                        ui.label(&p.name);
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui
-                                                    .add_enabled_ui(!busy, |ui| ghost(ui, "🗑"))
-                                                    .inner
-                                                    .on_hover_text(t(Key::DeleteFolder))
-                                                    .clicked()
-                                                {
-                                                    deleta = Some(p.id.clone());
-                                                }
-                                                if ui
-                                                    .add_enabled_ui(!busy, |ui| ghost(ui, "✏"))
-                                                    .inner
-                                                    .on_hover_text(t(Key::RenameFolder))
-                                                    .clicked()
-                                                {
-                                                    inicia_rename = Some(p.id.clone());
-                                                }
-                                            },
-                                        );
-                                    }
-                                });
-                                ui.separator();
-                            }
-                        });
-                }
-                ui.add_space(10.0);
-                if pill(ui, t(Key::Close), false).clicked() {
-                    fecha = true;
+        let resp = egui::Modal::new(egui::Id::new("pastas")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(340.0);
+            ui.heading(t(Key::Folders));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add(line(&mut self.folder_new).hint_text(t(Key::FolderName)).desired_width(234.0));
+                if ui.add_enabled_ui(!busy && !self.folder_new.trim().is_empty(), |ui| pill(ui, t(Key::Add), true)).inner.clicked() {
+                    cria = true;
                 }
             });
+            ui.add_space(6.0);
+            if pastas.is_empty() {
+                ui.label(egui::RichText::new(t(Key::NoFolder)).weak());
+            } else {
+                egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
+                    for p in &pastas {
+                        ui.horizontal(|ui| {
+                            if Some(&p.id) == self.folder_edit_id.as_ref() {
+                                // Renomear: campo inline + confirmar/cancelar.
+                                ui.add(line(&mut self.folder_edit_name).desired_width(196.0));
+                                if ui
+                                    .add_enabled_ui(!busy && !self.folder_edit_name.trim().is_empty(), |ui| pill(ui, t(Key::Save), true))
+                                    .inner
+                                    .clicked()
+                                {
+                                    confirma_rename = Some(p.id.clone());
+                                }
+                                if ghost(ui, "✕").on_hover_text(t(Key::Cancel)).clicked() {
+                                    cancela_rename = true;
+                                }
+                            } else {
+                                ui.label(&p.name);
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add_enabled_ui(!busy, |ui| ghost(ui, "🗑")).inner.on_hover_text(t(Key::DeleteFolder)).clicked() {
+                                        deleta = Some(p.id.clone());
+                                    }
+                                    if ui.add_enabled_ui(!busy, |ui| ghost(ui, "✏")).inner.on_hover_text(t(Key::RenameFolder)).clicked() {
+                                        inicia_rename = Some(p.id.clone());
+                                    }
+                                });
+                            }
+                        });
+                        ui.separator();
+                    }
+                });
+            }
+            ui.add_space(10.0);
+            if pill(ui, t(Key::Close), false).clicked() {
+                fecha = true;
+            }
+        });
         // Ações fora da closure, uma por vez (o usuário clicou num só).
         if cria {
             self.create_folder();
         }
         if let Some(id) = inicia_rename {
-            self.folder_edit_name = pastas
-                .iter()
-                .find(|p| p.id == id)
-                .map(|p| p.name.clone())
-                .unwrap_or_default();
+            self.folder_edit_name = pastas.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
             self.folder_edit_id = Some(id);
         }
         if cancela_rename {
@@ -2612,69 +2193,54 @@ impl KeysApp {
         if !self.trash_open {
             return;
         }
-        let rows = self
-            .raw
-            .as_ref()
-            .map(vault::trashed_items)
-            .unwrap_or_default();
+        let rows = self.raw.as_ref().map(vault::trashed_items).unwrap_or_default();
         let mut close = false;
         let mut restore: Option<String> = None;
         let mut purge: Option<String> = None;
         let mut ask: Option<String> = None;
         let keep_ask = self.purge_ask.clone();
-        let resp = egui::Modal::new(egui::Id::new("trash"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(420.0);
-                ui.heading(t(Key::Trash));
-                ui.add_space(8.0);
-                if rows.is_empty() {
-                    ui.label(egui::RichText::new(t(Key::TrashEmpty)).weak());
-                } else {
-                    egui::ScrollArea::vertical()
-                        .max_height(280.0)
-                        .show(ui, |ui| {
-                            for row in &rows {
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.strong(&row.name);
-                                        ui.label(
-                                            egui::RichText::new(date_from_ms(row.deleted_at))
-                                                .small()
-                                                .weak(),
-                                        );
-                                    });
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if keep_ask.as_deref() == Some(row.id.as_str()) {
-                                                if pill_danger(ui, t(Key::Confirm)).clicked() {
-                                                    purge = Some(row.id.clone());
-                                                }
-                                                if pill(ui, t(Key::Cancel), false).clicked() {
-                                                    ask = Some(String::new());
-                                                }
-                                            } else {
-                                                if ghost(ui, t(Key::DeleteForever)).clicked() {
-                                                    ask = Some(row.id.clone());
-                                                }
-                                                if ghost(ui, t(Key::Restore)).clicked() {
-                                                    restore = Some(row.id.clone());
-                                                }
-                                            }
-                                        },
-                                    );
-                                });
-                                ui.separator();
-                            }
+        let resp = egui::Modal::new(egui::Id::new("trash")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(420.0);
+            ui.heading(t(Key::Trash));
+            ui.add_space(8.0);
+            if rows.is_empty() {
+                ui.label(egui::RichText::new(t(Key::TrashEmpty)).weak());
+            } else {
+                egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                    for row in &rows {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.strong(&row.name);
+                                ui.label(egui::RichText::new(date_from_ms(row.deleted_at)).small().weak());
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if keep_ask.as_deref() == Some(row.id.as_str()) {
+                                    if pill_danger(ui, t(Key::Confirm)).clicked() {
+                                        purge = Some(row.id.clone());
+                                    }
+                                    if pill(ui, t(Key::Cancel), false).clicked() {
+                                        ask = Some(String::new());
+                                    }
+                                } else {
+                                    if ghost(ui, t(Key::DeleteForever)).clicked() {
+                                        ask = Some(row.id.clone());
+                                    }
+                                    if ghost(ui, t(Key::Restore)).clicked() {
+                                        restore = Some(row.id.clone());
+                                    }
+                                }
+                            });
                         });
-                }
-                ui.add_space(10.0);
-                if pill(ui, t(Key::Close), false).clicked() {
-                    close = true;
-                }
-            });
+                        ui.separator();
+                    }
+                });
+            }
+            ui.add_space(10.0);
+            if pill(ui, t(Key::Close), false).clicked() {
+                close = true;
+            }
+        });
         if let Some(id) = restore {
             self.restore_item(&id);
         } else if let Some(id) = purge {
@@ -2697,63 +2263,46 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cancel = false;
         let mut run = false;
-        let resp = egui::Modal::new(egui::Id::new("export"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(420.0);
-                ui.heading(t(Key::Export));
-                ui.add_space(8.0);
-                // Aviso FORTE: o export não tem cifra nenhuma.
-                egui::Frame::NONE
-                    .fill(egui::Color32::from_rgb(0xC0, 0x3A, 0x3A).gamma_multiply(0.22))
-                    .corner_radius(egui::CornerRadius::same(6))
-                    .inner_margin(egui::Margin::symmetric(10, 8))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(t(Key::ExportWarning))
-                                .color(egui::Color32::from_rgb(0xE0, 0x6C, 0x6C)),
-                        );
-                    });
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut self.export_kind,
-                        ExportKind::Json,
-                        t(Key::ExportJson),
-                    );
-                    ui.selectable_value(&mut self.export_kind, ExportKind::Csv, t(Key::ExportCsv));
+        let resp = egui::Modal::new(egui::Id::new("export")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(420.0);
+            ui.heading(t(Key::Export));
+            ui.add_space(8.0);
+            // Aviso FORTE: o export não tem cifra nenhuma.
+            egui::Frame::NONE
+                .fill(egui::Color32::from_rgb(0xC0, 0x3A, 0x3A).gamma_multiply(0.22))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(t(Key::ExportWarning)).color(egui::Color32::from_rgb(0xE0, 0x6C, 0x6C)));
                 });
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(t(Key::ImportFile));
-                    ui.add(
-                        line(&mut self.export_path)
-                            .hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext()))
-                            .desired_width(230.0),
-                    );
-                    #[cfg(windows)]
-                    if ui.button("…").clicked() {
-                        if let Some(p) = pick_save_export(self.export_kind) {
-                            self.export_path = p;
-                        }
-                    }
-                });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let ready = !busy && !self.export_path.trim().is_empty();
-                    if ui
-                        .add_enabled_ui(ready, |ui| pill(ui, t(Key::Export), true))
-                        .inner
-                        .clicked()
-                    {
-                        run = true;
-                    }
-                    if pill(ui, t(Key::Cancel), false).clicked() {
-                        cancel = true;
-                    }
-                });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.export_kind, ExportKind::Json, t(Key::ExportJson));
+                ui.selectable_value(&mut self.export_kind, ExportKind::Csv, t(Key::ExportCsv));
             });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label(t(Key::ImportFile));
+                ui.add(line(&mut self.export_path).hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext())).desired_width(230.0));
+                #[cfg(windows)]
+                if ui.button("…").clicked() {
+                    if let Some(p) = pick_save_export(self.export_kind) {
+                        self.export_path = p;
+                    }
+                }
+            });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let ready = !busy && !self.export_path.trim().is_empty();
+                if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::Export), true)).inner.clicked() {
+                    run = true;
+                }
+                if pill(ui, t(Key::Cancel), false).clicked() {
+                    cancel = true;
+                }
+            });
+        });
         if run {
             self.run_export(ctx);
         } else if cancel || resp.should_close() {
@@ -2788,38 +2337,35 @@ impl KeysApp {
     fn update_modal(&mut self, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
         let Some(status) = self.update_status.clone() else { return };
         let mut apply = false;
-        let resp = egui::Modal::new(egui::Id::new("update"))
-            .frame(modal_frame(ctx))
-            .show(ctx, |ui| {
-                begin_dialog(ui);
-                ui.set_width(420.0);
-                ui.heading(t(Key::Update));
-                ui.add_space(8.0);
-                match &status {
-                    autoupdate::UpdateStatus::Current => {
-                        ui.label(t(Key::CurrentVersion));
-                        ui.add_space(10.0);
-                        ui.label(format!("{} {}", t(Key::VersionLabel), CURRENT_VERSION));
-                    }
-                    autoupdate::UpdateStatus::Available { version, notes, .. } => {
-                        ui.label(format!("{} {}", t(Key::UpdateAvailable), version));
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(notes).weak());
-                        ui.add_space(12.0);
-                        if pill(ui, t(Key::DownloadAndInstall), true).clicked() {
-                            apply = true;
-                        }
-                    }
-                    autoupdate::UpdateStatus::Error(e) => {
-                        ui.label(egui::RichText::new(format!("{}: {}", t(Key::Error), e))
-                            .color(egui::Color32::LIGHT_RED));
+        let resp = egui::Modal::new(egui::Id::new("update")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            ui.set_width(420.0);
+            ui.heading(t(Key::Update));
+            ui.add_space(8.0);
+            match &status {
+                autoupdate::UpdateStatus::Current => {
+                    ui.label(t(Key::CurrentVersion));
+                    ui.add_space(10.0);
+                    ui.label(format!("{} {}", t(Key::VersionLabel), CURRENT_VERSION));
+                }
+                autoupdate::UpdateStatus::Available { version, notes, .. } => {
+                    ui.label(format!("{} {}", t(Key::UpdateAvailable), version));
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(notes).weak());
+                    ui.add_space(12.0);
+                    if pill(ui, t(Key::DownloadAndInstall), true).clicked() {
+                        apply = true;
                     }
                 }
-                ui.add_space(12.0);
-                if pill(ui, t(Key::Close), false).clicked() {
-                    self.update_status = None;
+                autoupdate::UpdateStatus::Error(e) => {
+                    ui.label(egui::RichText::new(format!("{}: {}", t(Key::Error), e)).color(egui::Color32::LIGHT_RED));
                 }
-            });
+            }
+            ui.add_space(12.0);
+            if pill(ui, t(Key::Close), false).clicked() {
+                self.update_status = None;
+            }
+        });
         if apply {
             self.apply_update();
         } else if resp.should_close() {
@@ -2931,42 +2477,30 @@ impl eframe::App for KeysApp {
 }
 
 impl KeysApp {
-    fn locked_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        t: &dyn Fn(Key) -> &'static str,
-    ) {
+    fn locked_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
         // Job rodando (Argon2id): destrancar/criar ficam desabilitados.
         let busy = self.job_label.is_some();
         ui.heading(t(Key::Vault));
         ui.add_space(10.0);
 
-        egui::Grid::new("unlock")
-            .num_columns(2)
-            .spacing([10.0, 8.0])
-            .show(ui, |ui| {
-                ui.label(".tkeys");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        line(&mut self.path)
-                            .hint_text("C:\\...\\cofre.tkeys")
-                            .desired_width(260.0),
-                    );
-                    #[cfg(windows)]
-                    if ui.button("…").clicked() {
-                        if let Some(p) = pick_open() {
-                            self.path = p;
-                            self.quick_ativa = self.path_has_stored_key();
-                        }
+        egui::Grid::new("unlock").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+            ui.label(".tkeys");
+            ui.horizontal(|ui| {
+                ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(260.0));
+                #[cfg(windows)]
+                if ui.button("…").clicked() {
+                    if let Some(p) = pick_open() {
+                        self.path = p;
+                        self.quick_ativa = self.path_has_stored_key();
                     }
-                });
-                ui.end_row();
-
-                ui.label(t(Key::MasterPassword));
-                ui.add(line(&mut self.master).password(true).desired_width(260.0));
-                ui.end_row();
+                }
             });
+            ui.end_row();
+
+            ui.label(t(Key::MasterPassword));
+            ui.add(line(&mut self.master).password(true).desired_width(260.0));
+            ui.end_row();
+        });
 
         ui.add_space(4.0);
         #[cfg(windows)]
@@ -2976,12 +2510,8 @@ impl KeysApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let ready = !busy && !self.path.trim().is_empty() && !self.master.is_empty();
-            if ui
-                .add_enabled_ui(ready, |ui| pill(ui, t(Key::Unlock), true))
-                .inner
-                .clicked()
-                || (!busy
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter) && !self.master.is_empty()))
+            if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::Unlock), true)).inner.clicked()
+                || (!busy && ui.input(|i| i.key_pressed(egui::Key::Enter) && !self.master.is_empty()))
             {
                 self.unlock(ctx);
             }
@@ -2989,10 +2519,7 @@ impl KeysApp {
 
         if let Some(e) = &self.err {
             ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(format!("{}: {e}", t(Key::Error)))
-                    .color(egui::Color32::LIGHT_RED),
-            );
+            ui.label(egui::RichText::new(format!("{}: {e}", t(Key::Error))).color(egui::Color32::LIGHT_RED));
         }
 
         ui.add_space(18.0);
@@ -3002,51 +2529,35 @@ impl KeysApp {
         // ── novo cofre ─────────────────────────────────────────────────
         ui.heading(t(Key::NewVault));
         ui.add_space(6.0);
-        egui::Grid::new("new")
-            .num_columns(2)
-            .spacing([10.0, 8.0])
-            .show(ui, |ui| {
-                ui.label(".tkeys");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        line(&mut self.path)
-                            .hint_text("C:\\...\\novo-cofre.tkeys")
-                            .desired_width(260.0),
-                    );
-                    #[cfg(windows)]
-                    if ui.button("…").clicked() {
-                        if let Some(p) = pick_save() {
-                            self.path = p;
-                        }
+        egui::Grid::new("new").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+            ui.label(".tkeys");
+            ui.horizontal(|ui| {
+                ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(260.0));
+                #[cfg(windows)]
+                if ui.button("…").clicked() {
+                    if let Some(p) = pick_save() {
+                        self.path = p;
                     }
-                });
-                ui.end_row();
-                ui.label(t(Key::MasterPassword));
-                ui.add(line(&mut self.master).password(true));
-                ui.end_row();
-                ui.label(format!("{} ✓", t(Key::Password)));
-                ui.add(line(&mut self.confirm).password(true));
-                ui.end_row();
+                }
             });
+            ui.end_row();
+            ui.label(t(Key::MasterPassword));
+            ui.add(line(&mut self.master).password(true));
+            ui.end_row();
+            ui.label(format!("{} ✓", t(Key::Password)));
+            ui.add(line(&mut self.confirm).password(true));
+            ui.end_row();
+        });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let ready = !busy && !self.path.trim().is_empty() && !self.master.is_empty();
-            if ui
-                .add_enabled_ui(ready, |ui| pill(ui, t(Key::NewVault), true))
-                .inner
-                .clicked()
-            {
+            if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::NewVault), true)).inner.clicked() {
                 self.create(ctx);
             }
         });
     }
 
-    fn unlocked_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        t: &dyn Fn(Key) -> &'static str,
-    ) {
+    fn unlocked_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
         let skin = Skin::of(ui);
         // Dados owned antes do UI (nenhum borrow de self.raw nas closures).
         let mut rows: Vec<Row> = self
@@ -3065,11 +2576,7 @@ impl KeysApp {
         // Ordenação SÓ de renderização (não regrava nada): favoritos primeiro
         // e, dentro do grupo, nome ascendente — o mesmo sort do VaultScreen do
         // oficial (`Number(b.favorite) - Number(a.favorite) || nome`).
-        rows.sort_by(|a, b| {
-            b.favorite
-                .cmp(&a.favorite)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        rows.sort_by(|a, b| b.favorite.cmp(&a.favorite).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
         let needle = self.search.trim().to_lowercase();
 
         ui.horizontal(|ui| {
@@ -3140,29 +2647,17 @@ impl KeysApp {
         ui.horizontal(|ui| {
             // Filtro "só códigos que mudam" (TOTP): toggle ao lado da busca.
             let filtro = format!("{} ⟳", t(Key::Totp));
-            let ink = if self.filter_totp {
-                skin.accent
-            } else {
-                skin.muted
-            };
+            let ink = if self.filter_totp { skin.accent } else { skin.muted };
             if ghost_ink(ui, &filtro, ink).clicked() {
                 self.filter_totp = !self.filter_totp;
             }
             // Filtro "só com anexos" (📎), ao lado do de TOTP.
             let filtro_anx = format!("📎 {}", t(Key::FilterAttachments));
-            let ink = if self.filter_attachments {
-                skin.accent
-            } else {
-                skin.muted
-            };
+            let ink = if self.filter_attachments { skin.accent } else { skin.muted };
             if ghost_ink(ui, &filtro_anx, ink).clicked() {
                 self.filter_attachments = !self.filter_attachments;
             }
-            ui.add(
-                line(&mut self.search)
-                    .hint_text(t(Key::Search))
-                    .desired_width(ui.available_width() - 24.0),
-            );
+            ui.add(line(&mut self.search).hint_text(t(Key::Search)).desired_width(ui.available_width() - 24.0));
             // Botão "X" pra limpar a busca sem precisar de backspace.
             if !self.search.is_empty() && ui.small_button("✕").clicked() {
                 self.search.clear();
@@ -3171,10 +2666,7 @@ impl KeysApp {
         ui.add_space(6.0);
 
         if let Some(e) = &self.err {
-            ui.label(
-                egui::RichText::new(format!("{}: {e}", t(Key::Error)))
-                    .color(egui::Color32::LIGHT_RED),
-            );
+            ui.label(egui::RichText::new(format!("{}: {e}", t(Key::Error))).color(egui::Color32::LIGHT_RED));
             ui.add_space(6.0);
         }
 
@@ -3184,10 +2676,7 @@ impl KeysApp {
             .filter(|r| !self.filter_totp || r.totp.is_some())
             .filter(|r| !self.filter_attachments || r.has_attachments)
             // Pasta: `None` no filtro = todas; igualdade por id.
-            .filter(|r| {
-                self.folder_filter.is_none()
-                    || r.folder_id.as_deref() == self.folder_filter.as_deref()
-            })
+            .filter(|r| self.folder_filter.is_none() || r.folder_id.as_deref() == self.folder_filter.as_deref())
             .collect();
 
         if view.is_empty() {
@@ -3199,15 +2688,8 @@ impl KeysApp {
                         // ★ agora é BOTÃO: liga/desliga o favorito (o oficial
                         // faz isso pelo editor, que passa no updateItem).
                         let star = if row.favorite { "★" } else { "☆" };
-                        let star_ink = if row.favorite {
-                            skin.accent
-                        } else {
-                            skin.muted
-                        };
-                        if ghost_ink(ui, star, star_ink)
-                            .on_hover_text(t(Key::Favorite))
-                            .clicked()
-                        {
+                        let star_ink = if row.favorite { skin.accent } else { skin.muted };
+                        if ghost_ink(ui, star, star_ink).on_hover_text(t(Key::Favorite)).clicked() {
                             self.toggle_favorite(&row.id);
                         }
                         ui.vertical(|ui| {
@@ -3221,24 +2703,11 @@ impl KeysApp {
                                 match totp::now(secret) {
                                     Ok(code) => {
                                         ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new(code.code.clone()).monospace().strong());
                                             ui.label(
-                                                egui::RichText::new(code.code.clone())
-                                                    .monospace()
-                                                    .strong(),
+                                                egui::RichText::new(format!("{}{}", code.seconds_remaining, t(Key::SecondsShort))).small().weak(),
                                             );
-                                            ui.label(
-                                                egui::RichText::new(format!(
-                                                    "{}{}",
-                                                    code.seconds_remaining,
-                                                    t(Key::SecondsShort)
-                                                ))
-                                                .small()
-                                                .weak(),
-                                            );
-                                            if ghost(ui, t(Key::Totp))
-                                                .on_hover_text(t(Key::Copy))
-                                                .clicked()
-                                            {
+                                            if ghost(ui, t(Key::Totp)).on_hover_text(t(Key::Copy)).clicked() {
                                                 // código é efêmero, mas marcar
                                                 // exclusão de histórico não custa
                                                 if clipboard::copy_secret(code.code).is_ok() {
@@ -3248,45 +2717,23 @@ impl KeysApp {
                                         });
                                     }
                                     Err(e) => {
-                                        ui.label(
-                                            egui::RichText::new(format!("TOTP: {e}"))
-                                                .small()
-                                                .color(egui::Color32::LIGHT_RED),
-                                        );
+                                        ui.label(egui::RichText::new(format!("TOTP: {e}")).small().color(egui::Color32::LIGHT_RED));
                                     }
                                 }
                             }
                             // Ações do item: ghost buttons (transparentes até
                             // o hover), como no local-pdf.
                             ui.horizontal_wrapped(|ui| {
-                                if row.username.is_some()
-                                    && ghost(ui, t(Key::Username))
-                                        .on_hover_text(t(Key::Copy))
-                                        .clicked()
-                                {
-                                    if let Some((user, _, _)) = self
-                                        .raw
-                                        .as_ref()
-                                        .and_then(|r| vault::login_triple(r, &row.id))
-                                    {
+                                if row.username.is_some() && ghost(ui, t(Key::Username)).on_hover_text(t(Key::Copy)).clicked() {
+                                    if let Some((user, _, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id)) {
                                         // usuário não é segredo: cópia simples
-                                        if arboard::Clipboard::new()
-                                            .and_then(|mut c| c.set_text(user))
-                                            .is_ok()
-                                        {
+                                        if arboard::Clipboard::new().and_then(|mut c| c.set_text(user)).is_ok() {
                                             self.copied(&row.name);
                                         }
                                     }
                                 }
-                                if ghost(ui, t(Key::Password))
-                                    .on_hover_text(t(Key::Copy))
-                                    .clicked()
-                                {
-                                    if let Some((_, pass, _)) = self
-                                        .raw
-                                        .as_ref()
-                                        .and_then(|r| vault::login_triple(r, &row.id))
-                                    {
+                                if ghost(ui, t(Key::Password)).on_hover_text(t(Key::Copy)).clicked() {
+                                    if let Some((_, pass, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id)) {
                                         if clipboard::copy_secret(pass).is_ok() {
                                             self.copied(&row.name);
                                         }
@@ -3299,10 +2746,7 @@ impl KeysApp {
                                 if ghost(ui, t(Key::Edit)).clicked() {
                                     self.open_edit_form(&row.id);
                                 }
-                                if ghost(ui, t(Key::Delete))
-                                    .on_hover_text(t(Key::TrashHint))
-                                    .clicked()
-                                {
+                                if ghost(ui, t(Key::Delete)).on_hover_text(t(Key::TrashHint)).clicked() {
                                     // Confirmação: exclusão é reversível só na
                                     // lixeira — clique sem querer não apaga.
                                     self.delete_ask = Some((row.id.clone(), row.name.clone()));
@@ -3317,13 +2761,8 @@ impl KeysApp {
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(format!("{}: {}", t(Key::Items), rows.len()))
-                        .small()
-                        .weak(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                });
+                ui.label(egui::RichText::new(format!("{}: {}", t(Key::Items), rows.len())).small().weak());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {});
             });
         });
         // ctx fica no parâmetro pra manter a assinatura simétrica às outras telas.
@@ -3350,10 +2789,7 @@ mod tests {
     /// apara espaços e descarta os vazios (campos tipo "  ;  " viram nada).
     #[test]
     fn caminhos_linux_de_anexos_separam_por_ponto_e_virgula() {
-        assert_eq!(
-            split_attachment_paths(" /a/b.png ; /c/d.pdf;;  ; "),
-            vec!["/a/b.png", "/c/d.pdf"]
-        );
+        assert_eq!(split_attachment_paths(" /a/b.png ; /c/d.pdf;;  ; "), vec!["/a/b.png", "/c/d.pdf"]);
         assert!(split_attachment_paths("").is_empty());
         assert!(split_attachment_paths("   ;  ;").is_empty());
         assert_eq!(split_attachment_paths("só-um"), vec!["só-um".to_string()]);

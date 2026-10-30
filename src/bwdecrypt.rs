@@ -39,20 +39,11 @@ struct Export {
 }
 
 fn b64(s: &str) -> Result<Vec<u8>, String> {
-    base64::engine::general_purpose::STANDARD
-        .decode(s.trim())
-        .map_err(|_| "base64 inválido".to_string())
+    base64::engine::general_purpose::STANDARD.decode(s.trim()).map_err(|_| "base64 inválido".to_string())
 }
 
 /// Deriva a chave-mestra (32 bytes) do password + salt conforme o KDF do export.
-fn derive_master(
-    password: &str,
-    salt: &str,
-    kdf_type: u32,
-    iters: u32,
-    mem_mib: u32,
-    parallelism: u32,
-) -> Result<Zeroizing<[u8; 32]>, String> {
+fn derive_master(password: &str, salt: &str, kdf_type: u32, iters: u32, mem_mib: u32, parallelism: u32) -> Result<Zeroizing<[u8; 32]>, String> {
     let mut key = Zeroizing::new([0u8; 32]);
     match kdf_type {
         0 => {
@@ -62,8 +53,8 @@ fn derive_master(
         1 => {
             // Argon2id; o Bitwarden usa salt = SHA256(salt).
             let salt_hash = Sha256::digest(salt.as_bytes());
-            let params = argon2::Params::new(mem_mib * 1024, iters, parallelism.max(1), Some(32))
-                .map_err(|_| "parâmetros Argon2 inválidos".to_string())?;
+            let params =
+                argon2::Params::new(mem_mib * 1024, iters, parallelism.max(1), Some(32)).map_err(|_| "parâmetros Argon2 inválidos".to_string())?;
             argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
                 .hash_password_into(password.as_bytes(), &salt_hash, key.as_mut_slice())
                 .map_err(|_| "Argon2 falhou".to_string())?;
@@ -85,9 +76,7 @@ fn stretch(master: &[u8; 32]) -> Result<([u8; 32], [u8; 32]), String> {
 
 /// Decifra uma enc-string `2.iv|ct|mac` (AesCbc256_HmacSha256_B64).
 fn decrypt_enc_string(s: &str, enc_key: &[u8; 32], mac_key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    let rest = s
-        .strip_prefix("2.")
-        .ok_or("formato de cifra não suportado (esperado tipo 2)")?;
+    let rest = s.strip_prefix("2.").ok_or("formato de cifra não suportado (esperado tipo 2)")?;
     let parts: Vec<&str> = rest.split('|').collect();
     if parts.len() != 3 {
         return Err("enc-string malformada".into());
@@ -102,8 +91,7 @@ fn decrypt_enc_string(s: &str, enc_key: &[u8; 32], mac_key: &[u8; 32]) -> Result
     let mut h = <HmacSha256 as Mac>::new_from_slice(mac_key).map_err(|_| "chave MAC".to_string())?;
     h.update(&iv);
     h.update(&ct);
-    h.verify_slice(&tag)
-        .map_err(|_| "senha incorreta ou arquivo corrompido (MAC)".to_string())?;
+    h.verify_slice(&tag).map_err(|_| "senha incorreta ou arquivo corrompido (MAC)".to_string())?;
 
     Aes256CbcDec::new_from_slices(enc_key, &iv)
         .map_err(|_| "chave/IV inválidos".to_string())?

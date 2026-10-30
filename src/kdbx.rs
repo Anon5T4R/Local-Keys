@@ -27,8 +27,7 @@ pub struct KdbxEntry {
 pub fn import(path: &str, password: &str) -> Result<Vec<KdbxEntry>, String> {
     let mut file = File::open(path).map_err(|e| format!("falha ao abrir '{path}': {e}"))?;
     let key = DatabaseKey::new().with_password(password);
-    let db = Database::open(&mut file, key)
-        .map_err(|_| "não abriu o .kdbx (senha errada ou formato não suportado)".to_string())?;
+    let db = Database::open(&mut file, key).map_err(|_| "não abriu o .kdbx (senha errada ou formato não suportado)".to_string())?;
 
     let mut out = Vec::new();
     for node in &db.root {
@@ -42,14 +41,7 @@ pub fn import(path: &str, password: &str) -> Result<Vec<KdbxEntry>, String> {
             if name.is_empty() && username.is_empty() && password.is_empty() {
                 continue;
             }
-            out.push(KdbxEntry {
-                name,
-                username,
-                password,
-                url,
-                totp,
-                notes,
-            });
+            out.push(KdbxEntry { name, username, password, url, totp, notes });
         }
     }
     Ok(out)
@@ -75,10 +67,7 @@ mod tests {
 
     #[test]
     fn extrai_secret_de_otpauth() {
-        assert_eq!(
-            extract_totp("otpauth://totp/Acme:joe?secret=JBSWY3DP&issuer=Acme&period=30"),
-            "JBSWY3DP"
-        );
+        assert_eq!(extract_totp("otpauth://totp/Acme:joe?secret=JBSWY3DP&issuer=Acme&period=30"), "JBSWY3DP");
         assert_eq!(extract_totp("key=ABC123&step=30"), "ABC123");
         assert_eq!(extract_totp("JBSWY3DP"), "JBSWY3DP");
         assert_eq!(extract_totp("  "), "");

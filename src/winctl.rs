@@ -14,8 +14,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow,
-    ShowWindow, SW_HIDE, SW_SHOW,
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW,
 };
 
 /// HWND da janela egui ("LocalKeys"), descoberto no 1º frame e cacheado.
@@ -49,10 +48,7 @@ pub fn discover() {
     if HWND_CACHE.load(Ordering::Relaxed) != 0 {
         return;
     }
-    let mut ctx = EnumCtx {
-        pid: std::process::id(),
-        found: 0,
-    };
+    let mut ctx = EnumCtx { pid: std::process::id(), found: 0 };
     unsafe {
         let _ = EnumWindows(Some(enum_cb), LPARAM(&mut ctx as *mut _ as isize));
     }
@@ -71,9 +67,7 @@ fn hwnd() -> Option<HWND> {
 }
 
 pub fn is_visible() -> bool {
-    hwnd()
-        .map(|h| unsafe { IsWindowVisible(h).as_bool() })
-        .unwrap_or(false)
+    hwnd().map(|h| unsafe { IsWindowVisible(h).as_bool() }).unwrap_or(false)
 }
 
 /// Mostra e traz pra frente. Acordar janela oculta por aqui é o ponto: não

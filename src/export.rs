@@ -12,11 +12,7 @@ use serde_json::Value;
 /// mesmo recorte do `exportJson` do oficial (`{...vault, items: só vivos}`):
 /// pastas e o que mais existir na raiz atravessam intactos.
 pub fn export_json(raw: &Value) -> String {
-    let live: Vec<Value> = items(raw)
-        .iter()
-        .filter(|it| !is_trashed(it))
-        .cloned()
-        .collect();
+    let live: Vec<Value> = items(raw).iter().filter(|it| !is_trashed(it)).cloned().collect();
     let mut out = raw.clone();
     if let Some(obj) = out.as_object_mut() {
         obj.insert("items".to_string(), Value::Array(live));
@@ -29,9 +25,7 @@ pub fn export_json(raw: &Value) -> String {
 /// `exportCsv` do oficial (mesma ordem de colunas e mesmos fallbacks de
 /// `card` quando o item não tem `login`).
 pub fn export_csv(raw: &Value) -> String {
-    let headers = [
-        "name", "type", "username", "password", "url", "totp", "notes", "favorite",
-    ];
+    let headers = ["name", "type", "username", "password", "url", "totp", "notes", "favorite"];
     let mut out = headers.join(",");
     for it in items(raw) {
         if is_trashed(it) {
@@ -43,26 +37,14 @@ pub fn export_csv(raw: &Value) -> String {
             pick(&[it.get("name")]),
             pick(&[it.get("kind")]),
             // `it.login?.username ?? it.card?.cardholder ?? ""`
-            pick(&[
-                login.and_then(|l| l.get("username")),
-                card.and_then(|c| c.get("cardholder")),
-            ]),
+            pick(&[login.and_then(|l| l.get("username")), card.and_then(|c| c.get("cardholder"))]),
             // `it.login?.password ?? it.card?.number ?? it.card?.code ?? ""`
-            pick(&[
-                login.and_then(|l| l.get("password")),
-                card.and_then(|c| c.get("number")),
-                card.and_then(|c| c.get("code")),
-            ]),
+            pick(&[login.and_then(|l| l.get("password")), card.and_then(|c| c.get("number")), card.and_then(|c| c.get("code"))]),
             // `it.login?.uris?.[0] ?? ""`
             pick(&[login.and_then(|l| l.get("uris")).and_then(|u| u.get(0))]),
             pick(&[login.and_then(|l| l.get("totp"))]),
             pick(&[it.get("notes")]),
-            if it.get("favorite").and_then(Value::as_bool) == Some(true) {
-                "1"
-            } else {
-                "0"
-            }
-            .to_string(),
+            if it.get("favorite").and_then(Value::as_bool) == Some(true) { "1" } else { "0" }.to_string(),
         ];
         out.push_str("\r\n");
         out.push_str(&cells.map(|cell| csv_escape(&cell)).join(","));
@@ -84,18 +66,11 @@ fn csv_escape(value: &str) -> String {
 /// `a ?? b ?? ""` do TS: a primeira string que EXISTE vence — string vazia
 /// conta como valor (o oficial não cai pro próximo campo por causa dela).
 fn pick(candidates: &[Option<&Value>]) -> String {
-    candidates
-        .iter()
-        .flatten()
-        .find_map(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
+    candidates.iter().flatten().find_map(|v| v.as_str()).unwrap_or("").to_string()
 }
 
 fn items(raw: &Value) -> &[Value] {
-    raw.get("items")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice)
+    raw.get("items").and_then(Value::as_array).map_or(&[][..], Vec::as_slice)
 }
 
 /// `if (it.deletedAt) continue;` do TS: ausente/null = vivo; qualquer
@@ -153,8 +128,7 @@ mod tests {
 
     #[test]
     fn json_de_cofre_vazio_nao_explode() {
-        let v: Value =
-            serde_json::from_str(r#"{"version":1,"folders":[],"items":[]}"#).expect("semente");
+        let v: Value = serde_json::from_str(r#"{"version":1,"folders":[],"items":[]}"#).expect("semente");
         let out = export_json(&v);
         assert!(out.contains("\"items\": []"), "{out}");
     }
@@ -163,16 +137,10 @@ mod tests {
     fn csv_tem_cabecalho_crlf_e_pula_a_lixeira() {
         let out = export_csv(&vault());
         let lines: Vec<&str> = out.split("\r\n").collect();
-        assert_eq!(
-            lines[0],
-            "name,type,username,password,url,totp,notes,favorite"
-        );
+        assert_eq!(lines[0], "name,type,username,password,url,totp,notes,favorite");
         assert_eq!(lines.len(), 3, "cabeçalho + 2 vivos: {out:?}");
         assert!(!out.contains("Na lixeira"));
-        assert_eq!(
-            lines[1],
-            "Gmail,login,joao,\"p,ss\"\"o\",https://mail.google.com,JBSWY3DPEHPK3PXP,\"linha1\nlinha2\",1"
-        );
+        assert_eq!(lines[1], "Gmail,login,joao,\"p,ss\"\"o\",https://mail.google.com,JBSWY3DPEHPK3PXP,\"linha1\nlinha2\",1");
         assert_eq!(lines[2], "Nota,note,,,,,texto,0");
     }
 
@@ -196,10 +164,7 @@ mod tests {
             "card": { "number": "4111" }
         }]});
         let out = export_csv(&v);
-        assert_eq!(
-            out.split("\r\n").nth(1).unwrap_or_default(),
-            "N,login,u,,,,,0"
-        );
+        assert_eq!(out.split("\r\n").nth(1).unwrap_or_default(), "N,login,u,,,,,0");
     }
 
     #[test]
