@@ -369,7 +369,7 @@ fn block(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
 
 /// Moldura do diálogo: cartão com canto de 10, borda sutil e a sombra do tema.
 fn modal_frame(ctx: &egui::Context) -> egui::Frame {
-    let style = ctx.style();
+    let style = ctx.style_of(ctx.theme());
     let skin = Skin::from_visuals(&style.visuals);
     egui::Frame::NONE
         .fill(skin.card)
@@ -420,7 +420,7 @@ fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 28.0, 28.0), egui::Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let hovered = resp.hovered() && enabled;
     let fill = if !enabled {
         fill.gamma_multiply(0.45)
@@ -456,7 +456,7 @@ fn ghost_ink(ui: &mut egui::Ui, label: &str, ink: egui::Color32) -> egui::Respon
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 14.0, 24.0), egui::Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     if resp.hovered() {
         ui.painter().rect_filled(rect, egui::CornerRadius::same(6), skin.hover);
     }
@@ -1332,11 +1332,11 @@ impl KeysApp {
     /// centrados embaixo — o desenho do `toast`/`progress_notice` do local-pdf,
     /// com um cartão invertido em relação ao tema.
     fn footer(&mut self, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
-        let skin = Skin::from_visuals(&ctx.style().visuals);
-        let screen = ctx.screen_rect();
+        let skin = Skin::from_visuals(&ctx.style_of(ctx.theme()).visuals);
+        let screen = ctx.viewport_rect();
         let mut lift = 18.0;
         if let Some(label) = self.job_label {
-            let area = egui::Area::new(egui::Id::new("job-notice"))
+            let area = egui::Area::new(egui::Id::unique("job-notice"))
                 .order(egui::Order::Tooltip)
                 .pivot(egui::Align2::CENTER_BOTTOM)
                 .fixed_pos(screen.center_bottom() - egui::vec2(0.0, lift))
@@ -1362,7 +1362,7 @@ impl KeysApp {
             self.toast = None;
             return;
         }
-        egui::Area::new(egui::Id::new("toast"))
+        egui::Area::new(egui::Id::unique("toast"))
             .order(egui::Order::Tooltip)
             .pivot(egui::Align2::CENTER_BOTTOM)
             .fixed_pos(screen.center_bottom() - egui::vec2(0.0, lift))
@@ -1561,7 +1561,7 @@ impl KeysApp {
         }
         let title = if self.form_edit_id.is_some() { t(Key::Edit) } else { t(Key::Add) };
         let mut cancel = false;
-        let resp = egui::Modal::new(egui::Id::new("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(400.0);
             ui.heading(title);
@@ -1656,7 +1656,7 @@ impl KeysApp {
         };
         let mut confirm = false;
         let mut cancel = false;
-        let resp = egui::Modal::new(egui::Id::new("delete")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("delete")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(320.0);
             ui.heading(t(Key::Delete));
@@ -1689,7 +1689,7 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cancel = false;
         let mut run = false;
-        let resp = egui::Modal::new(egui::Id::new("import")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("import")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(380.0);
             ui.heading(t(Key::Import));
@@ -1755,7 +1755,7 @@ impl KeysApp {
             return;
         };
         let mut close = false;
-        let resp = egui::Modal::new(egui::Id::new("import-report")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("import-report")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(300.0);
             ui.heading(t(Key::ImportReportTitle));
@@ -1781,7 +1781,7 @@ impl KeysApp {
         }
         let mut close = false;
         let mut generate = false;
-        let resp = egui::Modal::new(egui::Id::new("generator")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("generator")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(360.0);
             ui.heading(t(Key::Generator));
@@ -1855,7 +1855,7 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cancel = false;
         let mut confirm = false;
-        let resp = egui::Modal::new(egui::Id::new("change-master")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("change-master")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(360.0);
             ui.heading(t(Key::ChangeMaster));
@@ -1930,7 +1930,7 @@ impl KeysApp {
         let mut del: Option<String> = None;
         let mut restore: Option<String> = None;
         let mut del_forever: Option<String> = None;
-        let resp = egui::Modal::new(egui::Id::new("attachments")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("attachments")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(380.0);
             ui.heading(format!("{} — {item_name}", t(Key::Attachments)));
@@ -2035,7 +2035,7 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cria = false;
         let mut cancela = false;
-        let resp = egui::Modal::new(egui::Id::new("nova-pasta")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("nova-pasta")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(320.0);
             ui.heading(t(Key::NewFolder));
@@ -2092,7 +2092,7 @@ impl KeysApp {
         let mut cancela_rename = false;
         let mut deleta: Option<String> = None;
         let mut fecha = false;
-        let resp = egui::Modal::new(egui::Id::new("pastas")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("pastas")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(340.0);
             ui.heading(t(Key::Folders));
@@ -2202,7 +2202,7 @@ impl KeysApp {
         let mut purge: Option<String> = None;
         let mut ask: Option<String> = None;
         let keep_ask = self.purge_ask.clone();
-        let resp = egui::Modal::new(egui::Id::new("trash")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("trash")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(420.0);
             ui.heading(t(Key::Trash));
@@ -2266,7 +2266,7 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut cancel = false;
         let mut run = false;
-        let resp = egui::Modal::new(egui::Id::new("export")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("export")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(420.0);
             ui.heading(t(Key::Export));
@@ -2340,7 +2340,7 @@ impl KeysApp {
     fn update_modal(&mut self, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
         let Some(status) = self.update_status.clone() else { return };
         let mut apply = false;
-        let resp = egui::Modal::new(egui::Id::new("update")).frame(modal_frame(ctx)).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("update")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             ui.set_width(420.0);
             ui.heading(t(Key::Update));
@@ -2390,7 +2390,8 @@ impl KeysApp {
 }
 
 impl eframe::App for KeysApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
         // Fechar (X) minimiza pra bandeja — SÓ no Windows, onde há bandeja.
         // (No Linux o X fecha de verdade.) Sem lock ao esconder: o cofre fica
         // destrancado na memória (decisão do lab — PC da própria pessoa).
@@ -2435,7 +2436,7 @@ impl eframe::App for KeysApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
-        egui::TopBottomPanel::top("topo").show(ctx, |ui| {
+        egui::containers::Panel::top("topo").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("LocalKeys");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2451,7 +2452,7 @@ impl eframe::App for KeysApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if self.locked() {
                 self.locked_ui(ui, ctx, &t);
             } else {
