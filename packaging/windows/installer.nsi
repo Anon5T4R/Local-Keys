@@ -5,7 +5,7 @@ OutFile "local-keys-setup.exe"
 InstallDir "$PROGRAMFILES64\LocalKeys"
 RequestExecutionLevel admin
 
-!define VERSION "0.9.6"
+!define VERSION "0.9.7"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -21,7 +21,7 @@ RequestExecutionLevel admin
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File "target\release\local-keys.exe"
+  File "..\..\target\release\local-keys.exe"
 
   ; Atalhos no contexto do USUÁRIO (não do admin elevado).
   SetShellVarContext current

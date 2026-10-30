@@ -68,11 +68,13 @@ use tray_icon::menu::{Menu, MenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
 const APP_ID: &str = "local-keys";
+#[cfg(windows)]
 const KEYRING_SERVICE: &str = "LocalKeys";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Comando vindo da bandeja (thread própria → handlers do tray-icon).
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg(windows)]
 enum TrayCmd {
     ShowHide,
     Quit,
@@ -1294,6 +1296,7 @@ impl KeysApp {
     /// Decodifica o base64 do anexo e grava no destino escolhido — na thread
     /// (`fs::write` em pasta de rede tem a mesma lentidão da leitura).
     fn save_attachment(&mut self, item_id: &str, attachment_id: &str, ctx: &egui::Context) {
+        #[cfg_attr(not(windows), allow(unused_variables))]
         let Some((name, b64)) = self.raw.as_ref().and_then(|r| vault::attachment_data(r, item_id, attachment_id)) else {
             self.err = Some("anexo não encontrado".into());
             return;
