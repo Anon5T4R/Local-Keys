@@ -64,9 +64,8 @@ sha2 = "0.10"
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 hmac = "0.12"
-# Autoupdate: HTTP sync + zip/tar.gz
+# Autoupdate: HTTP sync (Linux: tar.gz/AppImage; Windows: instala via setup.exe)
 ureq = { version = "2", features = ["json"] }
-zip = "2"
 flate2 = "1"
 tar = "0.4"
 
@@ -84,7 +83,7 @@ tray-icon = "0.24"
 # Controle da janela fora do ciclo de pintura — janela oculta não recebe
 # WM_PAINT no Windows, o eframe congela; a thread da bandeja acorda a
 # janela com ShowWindow direto (ver winctl.rs).
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Foundation"] }
 
 [profile.release]
 opt-level = 3

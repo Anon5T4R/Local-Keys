@@ -683,6 +683,8 @@ struct KeysApp {
     update_checking: bool,
     /// Canal para receber resultado do check de atualização.
     update_rx: Option<std::sync::mpsc::Receiver<autoupdate::UpdateStatus>>,
+    /// Canal para receber erros do apply do update (thread → UI).
+    apply_err_rx: Option<std::sync::mpsc::Receiver<autoupdate::UpdateStatus>>,
     // onda 6 — importação
     import_open: bool,
     import_kind: ImportKind,
@@ -768,6 +770,7 @@ impl KeysApp {
             update_status: None,
             update_checking: false,
             update_rx: None,
+            apply_err_rx: None,
             import_open: false,
             import_kind: ImportKind::Kdbx,
             import_path: String::new(),
@@ -2334,6 +2337,12 @@ impl KeysApp {
                 self.update_rx = None;
             }
         }
+        if let Some(rx) = &self.apply_err_rx {
+            if let Ok(status) = rx.try_recv() {
+                self.update_status = Some(status);
+                self.apply_err_rx = None;
+            }
+        }
     }
 
     /// Modal de atualização disponível / já atual / erro.
@@ -2376,14 +2385,29 @@ impl KeysApp {
         }
     }
 
-    /// Aplica a atualização (download + substitui exe).
+    /// Aplica a atualização. Windows: baixa o setup.exe e lança o instalador
+    /// elevado; em seguida o app sai pelo caminho limpo (flag de quit →
+    /// `ViewportCommand::Close`) para o instalador sobrescrever os arquivos
+    /// sob Program Files. Erros voltam para a UI pelo canal de apply.
     fn apply_update(&mut self) {
         if let Some(autoupdate::UpdateStatus::Available { download_url, .. }) = &self.update_status {
             let url = download_url.clone();
             self.update_status = None;
+            let quit = self.quit.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.apply_err_rx = Some(rx);
             // Roda em thread para não travar a UI
             std::thread::spawn(move || {
-                let _ = autoupdate::apply_update(&url);
+                if let Err(e) = autoupdate::apply_update(&url) {
+                    // UAC recusado: o usuário desistiu — fecha o dialog em paz.
+                    if e != autoupdate::CANCELLED {
+                        let _ = tx.send(autoupdate::UpdateStatus::Error(e));
+                    }
+                } else {
+                    // Instalador lançado: encerra pelo caminho limpo que a
+                    // bandeja já usa ("Sair" → Close), a janela sai visível.
+                    quit.store(true, Ordering::Relaxed);
+                }
             });
         }
     }
