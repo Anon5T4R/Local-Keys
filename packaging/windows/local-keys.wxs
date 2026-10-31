@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LocalKeys MSI (WiX Toolset v5: `dotnet tool install -g wix`, plus its UI and Util extensions:
+  `wix extension add -g WixToolset.UI.wixext/5.0.2` and the same for WixToolset.Util.wixext).
+  Built by package.ps1:
+
+    wix build local-keys.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
+      -d Version=0.10.1 -d BinDir=... -d IconPath=... -d LicenseRtf=... -o out.msi
+
+  Per-machine install into Program Files\Local Keys with a Start Menu shortcut. The installer
+  shows the standard WiX dialogs: welcome + license, progress, and a finish page.
+
+  UpgradeCode and the component GUID below belong to LocalKeys alone. Never copy them from (or
+  into) a sibling app of the suite: Windows Installer treats every package sharing an
+  UpgradeCode as one product, so a shared code makes one app's installer refuse to install ("a
+  newer version is already installed") or silently uninstall the other.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package
+      Name="Local Keys"
+      Manufacturer="LocalKeys contributors"
+      Version="$(var.Version)"
+      UpgradeCode="B5A48255-13FE-4C18-AFF6-5E5BC90F87C4"
+      Scope="perMachine"
+      Compressed="yes"
+      Language="1033">
+    <SummaryInformation Description="LocalKeys password manager" Manufacturer="LocalKeys contributors" />
+    <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
+         (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of LocalKeys is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="LocalKeysIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="LocalKeysIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Anon5T4R/Local-Keys" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Anon5T4R/Local-Keys/releases" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Anon5T4R/Local-Keys/issues" />
+
+    <!-- Installer UI: WixUI_Minimal is welcome + license, progress, then a finish page so people
+         can see the install worked. Its dialogs and bitmaps are WiX's own (WixToolset.UI.wixext);
+         package.ps1 builds the license RTF. The finish page offers to launch Local Keys (ticked
+         by default) through WixShellExec (WixToolset.Util.wixext); silent installs (/qn) never
+         show it. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Local Keys" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#LocalKeysExe]" />
+    <CustomAction Id="LaunchLocalKeys" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec"
+        Impersonate="yes" Return="ignore" />
+    <UI>
+      <ui:WixUI Id="WixUI_Minimal" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchLocalKeys"
+          Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Local Keys" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="Local Keys" Level="1">
+      <ComponentGroupRef Id="LocalKeysFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="LocalKeysFiles" Directory="INSTALLFOLDER">
+      <Component Id="LocalKeysApp" Guid="AF4271BB-4FDA-45DE-AA64-A89CBB8BEF06">
+        <File Id="LocalKeysExe" Source="$(var.BinDir)\local-keys.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Local Keys"
+              Description="LocalKeys password manager" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
+              Icon="LocalKeysIcon.ico" IconIndex="0" />
+        </File>
+
+        <RegistryValue Root="HKMU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\local-keys.exe" Value="[#LocalKeysExe]" Type="string" />
+        <!-- Where this MSI installed the app. The app's own updater (craft_update) reads it
+             (HKLM for a per-machine install) under the suite's key to know this is an MSI
+             install, so it updates with the new MSI rather than the portable zip. -->
+        <RegistryValue Root="HKLM" Key="Software\Anon5T4R\Local Keys" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

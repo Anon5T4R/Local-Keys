@@ -64,10 +64,10 @@ sha2 = "0.10"
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 hmac = "0.12"
-# Autoupdate: HTTP sync (Linux: tar.gz/AppImage; Windows: instala via setup.exe)
-ureq = { version = "2", features = ["json"] }
-flate2 = "1"
-tar = "0.4"
+# Atualização: craft_update (libs/craft-libs) — check no GitHub, prompt egui e
+# self-update (Windows: MSI/portable; Linux: AppImage/tar.gz). O `egui` liga o
+# prompt e o Updater de UI.
+craft-update = { path = "libs/craft-libs/crates/update", features = ["egui"] }
 
 [target.'cfg(windows)'.dependencies]
 # Desbloqueio rápido (chave no Credential Manager) — só no Windows: o

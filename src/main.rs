@@ -36,7 +36,6 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod autoupdate;
 mod bwdecrypt;
 mod clipboard;
 mod crypto;
@@ -97,6 +96,15 @@ fn load_window_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result<()> {
+    // Windows: o helper de update é uma CÓPIA deste programa iniciada com
+    // `--finish-update` (craft_update). Roda ANTES de tudo — inclusive da
+    // guarda de instância única abaixo, que o helper não pode bloquear (ele
+    // espera o app sair e instala por conta própria).
+    #[cfg(windows)]
+    if let Some(result) = craft_update::self_update::finish(&craft_update::suite::LOCALKEYS, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(i32::from(result.is_err()));
+    }
+
     // ── single-instance (só Windows — é lá que o X esconde pra bandeja) ──
     // Mesmo desenho do lab-clip (onda 9): lock de ARQUIVO (`File::try_lock` —
     // o kernel libera sozinho em crash) + flag "mostra-te" consumida pela
@@ -132,7 +140,11 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            Ok(Box::new(KeysApp::new(cfg)))
+            let mut app = KeysApp::new(cfg);
+            // Check de update no arranque: achou release nova, o prompt do
+            // updater abre sozinho (craft_update::dialog).
+            app.updater.check_at_start(&cc.egui_ctx);
+            Ok(Box::new(app))
         }),
     )
 }
@@ -151,6 +163,30 @@ fn pick_save() -> Option<String> {
         .set_file_name("novo-cofre.tkeys")
         .save_file()
         .map(|p| p.display().to_string())
+}
+
+/// Abre a página da release no navegador — ação "Download" do prompt do
+/// updater, para instalações que não se auto-atualizam (zip solto, dev build).
+fn open_url(url: &str) {
+    #[cfg(windows)]
+    {
+        use windows::core::{HSTRING, PCWSTR};
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let verb = HSTRING::from("open");
+        let file = HSTRING::from(url);
+        // > 32 = lançou (mesma convenção do antigo autoupdate com "runas").
+        let res = unsafe { ShellExecuteW(None, PCWSTR(verb.as_ptr()), PCWSTR(file.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+        if res.0 as usize <= 32 {
+            eprintln!("update: falha ao abrir {url} (código {})", res.0 as usize);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if std::process::Command::new("xdg-open").arg(url).spawn().is_err() {
+            eprintln!("update: falha ao abrir {url}");
+        }
+    }
 }
 
 /// Formato escolhido na janela de importação (a senha só é pedida nos dois
@@ -678,13 +714,9 @@ struct KeysApp {
     export_open: bool,
     export_kind: ExportKind,
     export_path: String,
-    /// Estado de verificação de atualização.
-    update_status: Option<autoupdate::UpdateStatus>,
-    update_checking: bool,
-    /// Canal para receber resultado do check de atualização.
-    update_rx: Option<std::sync::mpsc::Receiver<autoupdate::UpdateStatus>>,
-    /// Canal para receber erros do apply do update (thread → UI).
-    apply_err_rx: Option<std::sync::mpsc::Receiver<autoupdate::UpdateStatus>>,
+    /// Verificação e instalação de atualização (craft_update): check no
+    /// arranque/pedido, prompt egui próprio e self-update em thread própria.
+    updater: craft_update::updater::Updater,
     // onda 6 — importação
     import_open: bool,
     import_kind: ImportKind,
@@ -767,10 +799,7 @@ impl KeysApp {
             export_open: false,
             export_kind: ExportKind::Json,
             export_path: String::new(),
-            update_status: None,
-            update_checking: false,
-            update_rx: None,
-            apply_err_rx: None,
+            updater: craft_update::updater::Updater::new(&craft_update::suite::LOCALKEYS, CURRENT_VERSION),
             import_open: false,
             import_kind: ImportKind::Kdbx,
             import_path: String::new(),
@@ -2316,100 +2345,11 @@ impl KeysApp {
         }
     }
 
-    /// Verifica atualizações no GitHub (não bloqueante).
-    fn check_updates(&mut self) {
-        if self.update_checking {
-            return;
-        }
-        self.update_checking = true;
-        self.update_status = None;
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.update_rx = Some(rx);
-        autoupdate::spawn_check(tx);
-    }
-
-    /// Processa resultado do check de atualização (chamado no início do update).
-    fn poll_update(&mut self) {
-        if let Some(rx) = &self.update_rx {
-            if let Ok(status) = rx.try_recv() {
-                self.update_checking = false;
-                self.update_status = Some(status);
-                self.update_rx = None;
-            }
-        }
-        if let Some(rx) = &self.apply_err_rx {
-            if let Ok(status) = rx.try_recv() {
-                self.update_status = Some(status);
-                self.apply_err_rx = None;
-            }
-        }
-    }
-
-    /// Modal de atualização disponível / já atual / erro.
-    fn update_modal(&mut self, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
-        let Some(status) = self.update_status.clone() else { return };
-        let mut apply = false;
-        let resp = egui::Modal::new(egui::Id::unique("update")).frame(modal_frame(ctx)).show(ctx, |ui| {
-            begin_dialog(ui);
-            ui.set_width(420.0);
-            ui.heading(t(Key::Update));
-            ui.add_space(8.0);
-            match &status {
-                autoupdate::UpdateStatus::Current => {
-                    ui.label(t(Key::CurrentVersion));
-                    ui.add_space(10.0);
-                    ui.label(format!("{} {}", t(Key::VersionLabel), CURRENT_VERSION));
-                }
-                autoupdate::UpdateStatus::Available { version, notes, .. } => {
-                    ui.label(format!("{} {}", t(Key::UpdateAvailable), version));
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new(notes).weak());
-                    ui.add_space(12.0);
-                    if pill(ui, t(Key::DownloadAndInstall), true).clicked() {
-                        apply = true;
-                    }
-                }
-                autoupdate::UpdateStatus::Error(e) => {
-                    ui.label(egui::RichText::new(format!("{}: {}", t(Key::Error), e)).color(egui::Color32::LIGHT_RED));
-                }
-            }
-            ui.add_space(12.0);
-            if pill(ui, t(Key::Close), false).clicked() {
-                self.update_status = None;
-            }
-        });
-        if apply {
-            self.apply_update();
-        } else if resp.should_close() {
-            self.update_status = None;
-        }
-    }
-
-    /// Aplica a atualização. Windows: baixa o setup.exe e lança o instalador
-    /// elevado; em seguida o app sai pelo caminho limpo (flag de quit →
-    /// `ViewportCommand::Close`) para o instalador sobrescrever os arquivos
-    /// sob Program Files. Erros voltam para a UI pelo canal de apply.
-    fn apply_update(&mut self) {
-        if let Some(autoupdate::UpdateStatus::Available { download_url, .. }) = &self.update_status {
-            let url = download_url.clone();
-            self.update_status = None;
-            let quit = self.quit.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            self.apply_err_rx = Some(rx);
-            // Roda em thread para não travar a UI
-            std::thread::spawn(move || {
-                if let Err(e) = autoupdate::apply_update(&url) {
-                    // UAC recusado: o usuário desistiu — fecha o dialog em paz.
-                    if e != autoupdate::CANCELLED {
-                        let _ = tx.send(autoupdate::UpdateStatus::Error(e));
-                    }
-                } else {
-                    // Instalador lançado: encerra pelo caminho limpo que a
-                    // bandeja já usa ("Sair" → Close), a janela sai visível.
-                    quit.store(true, Ordering::Relaxed);
-                }
-            });
-        }
+    /// Verifica atualizações agora (botão "Verificar atualizações").
+    /// O resultado sai como toast (nada encontrado/erro); release nova abre o
+    /// prompt do próprio updater.
+    fn check_updates(&mut self, ctx: &egui::Context) {
+        self.updater.check_now(ctx);
     }
 }
 
@@ -2437,11 +2377,25 @@ impl eframe::App for KeysApp {
             return;
         }
 
-        self.poll_update();
+        self.updater.tick(ctx);
         self.poll_jobs(ctx);
 
         let lang = self.cfg.lang;
         let t = |k: Key| i18n::t(lang, k);
+
+        // Check pedido ("Verificar atualizações"): nada encontrado/erro vira
+        // toast; release nova abre o prompt do updater lá embaixo.
+        match self.updater.status().clone() {
+            craft_update::updater::Status::UpToDate => {
+                self.toast = Some((t(Key::UpToDate).to_string(), std::time::Instant::now()));
+                self.updater.dismiss_status();
+            }
+            craft_update::updater::Status::Failed(e) => {
+                self.toast = Some((e, std::time::Instant::now()));
+                self.updater.dismiss_status();
+            }
+            _ => {}
+        }
 
         // Bandeja (Windows): descobre o HWND o quanto antes (a thread do tray
         // precisa dele pra ShowWindow com a janela oculta).
@@ -2497,7 +2451,16 @@ impl eframe::App for KeysApp {
         self.new_folder_modal(ctx, &t);
         self.trash_modal(ctx, &t);
         self.export_modal(ctx, &t);
-        self.update_modal(ctx, &t);
+
+        // Prompt de update (craft_update): modal próprio do crate, por cima de
+        // tudo. "Atualizar e reiniciar" pede o fechamento pelo caminho limpo
+        // que a bandeja já usa (flag de quit → `ViewportCommand::Close`) — o
+        // helper do craft_update instala e relança depois que o app sai.
+        match self.updater.show(ctx) {
+            craft_update::updater::Action::None => {}
+            craft_update::updater::Action::OpenUrl(url) => open_url(&url),
+            craft_update::updater::Action::Close => self.quit.store(true, Ordering::Relaxed),
+        }
 
         // rodapé: progresso do job (card + spinner) e o toast, centro embaixo
         self.footer(ctx, &t);
@@ -2652,7 +2615,7 @@ impl KeysApp {
                 self.folder_edit_name.clear();
             }
             if ghost(ui, t(Key::CheckUpdates)).clicked() {
-                self.check_updates();
+                self.check_updates(ctx);
             }
         });
 

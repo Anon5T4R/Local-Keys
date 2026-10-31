@@ -189,14 +189,8 @@ pub enum Key {
     FilterAttachments,
     DeleteAttachment,
     AllItems,
-    // lab-keys autoupdate
-    UpdateCheck,
+    // lab-keys: verificação de atualização (o prompt é o dialog do craft_update)
     CheckUpdates,
-    CurrentVersion,
-    VersionLabel,
-    UpdateAvailable,
-    DownloadAndInstall,
-    UpdateError,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -337,13 +331,7 @@ const KEYS: &[Key] = &[
     Key::FilterAttachments,
     Key::DeleteAttachment,
     Key::AllItems,
-    Key::UpdateCheck,
     Key::CheckUpdates,
-    Key::CurrentVersion,
-    Key::VersionLabel,
-    Key::UpdateAvailable,
-    Key::DownloadAndInstall,
-    Key::UpdateError,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -472,13 +460,7 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
         Key::DeleteForever => "Delete forever",
         Key::Deleted => "deleted forever",
         Key::Close => "Close",
-        Key::UpdateCheck => "Update",
         Key::CheckUpdates => "Check for updates",
-        Key::CurrentVersion => "You are on the current version.",
-        Key::VersionLabel => "Version",
-        Key::UpdateAvailable => "Available",
-        Key::DownloadAndInstall => "Download and install",
-        Key::UpdateError => "Update check failed",
         Key::Folders => "Folders",
         Key::Folder => "Folder",
         Key::NewFolder => "New folder",
