@@ -7,6 +7,7 @@
 const GITHUB_API: &str = "https://api.github.com/repos/Anon5T4R/Local-Keys/releases/latest";
 const USER_AGENT: &str = "LocalKeys-Updater";
 /// Código de retorno do ShellExecuteW quando o usuário recusa o prompt do UAC.
+#[cfg(windows)]
 const SE_ERR_UAC_CANCELLED: usize = 1223;
 
 #[derive(Debug, Clone)]
