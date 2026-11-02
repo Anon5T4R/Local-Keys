@@ -71,6 +71,11 @@
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Local Keys"
               Description="LocalKeys password manager" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
               Icon="LocalKeysIcon.ico" IconIndex="0" />
+          <!-- Atalho no desktop (o NSIS antigo criava; per-machine = desktop
+               comum, visível pra todos os usuários). -->
+          <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="Local Keys"
+              Description="LocalKeys password manager" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
+              Icon="LocalKeysIcon.ico" IconIndex="0" />
         </File>
 
         <RegistryValue Root="HKMU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\local-keys.exe" Value="[#LocalKeysExe]" Type="string" />
