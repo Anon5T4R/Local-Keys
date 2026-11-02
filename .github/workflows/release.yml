@@ -130,4 +130,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "LocalKeys ${GITHUB_REF_NAME}" \
             --notes "Gerenciador de senhas 100% local e offline." \
+            dist/windows/* dist/linux/* \
+          || gh release upload "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" --clobber \
             dist/windows/* dist/linux/*
