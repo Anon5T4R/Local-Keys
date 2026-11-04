@@ -17,7 +17,10 @@ pub const PDFCRAFT: App = App {
 pub const EFFECTCRAFT: App = App::new("effectcraft", "EffectCraft", "Motion graphics and visual effects", "storytold/effectcraft");
 pub const DESIGNCRAFT: App = App::new("designcraft", "DesignCraft", "Page layout and publishing", "storytold/designcraft");
 pub const FIGCRAFT: App = App::new("figcraft", "FigCraft", "Interface design and prototyping", "storytold/figcraft");
-pub const LOCALKEYS: App = App::new("local-keys", "Local Keys", "Password manager", "Anon5T4R/Local-Keys");
+pub const LOCALKEYS: App = App {
+    publisher: "LocalKeys contributors",
+    ..App::new("local-keys", "Local Keys", "Password manager", "Anon5T4R/Local-Keys")
+};
 pub const SOUNDCRAFT: App = App::new("soundcraft", "SoundCraft", "Recording, editing and mixing audio", "storytold/soundcraft");
 pub const DECKCRAFT: App = App::new("deckcraft", "DeckCraft", "Presentations and slide shows", "storytold/deckcraft");
 pub const CADCRAFT: App = App::new("cadcraft", "CADCraft", "Computer-aided design and drafting", "storytold/cadcraft");
