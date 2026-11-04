@@ -71,6 +71,11 @@
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Local Keys"
               Description="LocalKeys password manager" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
               Icon="LocalKeysIcon.ico" IconIndex="0" />
+          <!-- Alias de busca: a busca do Windows casa o nome do atalho, e todo app da
+               suíte começa com Local — "keys" puro não acharia nada. -->
+          <Shortcut Id="AliasShortcut" Directory="ProgramMenuFolder" Name="Keys"
+              Description="LocalKeys password manager" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
+              Icon="LocalKeysIcon.ico" IconIndex="0" />
           <!-- Atalho no desktop (o NSIS antigo criava; per-machine = desktop
                comum, visível pra todos os usuários). -->
           <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="Local Keys"

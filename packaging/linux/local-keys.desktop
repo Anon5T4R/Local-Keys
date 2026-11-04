@@ -1,6 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=LocalKeys
+GenericName=Password Manager
+Keywords=keys;passwords;password;manager;security;vault;local;
 Exec=local-keys
 Icon=local-keys
 Categories=Utility;Security;
