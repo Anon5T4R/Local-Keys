@@ -188,9 +188,11 @@ mod tests {
 
     #[test]
     fn passphrase_tem_o_numero_de_palavras() {
-        let opts = PassphraseOptions { words: 5, separator: "-".into(), capitalize: true, include_number: false };
+        // Separador ".": a wordlist EFF tem 4 palavras com hífen (drop-down, felt-tip,
+        // t-shirt, yo-yo), então contar por split('-') fleca ~0,3% das execuções.
+        let opts = PassphraseOptions { words: 5, separator: ".".into(), capitalize: true, include_number: false };
         let p = generate_passphrase(&opts).unwrap();
-        assert_eq!(p.split('-').count(), 5);
+        assert_eq!(p.split('.').count(), 5);
     }
 
     #[test]
