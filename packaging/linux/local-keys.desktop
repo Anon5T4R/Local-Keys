@@ -2,10 +2,13 @@
 Type=Application
 Name=LocalKeys
 GenericName=Password Manager
-Keywords=keys;passwords;password;manager;security;vault;local;
+Keywords=keys;passwords;password;manager;security;vault;totp;local;
 Exec=local-keys
+TryExec=local-keys
 Icon=local-keys
 Categories=Utility;Security;
-Comment=Gerenciador de senhas 100% local e offline
+Comment=Gerenciador de senhas 100% local e offline — cofre .tkeys cifrado
 Terminal=false
+# O runner nativo não completa o handshake de startup-notification (igual ao local-image).
+StartupNotify=false
 StartupWMClass=local-keys
