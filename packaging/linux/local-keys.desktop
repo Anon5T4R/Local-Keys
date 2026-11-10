@@ -4,7 +4,6 @@ Name=LocalKeys
 GenericName=Password Manager
 Keywords=keys;passwords;password;manager;security;vault;totp;local;
 Exec=local-keys
-TryExec=local-keys
 Icon=local-keys
 Categories=Utility;Security;
 Comment=Gerenciador de senhas 100% local e offline — cofre .tkeys cifrado
