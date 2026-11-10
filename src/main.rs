@@ -1257,9 +1257,7 @@ impl KeysApp {
         let _ = self.pickers.ask(
             ctx,
             pickers::Ask::Files(rfd::AsyncFileDialog::new()),
-            Box::new(move |app, paths| {
-                app.attachments_chosen(&item, paths.into_iter().map(|p| p.display().to_string()).collect(), &ctx2)
-            }),
+            Box::new(move |app, paths| app.attachments_chosen(&item, paths.into_iter().map(|p| p.display().to_string()).collect(), &ctx2)),
         );
     }
 
@@ -1304,10 +1302,7 @@ impl KeysApp {
             ctx,
             pickers::Ask::Save(rfd::AsyncFileDialog::new().set_file_name(name)),
             Box::new(move |app, paths| {
-                let target = paths
-                    .first()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| app.attach_path.trim().to_string());
+                let target = paths.first().map(|p| p.display().to_string()).unwrap_or_else(|| app.attach_path.trim().to_string());
                 if target.is_empty() {
                     app.err = Some("informe o destino do anexo".into());
                     return;
@@ -1717,11 +1712,15 @@ impl KeysApp {
                             ImportKind::Bitwarden => rfd::AsyncFileDialog::new().add_filter("Bitwarden (.json)", &["json"]),
                             ImportKind::Csv => rfd::AsyncFileDialog::new().add_filter("CSV (.csv)", &["csv"]),
                         };
-                        let _ = self.pickers.ask(ui.ctx(), pickers::Ask::File(dialog), Box::new(|app, paths| {
-                            if let Some(p) = paths.first() {
-                                app.import_path = p.display().to_string();
-                            }
-                        }));
+                        let _ = self.pickers.ask(
+                            ui.ctx(),
+                            pickers::Ask::File(dialog),
+                            Box::new(|app, paths| {
+                                if let Some(p) = paths.first() {
+                                    app.import_path = p.display().to_string();
+                                }
+                            }),
+                        );
                     }
                 });
                 ui.end_row();
@@ -2300,14 +2299,17 @@ impl KeysApp {
                 ui.add(line(&mut self.export_path).hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext())).desired_width(230.0));
                 if ui.button("…").clicked() {
                     let kind = self.export_kind;
-                    let dialog = rfd::AsyncFileDialog::new()
-                        .add_filter("Cofre em claro", &[kind.ext()])
-                        .set_file_name(format!("cofre.{}", kind.ext()));
-                    let _ = self.pickers.ask(ui.ctx(), pickers::Ask::Save(dialog), Box::new(|app, paths| {
-                        if let Some(p) = paths.first() {
-                            app.export_path = p.display().to_string();
-                        }
-                    }));
+                    let dialog =
+                        rfd::AsyncFileDialog::new().add_filter("Cofre em claro", &[kind.ext()]).set_file_name(format!("cofre.{}", kind.ext()));
+                    let _ = self.pickers.ask(
+                        ui.ctx(),
+                        pickers::Ask::Save(dialog),
+                        Box::new(|app, paths| {
+                            if let Some(p) = paths.first() {
+                                app.export_path = p.display().to_string();
+                            }
+                        }),
+                    );
                 }
             });
             ui.add_space(12.0);
@@ -2468,12 +2470,16 @@ impl KeysApp {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(260.0));
                 if ui.button("…").clicked() {
                     let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
-                    let _ = self.pickers.ask(ui.ctx(), pickers::Ask::File(dialog), Box::new(|app, paths| {
-                        if let Some(p) = paths.first() {
-                            app.path = p.display().to_string();
-                            app.quick_ativa = app.path_has_stored_key();
-                        }
-                    }));
+                    let _ = self.pickers.ask(
+                        ui.ctx(),
+                        pickers::Ask::File(dialog),
+                        Box::new(|app, paths| {
+                            if let Some(p) = paths.first() {
+                                app.path = p.display().to_string();
+                                app.quick_ativa = app.path_has_stored_key();
+                            }
+                        }),
+                    );
                 }
             });
             ui.end_row();
@@ -2515,14 +2521,16 @@ impl KeysApp {
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(260.0));
                 if ui.button("…").clicked() {
-                    let dialog = rfd::AsyncFileDialog::new()
-                        .add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"])
-                        .set_file_name("novo-cofre.tkeys");
-                    let _ = self.pickers.ask(ui.ctx(), pickers::Ask::Save(dialog), Box::new(|app, paths| {
-                        if let Some(p) = paths.first() {
-                            app.path = p.display().to_string();
-                        }
-                    }));
+                    let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("novo-cofre.tkeys");
+                    let _ = self.pickers.ask(
+                        ui.ctx(),
+                        pickers::Ask::Save(dialog),
+                        Box::new(|app, paths| {
+                            if let Some(p) = paths.first() {
+                                app.path = p.display().to_string();
+                            }
+                        }),
+                    );
                 }
             });
             ui.end_row();
