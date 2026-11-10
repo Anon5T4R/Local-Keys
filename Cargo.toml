@@ -72,15 +72,22 @@ hmac = "0.12"
 # self-update (Windows: MSI/portable; Linux: AppImage/tar.gz). O `egui` liga o
 # prompt e o Updater de UI.
 craft-update = { path = "libs/craft-libs/crates/update", features = ["egui"] }
+# Seletor NATIVO de arquivo/pasta. Defaults do rfd 0.17 no Linux = backend
+# XDG portal (Rust puro via zbus, fallback Zenity) — mesmo padrão dos apps
+# maduros (local-pdf e irmãos); chamadas via AsyncFileDialog + thread worker
+# (src/pickers.rs, molde do local-pdf). Windows segue o diálogo nativo.
+rfd = "0.17"
+# Espera o seletor nativo fora da thread de UI (já no grafo via wgpu).
+pollster = "1.0"
 
 [target.'cfg(windows)'.dependencies]
 # Desbloqueio rápido (chave no Credential Manager) — só no Windows: o
 # secret-service do Linux puxaria libdbus pro build/AppImage (runner nem tem
-# dbus-1 dev). Mesma política do tray/rfd: AppImage enxuto.
+# dbus-1 dev). Mesma política do tray. (O rfd agora é global com portal XDG
+# — src/pickers.rs.)
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 # Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
 clipboard-win = "5.4"
-rfd = { version = "0.17", default-features = false }
 # Bandeja só no Windows (mesma política do lab-clip: no Linux o tray-icon
 # puxaria muda→gtk3 e engordaria o AppImage).
 tray-icon = "0.24"

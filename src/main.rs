@@ -44,6 +44,7 @@ mod generator;
 mod import;
 mod jobs;
 mod kdbx;
+mod pickers;
 mod totp;
 mod vault;
 
@@ -149,22 +150,6 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// Diálogo nativo só no Windows (rfd win32, sem gtk). No Linux o caminho é
-/// digitado — bundlar gtk3 no AppImage engordaria dezenas de MB à toa.
-#[cfg(windows)]
-fn pick_open() -> Option<String> {
-    rfd::FileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).pick_file().map(|p| p.display().to_string())
-}
-
-#[cfg(windows)]
-fn pick_save() -> Option<String> {
-    rfd::FileDialog::new()
-        .add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"])
-        .set_file_name("novo-cofre.tkeys")
-        .save_file()
-        .map(|p| p.display().to_string())
-}
-
 /// Abre a página da release no navegador — ação "Download" do prompt do
 /// updater, para instalações que não se auto-atualizam (zip solto, dev build).
 fn open_url(url: &str) {
@@ -198,35 +183,11 @@ enum ImportKind {
     Csv,
 }
 
-#[cfg(windows)]
-fn pick_import_file(kind: ImportKind) -> Option<String> {
-    let dialog = rfd::FileDialog::new();
-    let dialog = match kind {
-        ImportKind::Kdbx => dialog.add_filter("KeePass (.kdbx)", &["kdbx"]),
-        ImportKind::Bitwarden => dialog.add_filter("Bitwarden (.json)", &["json"]),
-        ImportKind::Csv => dialog.add_filter("CSV (.csv)", &["csv"]),
-    };
-    dialog.pick_file().map(|p| p.display().to_string())
-}
-
-/// Windows: diálogo nativo pra escolher os anexos de origem — MULTI-SELEÇÃO
-/// (`pick_files`): cada arquivo escolhido vira um anexdo do item.
-#[cfg(windows)]
-fn pick_open_attachments() -> Vec<String> {
-    rfd::FileDialog::new().pick_files().map(|paths| paths.iter().map(|p| p.display().to_string()).collect()).unwrap_or_default()
-}
-
 /// Linux: os caminhos digitados no campo vêm separados por `;` — separa,
 /// tira os espaços das pontas e descarta os vazios. (No Windows sobrevive
 /// como fallback do campo — que lá não é renderizado.)
 fn split_attachment_paths(text: &str) -> Vec<String> {
     text.split(';').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
-}
-
-/// Windows: diálogo nativo pra salvar o anexo com o nome sugerido.
-#[cfg(windows)]
-fn pick_save_attachment(name: &str) -> Option<String> {
-    rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.display().to_string())
 }
 
 /// Formato do export em claro — o oficial só tem estes dois (`export.ts`).
@@ -243,16 +204,6 @@ impl ExportKind {
             ExportKind::Csv => "csv",
         }
     }
-}
-
-/// Windows: diálogo nativo do destino do export (sugere `cofre.json/csv`).
-#[cfg(windows)]
-fn pick_save_export(kind: ExportKind) -> Option<String> {
-    rfd::FileDialog::new()
-        .add_filter("Cofre em claro", &[kind.ext()])
-        .set_file_name(format!("cofre.{}", kind.ext()))
-        .save_file()
-        .map(|p| p.display().to_string())
 }
 
 /// MIME mínimo por extensão (o anexo vai pro JSON do vault; sem adivinhar
@@ -669,6 +620,9 @@ fn tray_icon() -> Option<tray_icon::Icon> {
 
 struct KeysApp {
     cfg: Config,
+    /// Seletor nativo async (src/pickers.rs): a resposta chega num frame
+    /// posterior, como closure — cada fluxo tem a sua continuação.
+    pickers: pickers::Pickers,
     // trancado
     path: String,
     master: String,
@@ -769,6 +723,7 @@ impl KeysApp {
     fn new(cfg: Config) -> Self {
         let mut app = Self {
             cfg,
+            pickers: pickers::Pickers::default(),
             path: String::new(),
             master: String::new(),
             confirm: String::new(),
@@ -1294,13 +1249,24 @@ impl KeysApp {
     /// Como o mecanismo de jobs é UM por vez, o primeiro arquivo abre o job e
     /// o resto espera na fila (`attach_queue`), consumida a cada resultado.
     fn add_attachment_from(&mut self, item_id: &str, ctx: &egui::Context) {
-        #[cfg(windows)]
-        let mut sources = pick_open_attachments();
-        #[cfg(not(windows))]
-        let mut sources = Vec::new();
-        // Linux (e cancelamento do Windows): caminhos digitados separados
-        // por `;` — o campo só é renderizado no Linux, então no Windows isto
-        // cai vazio e mantém o mesmo erro de antes.
+        // Seletor nativo multi-seleção (src/pickers.rs): a resposta chega num
+        // frame posterior. Cancelou (paths vazios) → cai no campo de caminhos
+        // digitados (`;`-separados), o fallback que sempre existiu.
+        let item = item_id.to_string();
+        let ctx2 = ctx.clone();
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::Files(rfd::AsyncFileDialog::new()),
+            Box::new(move |app, paths| {
+                app.attachments_chosen(&item, paths.into_iter().map(|p| p.display().to_string()).collect(), &ctx2)
+            }),
+        );
+    }
+
+    /// Sequência comum dos anexos: os caminhos do seletor, ou — vazios — os
+    /// digitados no campo. O primeiro abre o job; o resto espera na fila
+    /// (`attach_queue`), consumida a cada resultado.
+    fn attachments_chosen(&mut self, item_id: &str, mut sources: Vec<String>, ctx: &egui::Context) {
         if sources.is_empty() {
             sources = split_attachment_paths(&self.attach_path);
         }
@@ -1308,7 +1274,6 @@ impl KeysApp {
             self.err = Some("informe o arquivo do anexo".into());
             return;
         }
-        // Multi-pick novo substitui o que tivesse sobrado da vez anterior.
         let primeiro = sources.remove(0);
         self.attach_queue = sources.into_iter().map(|source| (item_id.to_string(), source)).collect();
         self.start_job(ctx, Key::ReadingFile, Job::ReadAttachment { item_id: item_id.to_string(), source: primeiro });
@@ -1328,23 +1293,28 @@ impl KeysApp {
     /// Decodifica o base64 do anexo e grava no destino escolhido — na thread
     /// (`fs::write` em pasta de rede tem a mesma lentidão da leitura).
     fn save_attachment(&mut self, item_id: &str, attachment_id: &str, ctx: &egui::Context) {
-        #[cfg_attr(not(windows), allow(unused_variables))]
         let Some((name, b64)) = self.raw.as_ref().and_then(|r| vault::attachment_data(r, item_id, attachment_id)) else {
             self.err = Some("anexo não encontrado".into());
             return;
         };
-        #[cfg(windows)]
-        let target = pick_save_attachment(&name);
-        #[cfg(not(windows))]
-        let target = {
-            let p = self.attach_path.trim();
-            (!p.is_empty()).then(|| p.to_string())
-        };
-        let Some(target) = target else {
-            self.err = Some("informe o destino do anexo".into());
-            return;
-        };
-        self.start_job(ctx, Key::Working, Job::SaveAttachment { target, data_b64: b64 });
+        // Seletor nativo "salvar como" com o nome do anexo (src/pickers.rs);
+        // cancelou → cai no campo de destino digitado, o fallback de sempre.
+        let ctx2 = ctx.clone();
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::Save(rfd::AsyncFileDialog::new().set_file_name(name)),
+            Box::new(move |app, paths| {
+                let target = paths
+                    .first()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| app.attach_path.trim().to_string());
+                if target.is_empty() {
+                    app.err = Some("informe o destino do anexo".into());
+                    return;
+                }
+                app.start_job(&ctx2, Key::Working, Job::SaveAttachment { target, data_b64: b64 });
+            }),
+        );
     }
 
     // ── feedback ────────────────────────────────────────────────────────
@@ -1739,11 +1709,19 @@ impl KeysApp {
                 ui.label(t(Key::ImportFile));
                 ui.horizontal(|ui| {
                     ui.add(line(&mut self.import_path).hint_text("C:\\...\\export").desired_width(214.0));
-                    #[cfg(windows)]
                     if ui.button("…").clicked() {
-                        if let Some(p) = pick_import_file(self.import_kind) {
-                            self.import_path = p;
-                        }
+                        // Seletor nativo (src/pickers.rs); resposta num frame posterior.
+                        let kind = self.import_kind;
+                        let dialog = match kind {
+                            ImportKind::Kdbx => rfd::AsyncFileDialog::new().add_filter("KeePass (.kdbx)", &["kdbx"]),
+                            ImportKind::Bitwarden => rfd::AsyncFileDialog::new().add_filter("Bitwarden (.json)", &["json"]),
+                            ImportKind::Csv => rfd::AsyncFileDialog::new().add_filter("CSV (.csv)", &["csv"]),
+                        };
+                        let _ = self.pickers.ask(ui.ctx(), pickers::Ask::File(dialog), Box::new(|app, paths| {
+                            if let Some(p) = paths.first() {
+                                app.import_path = p.display().to_string();
+                            }
+                        }));
                     }
                 });
                 ui.end_row();
@@ -2320,11 +2298,16 @@ impl KeysApp {
             ui.horizontal(|ui| {
                 ui.label(t(Key::ImportFile));
                 ui.add(line(&mut self.export_path).hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext())).desired_width(230.0));
-                #[cfg(windows)]
                 if ui.button("…").clicked() {
-                    if let Some(p) = pick_save_export(self.export_kind) {
-                        self.export_path = p;
-                    }
+                    let kind = self.export_kind;
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .add_filter("Cofre em claro", &[kind.ext()])
+                        .set_file_name(format!("cofre.{}", kind.ext()));
+                    let _ = self.pickers.ask(ui.ctx(), pickers::Ask::Save(dialog), Box::new(|app, paths| {
+                        if let Some(p) = paths.first() {
+                            app.export_path = p.display().to_string();
+                        }
+                    }));
                 }
             });
             ui.add_space(12.0);
@@ -2378,6 +2361,11 @@ impl eframe::App for KeysApp {
         }
 
         self.updater.tick(ctx);
+        // Seletor nativo (src/pickers.rs): consome as respostas que chegaram
+        // da thread (ela acorda este frame com request_repaint).
+        for picked in self.pickers.take() {
+            (picked.then)(self, picked.paths);
+        }
         self.poll_jobs(ctx);
 
         let lang = self.cfg.lang;
@@ -2478,12 +2466,14 @@ impl KeysApp {
             ui.label(".tkeys");
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(260.0));
-                #[cfg(windows)]
                 if ui.button("…").clicked() {
-                    if let Some(p) = pick_open() {
-                        self.path = p;
-                        self.quick_ativa = self.path_has_stored_key();
-                    }
+                    let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
+                    let _ = self.pickers.ask(ui.ctx(), pickers::Ask::File(dialog), Box::new(|app, paths| {
+                        if let Some(p) = paths.first() {
+                            app.path = p.display().to_string();
+                            app.quick_ativa = app.path_has_stored_key();
+                        }
+                    }));
                 }
             });
             ui.end_row();
@@ -2524,11 +2514,15 @@ impl KeysApp {
             ui.label(".tkeys");
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(260.0));
-                #[cfg(windows)]
                 if ui.button("…").clicked() {
-                    if let Some(p) = pick_save() {
-                        self.path = p;
-                    }
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"])
+                        .set_file_name("novo-cofre.tkeys");
+                    let _ = self.pickers.ask(ui.ctx(), pickers::Ask::Save(dialog), Box::new(|app, paths| {
+                        if let Some(p) = paths.first() {
+                            app.path = p.display().to_string();
+                        }
+                    }));
                 }
             });
             ui.end_row();
