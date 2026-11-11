@@ -7,7 +7,7 @@
 #   makepkg -si
 
 pkgname=local-keys
-pkgver=0.11.4
+pkgver=0.11.5
 pkgrel=1
 pkgdesc='Gerenciador de senhas 100% local e offline'
 arch=(x86_64)
