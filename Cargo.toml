@@ -52,7 +52,7 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 totp-rs = { version = "5", default-features = false }
-arboard = "3.6"
+arboard = { version = "3.6", features = ["wayland-data-control"] }
 # Base64 em TODAS as plataformas: anexos (vault.rs) e o import do export
 # cifrado do Bitwarden (bwdecrypt.rs) usam — o desbloqueio rápido no keyring
 # também, e continua funcionando.
