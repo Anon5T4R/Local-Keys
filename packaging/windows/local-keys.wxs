@@ -88,6 +88,21 @@
              (HKLM for a per-machine install) under the suite's key to know this is an MSI
              install, so it updates with the new MSI rather than the portable zip. -->
         <RegistryValue Root="HKLM" Key="Software\Anon5T4R\Local Keys" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" />
+
+        <!-- "Open with" and Settings > Default apps, through the Default Programs registration (ProgID,
+             OpenWithProgids, Capabilities, RegisteredApplications). Only .tkeys, the app's own vault format; the app opens the path it receives on the unlock screen.
+             Never takes over an extension: the default value is left alone and the user chooses. -->
+        <ProgId Id="LocalKeys.Vault" Description="Local Keys Vault" Icon="LocalKeysExe" IconIndex="0" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\LocalKeys.Vault\shell\open\command" Value="&quot;[#LocalKeysExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\.tkeys\OpenWithProgids" Name="LocalKeys.Vault" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\local-keys.exe" Name="FriendlyAppName" Value="Local Keys" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\local-keys.exe\shell\open\command" Value="&quot;[#LocalKeysExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\local-keys.exe\SupportedTypes" Name=".tkeys" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\LocalKeys\Capabilities" Name="ApplicationName" Value="Local Keys" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\LocalKeys\Capabilities" Name="ApplicationDescription" Value="Offline password manager" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\LocalKeys\Capabilities" Name="ApplicationIcon" Value="[#LocalKeysExe],0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\LocalKeys\Capabilities\FileAssociations" Name=".tkeys" Value="LocalKeys.Vault" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\RegisteredApplications" Name="LocalKeys" Value="Software\LocalKeys\Capabilities" Type="string" />
       </Component>
     </ComponentGroup>
   </Fragment>

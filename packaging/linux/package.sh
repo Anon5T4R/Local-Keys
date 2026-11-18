@@ -57,6 +57,7 @@ rm -rf "$WORK"
 install -Dm755 "$BIN/local-keys" "$STAGE/usr/bin/local-keys"
 "${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/local-keys" 2>/dev/null || true
 install -Dm644 "$HERE/$APP_ID.desktop" "$STAGE/usr/share/applications/$APP_ID.desktop"
+install -Dm644 "$HERE/$APP_ID.mime.xml" "$STAGE/usr/share/mime/packages/$APP_ID.xml"
 mkdir -p "$STAGE/usr/share/metainfo"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@DATE@/$LOCALKEYS_BUILD_DATE/g" \
   "$HERE/$APP_ID.metainfo.xml.in" >"$STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"

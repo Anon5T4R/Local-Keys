@@ -45,9 +45,9 @@
     <control>keyboard</control>
     <control>pointing</control>
   </supports>
-  <!-- The vault .tkeys is a private format, so no file mediatype is claimed: only the binary. -->
   <provides>
     <binary>local-keys</binary>
+    <mediatype>application/x-localkeys</mediatype>
   </provides>
   <releases>
     <release version="@VERSION@" date="@DATE@"/>
