@@ -132,6 +132,8 @@ fn main() -> eframe::Result<()> {
     }
 
     let cfg = config::load(APP_ID);
+    // "Abrir com" / duplo clique num `.tkeys`: o Explorer e o `%F` do .desktop mandam o caminho no argv.
+    let initial_vault = vault_from_args(std::env::args_os().skip(1));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("LocalKeys").with_inner_size([480.0, 660.0]).with_icon(load_window_icon()),
         ..Default::default()
@@ -141,13 +143,32 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            let mut app = KeysApp::new(cfg);
+            let mut app = KeysApp::new(cfg, initial_vault);
             // Check de update no arranque: achou release nova, o prompt do
             // updater abre sozinho (craft_update::dialog).
             app.updater.check_at_start(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
     )
+}
+
+/// O cofre pedido na linha de comando: o primeiro argumento com extensão `.tkeys` (sem diferenciar
+/// maiúsculas). Flags como `--finish-update` e arquivos de outro tipo não contam; um caminho que
+/// não é UTF-8 também não (o campo de caminho da tela de desbloqueio é `String`).
+fn vault_from_args<I>(args: I) -> Option<String>
+where
+    I: IntoIterator,
+    I::Item: Into<std::ffi::OsString>,
+{
+    args.into_iter().map(Into::into).find_map(|arg: std::ffi::OsString| {
+        let path = std::path::Path::new(&arg);
+        let is_vault = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("tkeys"));
+        if is_vault {
+            arg.into_string().ok()
+        } else {
+            None
+        }
+    })
 }
 
 /// Abre a página da release no navegador — ação "Download" do prompt do
@@ -720,7 +741,9 @@ struct KeysApp {
 }
 
 impl KeysApp {
-    fn new(cfg: Config) -> Self {
+    /// `initial_vault`: o `.tkeys` recebido no argv. Vira o caminho da tela de desbloqueio no lugar do
+    /// último cofre usado; sem ele, vale o último.
+    fn new(cfg: Config, initial_vault: Option<String>) -> Self {
         let mut app = Self {
             cfg,
             pickers: pickers::Pickers::default(),
@@ -790,7 +813,7 @@ impl KeysApp {
             app._tray = tray;
             app.quit = quit;
         }
-        app.path = last_path().unwrap_or_default();
+        app.path = initial_vault.or_else(last_path).unwrap_or_default();
         app.quick_ativa = app.path_has_stored_key();
         app.try_quick_unlock();
         app
@@ -883,9 +906,12 @@ impl KeysApp {
     fn try_quick_unlock(&mut self) {
         use base64::Engine as _;
 
-        let Some(path) = last_path() else {
+        // O caminho da tela de desbloqueio (o último cofre ou o `.tkeys` do argv): a chave guardada é
+        // por caminho, então um cofre aberto pelo Explorer só destranca sozinho se tiver a dele.
+        let path = self.path.trim().to_string();
+        if path.is_empty() {
             return;
-        };
+        }
         let Ok(b64) = keyring::Entry::new(KEYRING_SERVICE, &path).and_then(|e| e.get_password()) else {
             return;
         };
@@ -2766,6 +2792,26 @@ impl KeysApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// O `.tkeys` do argv vira o cofre da tela de desbloqueio; flags e outros arquivos não.
+    #[test]
+    fn argv_reconhece_o_caminho_tkeys() {
+        assert_eq!(vault_from_args(["C:/cofres/meu.tkeys"]), Some("C:/cofres/meu.tkeys".to_string()));
+        assert_eq!(vault_from_args(["/home/a/Meu Cofre.TKEYS"]), Some("/home/a/Meu Cofre.TKEYS".to_string()));
+        // o primeiro `.tkeys` vence; o que vem antes e não é cofre é ignorado
+        assert_eq!(vault_from_args(["--x", "nota.txt", "a.tkeys", "b.tkeys"]), Some("a.tkeys".to_string()));
+        // sem cofre: nada (a tela abre no último usado)
+        assert_eq!(vault_from_args(Vec::<String>::new()), None);
+        assert_eq!(vault_from_args(["nota.txt", "tkeys", "a.tkeys.bak"]), None);
+    }
+
+    /// `--finish-update` (o helper de update do Windows, tratado antes de tudo) não é cofre, mesmo
+    /// com o caminho da instalação do lado.
+    #[test]
+    fn argv_do_finish_update_fica_intacto() {
+        assert_eq!(vault_from_args(["--finish-update"]), None);
+        assert_eq!(vault_from_args(["--finish-update", "C:/Program Files/Local Keys/local-keys.exe"]), None);
+    }
 
     /// A data da lixeira é o único uso de calendário do lab (sem crate de
     /// data): confere epoch, virada de ano e um dia comum.
