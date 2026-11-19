@@ -6,7 +6,7 @@
        ícone, nomes de asset do updater — continua flat "local-keys" (launchable abaixo). -->
   <id>com.local.localkeys</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-3.0-or-later</project_license>
+  <project_license>MIT OR Apache-2.0</project_license>
   <name>LocalKeys</name>
   <summary>Store passwords, TOTP codes and notes offline</summary>
   <developer id="com.local.localkeys">

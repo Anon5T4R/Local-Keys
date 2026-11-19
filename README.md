@@ -20,4 +20,4 @@ cargo test --locked
 Tag `vX.Y.Z` → o GitHub Actions builda e publica tudo. Detalhes para agentes: `AGENTS.md`.
 
 ## Licença
-GPL-3.0-or-later
+MIT OR Apache-2.0 (`LICENSE-MIT` e `LICENSE-APACHE`)

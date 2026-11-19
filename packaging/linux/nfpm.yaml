@@ -15,7 +15,7 @@ priority: optional
 maintainer: ${LOCALKEYS_MAINTAINER}
 vendor: LocalKeys contributors
 homepage: https://github.com/Anon5T4R/Local-Keys
-license: GPL-3.0-or-later
+license: MIT OR Apache-2.0
 description: |-
   Password manager that works 100% locally and offline.
   Encrypted .tkeys vault (Argon2id), logins with TOTP, attachments, folders,
