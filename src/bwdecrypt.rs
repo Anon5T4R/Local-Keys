@@ -4,8 +4,9 @@
 //! Import do export **cifrado** (password-protected) do Bitwarden.
 //!
 //! **Validado com export real em 2026-07-18 (teste do João).** É decifragem apenas (import),
-//! então pior caso ele falha — nunca corrompe o seu cofre. O algoritmo segue o
-//! `bitwarden/clients` (GPL): deriva a chave da senha (PBKDF2 ou Argon2id), estica
+//! então pior caso ele falha — nunca corrompe o seu cofre. Implementação própria do
+//! formato de export cifrado do Bitwarden (só o formato; nenhum código do cliente
+//! deles): deriva a chave da senha (PBKDF2 ou Argon2id), estica
 //! via HKDF em (encKey, macKey), e a `data` é uma enc-string `2.iv|ct|mac`
 //! (AES-256-CBC + HMAC-SHA256). Só primitivas auditadas do RustCrypto.
 
