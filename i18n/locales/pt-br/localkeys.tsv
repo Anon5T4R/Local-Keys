@@ -132,3 +132,19 @@
 	s	s
 	KeePass (.kdbx)	KeePass (.kdbx)
 	CSV (Chrome/Edge/LastPass/1Password)	CSV (Chrome/Edge/LastPass/1Password)
+	Automatic	Automático
+	Light	Claro
+	Dark	Escuro
+	Theme: {mode}	Tema: {mode}
+	Search commands	Buscar comandos
+	Search commands ({shortcut})	Buscar comandos ({shortcut})
+	No command matches.	Nenhum comando encontrado.
+	Check for Updates…	Verificar atualizações…
+	About Local Keys	Sobre o Local Keys
+	version {version}	versão {version}
+	You are on the newest version.	Você está na versão mais recente.
+	Exit	Sair
+	Help	Ajuda
+	Choose file…	Escolher arquivo…
+	zxcvbn: 10^{guesses} guesses	zxcvbn: 10^{guesses} tentativas
+	Unlock vault	Destrancar o cofre

@@ -88,7 +88,7 @@
 	Add attachment	Añadir adjunto
 	Save	Guardar
 	no attachments	sin adjuntos
-	Settings	Ajustes
+	Settings	Configuración
 	Global hotkey	Atajo global
 	Set…	Definir…
 	Start with system	Iniciar con el sistema
@@ -132,3 +132,19 @@
 	s	s
 	KeePass (.kdbx)	KeePass (.kdbx)
 	CSV (Chrome/Edge/LastPass/1Password)	CSV (Chrome/Edge/LastPass/1Password)
+	Automatic	Automático
+	Light	Claro
+	Dark	Oscuro
+	Theme: {mode}	Tema: {mode}
+	Search commands	Buscar comandos
+	Search commands ({shortcut})	Buscar comandos ({shortcut})
+	No command matches.	Ningún comando coincide.
+	Check for Updates…	Buscar actualizaciones…
+	About Local Keys	Acerca de Local Keys
+	version {version}	versión {version}
+	You are on the newest version.	Estás en la versión más reciente.
+	Exit	Salir
+	Help	Ayuda
+	Choose file…	Elegir archivo…
+	zxcvbn: 10^{guesses} guesses	zxcvbn: 10^{guesses} intentos
+	Unlock vault	Desbloquear la bóveda

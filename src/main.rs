@@ -45,16 +45,21 @@ mod import;
 mod jobs;
 mod kdbx;
 mod pickers;
+mod shell;
 mod totp;
 mod vault;
 
 #[cfg(windows)]
 mod winctl;
 
+#[cfg(test)]
+mod ui_tests;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
+use craft_icons::Icon;
 use eframe::egui;
 use jobs::{AttachmentRead, Created, Job, JobError, JobResult, Renewed, Unlocked};
 use lab_ui::config::{self, Config};
@@ -142,6 +147,8 @@ fn main() -> eframe::Result<()> {
         APP_ID,
         options,
         Box::new(move |cc| {
+            // O carregador de SVG dos ícones da suíte (craft-icons).
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx, cfg.theme);
             // Linux: a escolha clara/escura do desktop, que o winit não informa.
             craft_desktop_theme::follow(&cc.egui_ctx);
@@ -548,12 +555,12 @@ fn invalidate_quick_key(_path: &str) {}
 /// "mostrar + flag de quit": o update, com a janela visível, faz o
 /// `ViewportCommand::Close` — caminho limpo do winit 0.30.
 #[cfg(windows)]
-fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
+fn spawn_tray(lang: lab_ui::i18n::Lang) -> (Option<TrayIcon>, Arc<AtomicBool>) {
     let (tx, rx) = std::sync::mpsc::channel::<TrayCmd>();
     let quit = Arc::new(AtomicBool::new(false));
 
-    let show = MenuItem::with_id("show", "Mostrar/Ocultar", true, None);
-    let quit_item = MenuItem::with_id("quit", "Sair", true, None);
+    let show = MenuItem::with_id("show", i18n::t(lang, Key::ShowHide), true, None);
+    let quit_item = MenuItem::with_id("quit", i18n::tr(lang, "Exit"), true, None);
     let menu = Menu::new();
     let _ = menu.append(&show);
     let _ = menu.append(&quit_item);
@@ -740,13 +747,18 @@ struct KeysApp {
     /// "Sair" da bandeja: o update responde com `ViewportCommand::Close`
     /// (o único caminho que encerra de verdade).
     quit: Arc<AtomicBool>,
+    /// Janela de Configurações (idioma, tema, Sobre) — a engrenagem e a paleta abrem (`shell.rs`).
+    settings_open: bool,
+    /// Paleta de comandos da suíte (lupa e Ctrl+K).
+    palette: craft_palette::Palette,
+    /// Onde o config.json é gravado (os testes apontam para uma pasta temporária).
+    config_file: std::path::PathBuf,
 }
 
 impl KeysApp {
-    /// `initial_vault`: o `.tkeys` recebido no argv. Vira o caminho da tela de desbloqueio no lugar do
-    /// último cofre usado; sem ele, vale o último.
-    fn new(cfg: Config, initial_vault: Option<String>) -> Self {
-        let mut app = Self {
+    /// O estado inicial, sem tocar no disco, no cofre do SO nem na bandeja (os testes de UI partem daqui).
+    fn bare(cfg: Config) -> Self {
+        Self {
             cfg,
             pickers: pickers::Pickers::default(),
             path: String::new(),
@@ -808,10 +820,19 @@ impl KeysApp {
             #[cfg(windows)]
             _tray: None,
             quit: Arc::new(AtomicBool::new(false)),
-        };
+            settings_open: false,
+            palette: craft_palette::Palette::default(),
+            config_file: config::config_dir(APP_ID).join("config.json"),
+        }
+    }
+
+    /// `initial_vault`: o `.tkeys` recebido no argv. Vira o caminho da tela de desbloqueio no lugar do
+    /// último cofre usado; sem ele, vale o último.
+    fn new(cfg: Config, initial_vault: Option<String>) -> Self {
+        let mut app = Self::bare(cfg);
         #[cfg(windows)]
         {
-            let (tray, quit) = spawn_tray();
+            let (tray, quit) = spawn_tray(app.cfg.lang);
             app._tray = tray;
             app.quit = quit;
         }
@@ -1649,7 +1670,11 @@ impl KeysApp {
                         .fill(strength_color(strength.score))
                         .text(t(strength_key(strength.score))),
                 )
-                .on_hover_text(format!("zxcvbn: 10^{:.1} tentativas", strength.guesses_log10));
+                .on_hover_text(i18n::tr_fmt(
+                    self.cfg.lang,
+                    "zxcvbn: 10^{guesses} guesses",
+                    &[("guesses", &format!("{:.1}", strength.guesses_log10))],
+                ));
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -1732,7 +1757,7 @@ impl KeysApp {
                 ui.label(t(Key::ImportFile));
                 ui.horizontal(|ui| {
                     ui.add(line(&mut self.import_path).hint_text("C:\\...\\export").desired_width(214.0));
-                    if ui.button("…").clicked() {
+                    if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                         // Seletor nativo (src/pickers.rs); resposta num frame posterior.
                         let kind = self.import_kind;
                         let dialog = match kind {
@@ -1985,7 +2010,7 @@ impl KeysApp {
                         // onda 24 — excluir anexo: sem confirmação (o
                         // arquivo original continua no disco), mas com o
                         // mesmo gate do resto (nenhum persist durante job).
-                        if ui.add_enabled_ui(ready, |ui| ghost(ui, "🗑")).inner.on_hover_text(t(Key::DeleteAttachment)).clicked() {
+                        if ui.add_enabled_ui(ready, |ui| craft_icons::ui::button(ui, Icon::Delete, t(Key::DeleteAttachment))).inner.clicked() {
                             del = Some(att_id.clone());
                         }
                     });
@@ -2006,7 +2031,7 @@ impl KeysApp {
                         if ui.add_enabled_ui(ready, |ui| ghost(ui, t(Key::Restore))).inner.clicked() {
                             restore = Some(att_id.clone());
                         }
-                        if ui.add_enabled_ui(ready, |ui| ghost(ui, "🗑")).inner.on_hover_text(t(Key::DeleteForever)).clicked() {
+                        if ui.add_enabled_ui(ready, |ui| craft_icons::ui::button(ui, Icon::Delete, t(Key::DeleteForever))).inner.clicked() {
                             del_forever = Some(att_id.clone());
                         }
                     });
@@ -2157,13 +2182,14 @@ impl KeysApp {
                                 {
                                     confirma_rename = Some(p.id.clone());
                                 }
-                                if ghost(ui, "✕").on_hover_text(t(Key::Cancel)).clicked() {
+                                if craft_icons::ui::close_button(ui, t(Key::Cancel)).clicked() {
                                     cancela_rename = true;
                                 }
                             } else {
                                 ui.label(&p.name);
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.add_enabled_ui(!busy, |ui| ghost(ui, "🗑")).inner.on_hover_text(t(Key::DeleteFolder)).clicked() {
+                                    if ui.add_enabled_ui(!busy, |ui| craft_icons::ui::button(ui, Icon::Delete, t(Key::DeleteFolder))).inner.clicked()
+                                    {
                                         deleta = Some(p.id.clone());
                                     }
                                     if ui.add_enabled_ui(!busy, |ui| ghost(ui, "✏")).inner.on_hover_text(t(Key::RenameFolder)).clicked() {
@@ -2325,7 +2351,7 @@ impl KeysApp {
             ui.horizontal(|ui| {
                 ui.label(t(Key::ImportFile));
                 ui.add(line(&mut self.export_path).hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext())).desired_width(230.0));
-                if ui.button("…").clicked() {
+                if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                     let kind = self.export_kind;
                     let dialog =
                         rfd::AsyncFileDialog::new().add_filter("Cofre em claro", &[kind.ext()]).set_file_name(format!("cofre.{}", kind.ext()));
@@ -2357,17 +2383,11 @@ impl KeysApp {
             self.export_open = false;
         }
     }
-
-    /// Verifica atualizações agora (botão "Verificar atualizações").
-    /// O resultado sai como toast (nada encontrado/erro); release nova abre o
-    /// prompt do próprio updater.
-    fn check_updates(&mut self, ctx: &egui::Context) {
-        self.updater.check_now(ctx);
-    }
 }
 
-impl eframe::App for KeysApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl KeysApp {
+    /// Um quadro da interface: o `eframe::App::ui` e os testes de UI (`ui_tests.rs`) chamam isto.
+    fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         // Fechar (X) minimiza pra bandeja — SÓ no Windows, onde há bandeja.
         // (No Linux o X fecha de verdade.) Sem lock ao esconder: o cofre fica
@@ -2397,13 +2417,19 @@ impl eframe::App for KeysApp {
             (picked.then)(self, picked.paths);
         }
         self.poll_jobs(ctx);
+        // Ctrl+K: a paleta (o Keys não dá outro uso ao atalho).
+        if craft_palette::Palette::shortcut_pressed(ctx) {
+            self.palette.toggle();
+        }
 
         let lang = self.cfg.lang;
         let t = |k: Key| i18n::t(lang, k);
 
         // Check pedido ("Verificar atualizações"): nada encontrado/erro vira
         // toast; release nova abre o prompt do updater lá embaixo.
+        // Com as Configurações abertas o resultado aparece nelas (shell.rs), não no toast.
         match self.updater.status().clone() {
+            _ if self.settings_open => {}
             craft_update::updater::Status::UpToDate => {
                 self.toast = Some((t(Key::UpToDate).to_string(), std::time::Instant::now()));
                 self.updater.dismiss_status();
@@ -2435,16 +2461,7 @@ impl eframe::App for KeysApp {
         egui::containers::Panel::top("topo").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("LocalKeys");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (cfg_changed, forget_clicked) = lab_ui::settings_ui(ui, &mut self.cfg, self.quick_ativa);
-                    if cfg_changed {
-                        theme::apply(ctx, self.cfg.theme);
-                        let _ = config::save(APP_ID, &self.cfg);
-                    }
-                    if forget_clicked {
-                        self.forget_quick_key();
-                    }
-                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.shell_buttons(ui));
             });
         });
 
@@ -2470,6 +2487,9 @@ impl eframe::App for KeysApp {
         self.trash_modal(ctx, &t);
         self.export_modal(ctx, &t);
 
+        self.settings_modal(ctx);
+        self.palette_ui(ctx);
+
         // Prompt de update (craft_update): modal próprio do crate, por cima de
         // tudo. "Atualizar e reiniciar" pede o fechamento pelo caminho limpo
         // que a bandeja já usa (flag de quit → `ViewportCommand::Close`) — o
@@ -2485,6 +2505,12 @@ impl eframe::App for KeysApp {
     }
 }
 
+impl eframe::App for KeysApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.frame(ui);
+    }
+}
+
 impl KeysApp {
     fn locked_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
         // Job rodando (Argon2id): destrancar/criar ficam desabilitados.
@@ -2496,7 +2522,7 @@ impl KeysApp {
             ui.label(".tkeys");
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(260.0));
-                if ui.button("…").clicked() {
+                if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                     let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
                     let _ = self.pickers.ask(
                         ui.ctx(),
@@ -2526,7 +2552,7 @@ impl KeysApp {
         ui.horizontal(|ui| {
             let ready = !busy && !self.path.trim().is_empty() && !self.master.is_empty();
             if ui.add_enabled_ui(ready, |ui| pill(ui, t(Key::Unlock), true)).inner.clicked()
-                || (!busy && ui.input(|i| i.key_pressed(egui::Key::Enter) && !self.master.is_empty()))
+                || (!busy && !self.palette.is_open() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !self.master.is_empty()))
             {
                 self.unlock(ctx);
             }
@@ -2548,7 +2574,7 @@ impl KeysApp {
             ui.label(".tkeys");
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(260.0));
-                if ui.button("…").clicked() {
+                if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                     let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("novo-cofre.tkeys");
                     let _ = self.pickers.ask(
                         ui.ctx(),
@@ -2644,9 +2670,6 @@ impl KeysApp {
                 self.folder_edit_id = None;
                 self.folder_edit_name.clear();
             }
-            if ghost(ui, t(Key::CheckUpdates)).clicked() {
-                self.check_updates(ctx);
-            }
         });
 
         // Chips de pasta: "Todas" (i18n) + cada pasta. Seleção = filtro imediato da lista.
@@ -2680,7 +2703,7 @@ impl KeysApp {
             }
             ui.add(line(&mut self.search).hint_text(t(Key::Search)).desired_width(ui.available_width() - 24.0));
             // Botão "X" pra limpar a busca sem precisar de backspace.
-            if !self.search.is_empty() && ui.small_button("✕").clicked() {
+            if !self.search.is_empty() && craft_icons::ui::close_button(ui, t(Key::Clear)).clicked() {
                 self.search.clear();
             }
         });
