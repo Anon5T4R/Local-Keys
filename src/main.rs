@@ -397,6 +397,13 @@ fn modal_frame(ctx: &egui::Context) -> egui::Frame {
         .shadow(style.visuals.window_shadow)
 }
 
+/// Largura de um diálogo: a pedida, mas nunca mais larga que a janela menos a moldura e uma margem de cada lado
+/// (na largura mínima de 340 pt o diálogo não encosta nas bordas).
+fn dialog_width(ui: &mut egui::Ui, wanted: f32) {
+    let room = ui.ctx().content_rect().width() - 80.0;
+    ui.set_width(wanted.min(room).max(160.0));
+}
+
 /// Visuals de dentro do diálogo: campos com contorno e no tom "base" (o cartão
 /// é o "sunken" — sem isso o campo some no fundo do modal).
 fn begin_dialog(ui: &mut egui::Ui) {
@@ -1614,21 +1621,23 @@ impl KeysApp {
         let mut cancel = false;
         let resp = egui::Modal::new(egui::Id::unique("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(400.0);
+            dialog_width(ui, 400.0);
             ui.heading(title);
             ui.add_space(10.0);
+            // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
+            let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
             egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label(t(Key::Name));
-                ui.add(line(&mut self.add_name).desired_width(280.0));
+                let label = ui.label(t(Key::Name));
+                ui.add(line(&mut self.add_name).desired_width(field)).labelled_by(label.id);
                 ui.end_row();
 
-                ui.label(t(Key::Username));
-                ui.add(line(&mut self.add_user).desired_width(280.0));
+                let label = ui.label(t(Key::Username));
+                ui.add(line(&mut self.add_user).desired_width(field)).labelled_by(label.id);
                 ui.end_row();
 
-                ui.label(t(Key::Password));
+                let label = ui.label(t(Key::Password));
                 ui.horizontal(|ui| {
-                    ui.add(line(&mut self.add_pass).password(!self.reveal_form).desired_width(252.0));
+                    ui.add(line(&mut self.add_pass).password(!self.reveal_form).desired_width(field - 28.0)).labelled_by(label.id);
                     // 👁 reveal: o campo volta a ocultar ao fechar.
                     if ghost(ui, if self.reveal_form { "🙈" } else { "👁" }).on_hover_text(t(Key::Reveal)).clicked() {
                         self.reveal_form = !self.reveal_form;
@@ -1636,33 +1645,38 @@ impl KeysApp {
                 });
                 ui.end_row();
 
-                ui.label(t(Key::Url));
-                ui.add(line(&mut self.add_url).hint_text("https://…").desired_width(280.0));
+                let label = ui.label(t(Key::Url));
+                ui.add(line(&mut self.add_url).hint_text("https://…").desired_width(field)).labelled_by(label.id);
                 ui.end_row();
 
-                ui.label(t(Key::Totp));
-                ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(280.0));
+                let label = ui.label(t(Key::Totp));
+                ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(field)).labelled_by(label.id);
                 ui.end_row();
 
-                ui.label(t(Key::Notes));
-                ui.add(block(&mut self.add_notes).desired_width(280.0).desired_rows(3));
+                let label = ui.label(t(Key::Notes));
+                ui.add(block(&mut self.add_notes).desired_width(field).desired_rows(3)).labelled_by(label.id);
                 ui.end_row();
 
                 // onda 24 — pasta do item: "Sem pasta" + existentes.
                 // Pastas owned antes da closure (nenhum borrow de raw).
-                ui.label(t(Key::Folder));
+                let label = ui.label(t(Key::Folder));
                 let pastas = self.raw.as_ref().map(vault::folders).unwrap_or_default();
                 let pasta_sel = pastas
                     .iter()
                     .find(|p| Some(&p.id) == self.add_folder_id.as_ref())
                     .map(|p| p.name.clone())
                     .unwrap_or_else(|| t(Key::NoFolder).to_string());
-                egui::ComboBox::from_id_salt("form-pasta").width(280.0).selected_text(pasta_sel).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.add_folder_id, None, t(Key::NoFolder));
-                    for p in &pastas {
-                        ui.selectable_value(&mut self.add_folder_id, Some(p.id.clone()), &p.name);
-                    }
-                });
+                egui::ComboBox::from_id_salt("form-pasta")
+                    .width(field)
+                    .selected_text(pasta_sel)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.add_folder_id, None, t(Key::NoFolder));
+                        for p in &pastas {
+                            ui.selectable_value(&mut self.add_folder_id, Some(p.id.clone()), &p.name);
+                        }
+                    })
+                    .response
+                    .labelled_by(label.id);
                 ui.end_row();
             });
             // Força ao vivo (zxcvbn) — só quando há senha.
@@ -1713,7 +1727,7 @@ impl KeysApp {
         let mut cancel = false;
         let resp = egui::Modal::new(egui::Id::unique("delete")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(320.0);
+            dialog_width(ui, 320.0);
             ui.heading(t(Key::Delete));
             ui.add_space(8.0);
             ui.strong(&name);
@@ -1746,7 +1760,7 @@ impl KeysApp {
         let mut run = false;
         let resp = egui::Modal::new(egui::Id::unique("import")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(380.0);
+            dialog_width(ui, 380.0);
             ui.heading(t(Key::Import));
             ui.add_space(8.0);
             // Duas linhas: os três rótulos juntos estouram a largura.
@@ -1758,10 +1772,11 @@ impl KeysApp {
                 ui.selectable_value(&mut self.import_kind, ImportKind::Csv, t(Key::ImportCsv));
             });
             ui.add_space(10.0);
+            let field = (ui.available_width() - 150.0).clamp(120.0, 214.0);
             egui::Grid::new("import-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label(t(Key::ImportFile));
+                let label = ui.label(t(Key::ImportFile));
                 ui.horizontal(|ui| {
-                    ui.add(line(&mut self.import_path).hint_text("C:\\...\\export").desired_width(214.0));
+                    ui.add(line(&mut self.import_path).hint_text("C:\\...\\export").desired_width(field)).labelled_by(label.id);
                     if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                         // Seletor nativo (src/pickers.rs); resposta num frame posterior.
                         let kind = self.import_kind;
@@ -1785,9 +1800,9 @@ impl KeysApp {
                 // CSV é texto claro; kdbx e Bitwarden cifrado
                 // precisam da senha do arquivo.
                 if self.import_kind != ImportKind::Csv {
-                    ui.label(t(Key::ImportPassword));
+                    let label = ui.label(t(Key::ImportPassword));
                     ui.horizontal(|ui| {
-                        ui.add(line(&mut self.import_password).password(!self.reveal_import).desired_width(214.0));
+                        ui.add(line(&mut self.import_password).password(!self.reveal_import).desired_width(field)).labelled_by(label.id);
                         if ghost(ui, if self.reveal_import { "🙈" } else { "👁" }).on_hover_text(t(Key::Reveal)).clicked() {
                             self.reveal_import = !self.reveal_import;
                         }
@@ -1824,7 +1839,7 @@ impl KeysApp {
         let mut close = false;
         let resp = egui::Modal::new(egui::Id::unique("import-report")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(300.0);
+            dialog_width(ui, 300.0);
             ui.heading(t(Key::ImportReportTitle));
             ui.add_space(8.0);
             ui.label(format!("{imported} {}", t(Key::Imported)));
@@ -1850,7 +1865,7 @@ impl KeysApp {
         let mut generate = false;
         let resp = egui::Modal::new(egui::Id::unique("generator")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(360.0);
+            dialog_width(ui, 360.0);
             ui.heading(t(Key::Generator));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -1861,8 +1876,8 @@ impl KeysApp {
             if self.gen_passphrase {
                 ui.add(egui::Slider::new(&mut self.gen_pp.words, 3..=12).text(t(Key::Words)));
                 ui.horizontal(|ui| {
-                    ui.label(t(Key::Separator));
-                    ui.add(line(&mut self.gen_pp.separator).desired_width(56.0));
+                    let label = ui.label(t(Key::Separator));
+                    ui.add(line(&mut self.gen_pp.separator).desired_width(56.0)).labelled_by(label.id);
                 });
                 ui.checkbox(&mut self.gen_pp.capitalize, t(Key::Capitalize));
                 ui.checkbox(&mut self.gen_pp.include_number, t(Key::IncludeNumber));
@@ -1924,18 +1939,19 @@ impl KeysApp {
         let mut confirm = false;
         let resp = egui::Modal::new(egui::Id::unique("change-master")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(360.0);
+            dialog_width(ui, 360.0);
             ui.heading(t(Key::ChangeMaster));
             ui.add_space(10.0);
+            let field = (ui.available_width() - 130.0).clamp(120.0, 220.0);
             egui::Grid::new("change-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label(t(Key::OldPassword));
-                ui.add(line(&mut self.chg_old).password(true).desired_width(220.0));
+                let label = ui.label(t(Key::OldPassword));
+                ui.add(line(&mut self.chg_old).password(true).desired_width(field)).labelled_by(label.id);
                 ui.end_row();
-                ui.label(t(Key::NewPassword));
-                ui.add(line(&mut self.chg_new).password(true).desired_width(220.0));
+                let label = ui.label(t(Key::NewPassword));
+                ui.add(line(&mut self.chg_new).password(true).desired_width(field)).labelled_by(label.id);
                 ui.end_row();
-                ui.label(t(Key::NewPasswordConfirm));
-                ui.add(line(&mut self.chg_confirm).password(true).desired_width(220.0));
+                let label = ui.label(t(Key::NewPasswordConfirm));
+                ui.add(line(&mut self.chg_confirm).password(true).desired_width(field)).labelled_by(label.id);
                 ui.end_row();
             });
             ui.add_space(12.0);
@@ -1999,7 +2015,7 @@ impl KeysApp {
         let mut del_forever: Option<String> = None;
         let resp = egui::Modal::new(egui::Id::unique("attachments")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(380.0);
+            dialog_width(ui, 380.0);
             ui.heading(format!("{} — {item_name}", t(Key::Attachments)));
             ui.add_space(8.0);
             if atts.is_empty() {
@@ -2104,7 +2120,7 @@ impl KeysApp {
         let mut cancela = false;
         let resp = egui::Modal::new(egui::Id::unique("nova-pasta")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(320.0);
+            dialog_width(ui, 320.0);
             ui.heading(t(Key::NewFolder));
             ui.add_space(8.0);
             ui.add(line(&mut self.folder_new).hint_text(t(Key::FolderName)).desired_width(290.0));
@@ -2161,7 +2177,7 @@ impl KeysApp {
         let mut fecha = false;
         let resp = egui::Modal::new(egui::Id::unique("pastas")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(340.0);
+            dialog_width(ui, 340.0);
             ui.heading(t(Key::Folders));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -2272,7 +2288,7 @@ impl KeysApp {
         let keep_ask = self.purge_ask.clone();
         let resp = egui::Modal::new(egui::Id::unique("trash")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(420.0);
+            dialog_width(ui, 420.0);
             ui.heading(t(Key::Trash));
             ui.add_space(8.0);
             if rows.is_empty() {
@@ -2336,7 +2352,7 @@ impl KeysApp {
         let mut run = false;
         let resp = egui::Modal::new(egui::Id::unique("export")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
-            ui.set_width(420.0);
+            dialog_width(ui, 420.0);
             ui.heading(t(Key::Export));
             ui.add_space(8.0);
             // Aviso FORTE: o export não tem cifra nenhuma.
@@ -2354,8 +2370,9 @@ impl KeysApp {
             });
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                ui.label(t(Key::ImportFile));
-                ui.add(line(&mut self.export_path).hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext())).desired_width(230.0));
+                let label = ui.label(t(Key::ImportFile));
+                ui.add(line(&mut self.export_path).hint_text(format!("C:\\...\\cofre.{}", self.export_kind.ext())).desired_width(230.0))
+                    .labelled_by(label.id);
                 if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                     let kind = self.export_kind;
                     let dialog =
@@ -2642,6 +2659,23 @@ impl KeysApp {
                 if pill(ui, t(Key::Lock), false).clicked() {
                     self.lock();
                 }
+                // O que se faz de vez em quando com o cofre aberto (e é sensível) fica no ⋯, fora da linha do dia a dia.
+                let more = egui::Button::image(craft_icons::ui::image(ui, craft_icons::Icon::More)).frame_when_inactive(false);
+                let (response, _) = egui::containers::menu::MenuButton::from_button(more).ui(ui, |ui| {
+                    if ui.button(format!("{}…", t(Key::Import))).clicked() {
+                        self.import_open = true;
+                        self.reveal_import = false;
+                    }
+                    if ui.button(format!("{}…", t(Key::Export))).clicked() {
+                        self.export_path.clear();
+                        self.export_open = true;
+                    }
+                    ui.separator();
+                    if ui.button(format!("{}…", t(Key::ChangeMaster))).clicked() {
+                        self.change_open = true;
+                    }
+                });
+                response.on_hover_text(t(Key::MoreActions));
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add(egui::Label::new(egui::RichText::new(&self.path).strong()).truncate()).on_hover_text(&self.path);
                 });
@@ -2649,31 +2683,15 @@ impl KeysApp {
         });
 
         ui.add_space(2.0);
-        // Ferramentas (linha própria: o cabeçalho já tem path + lock).
+        // Ferramentas do dia a dia (importar, exportar e trocar a senha mestra moram no ⋯ do cabeçalho). Criar pasta
+        // fica dentro de Pastas (o campo do topo da janela) e na paleta.
         ui.horizontal_wrapped(|ui| {
-            if ghost(ui, t(Key::Import)).clicked() {
-                self.import_open = true;
-                self.reveal_import = false;
-            }
-            if ghost(ui, t(Key::Export)).clicked() {
-                self.export_path.clear();
-                self.export_open = true;
-            }
             if ghost(ui, t(Key::Generator)).clicked() {
                 self.gen_open = true;
-            }
-            if ghost(ui, t(Key::ChangeMaster)).clicked() {
-                self.change_open = true;
             }
             if ghost(ui, t(Key::Trash)).clicked() {
                 self.trash_open = true;
                 self.purge_ask = None;
-            }
-            // onda 24 — pastas: criar nova (mini modal) e gerenciar (lista):
-            // renomear/excluir; o combo do form é a atribuição por item.
-            if ghost(ui, t(Key::NewFolder)).clicked() {
-                self.folder_new.clear();
-                self.folder_new_open = true;
             }
             if ghost(ui, t(Key::Folders)).clicked() {
                 self.folders_open = true;

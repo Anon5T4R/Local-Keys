@@ -267,6 +267,61 @@ fn the_vault_path_stops_before_the_buttons() {
     assert!(path.max.x <= lock.min.x, "o caminho {path:?} passa por baixo do Lock {lock:?}");
 }
 
+/// O ⋯ do cabeçalho do cofre (o único botão só-ícone da linha do caminho).
+fn click_more(harness: &mut Harness<'_, KeysApp>) {
+    let rect = harness
+        .get_all_by_role(Role::Button)
+        .map(|node| node.rect())
+        .find(|rect| rect.min.y > 40.0 && rect.min.y < 80.0 && rect.width() < 40.0)
+        .expect("o ⋯ está no cabeçalho do cofre");
+    click_at(harness, rect.center());
+}
+
+/// Importar, exportar e trocar a senha mestra saem da linha de ferramentas e moram no ⋯; criar pasta fica em Pastas.
+#[test]
+fn rare_vault_actions_live_in_the_more_menu() {
+    let mut harness = harness_sized(unlocked("more", Config { theme: Appearance::Light, lang: Lang::En }), 340.0);
+    harness.run_steps(2);
+    for gone in ["Import", "Export", "Change master password", "New folder"] {
+        assert!(harness.query_by_label(gone).is_none(), "{gone} ainda está na linha de ferramentas");
+    }
+    click_more(&mut harness);
+    harness.get_by_label("Import…");
+    harness.get_by_label("Export…");
+    harness.get_by_label("Change master password…").click();
+    harness.run_steps(2);
+    assert!(harness.state().change_open);
+}
+
+/// Todo diálogo do cofre cabe na largura mínima: nenhum controle passa da borda da janela.
+#[test]
+fn every_dialog_fits_the_narrow_window() {
+    type Open = fn(&mut KeysApp);
+    let dialogs: [(&str, Open); 8] = [
+        ("add", |app| app.open_add_form()),
+        ("generator", |app| app.gen_open = true),
+        ("change", |app| app.change_open = true),
+        ("import", |app| app.import_open = true),
+        ("export", |app| app.export_open = true),
+        ("folders", |app| app.folders_open = true),
+        ("new-folder", |app| app.folder_new_open = true),
+        ("trash", |app| app.trash_open = true),
+    ];
+    for (name, open) in dialogs {
+        let mut app = unlocked("dialogs", Config { theme: Appearance::Dark, lang: Lang::Pt });
+        open(&mut app);
+        let mut harness = harness_sized(app, 340.0);
+        harness.run_steps(3);
+        shot(&mut harness, &format!("dialog-{name}-340"));
+        for node in harness.root().children_recursive() {
+            let Some(rect) = node.accesskit_node().bounding_box() else { continue };
+            if rect.width() > 0.0 {
+                assert!(rect.x0 >= 0.0 && rect.x1 <= 340.0, "{name}: {:?} fora da janela: {rect:?}", node.accesskit_node().role());
+            }
+        }
+    }
+}
+
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.
 #[test]
 fn review_shots() {
@@ -286,6 +341,13 @@ fn review_shots() {
             shot(&mut harness, &format!("vault-{name}-{label}"));
             click_bar(&mut harness, SEARCH);
             shot(&mut harness, &format!("vault-palette-{name}-{label}"));
+            press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+            click_more(&mut harness);
+            shot(&mut harness, &format!("vault-more-{name}-{label}"));
+            press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+            harness.get_by_label("Folders").click();
+            harness.run_steps(2);
+            shot(&mut harness, &format!("vault-folders-{name}-{label}"));
         }
     }
 }
