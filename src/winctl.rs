@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW,
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SW_HIDE, SW_SHOW, SetForegroundWindow, ShowWindow,
 };
 
 /// HWND da janela egui ("LocalKeys"), descoberto no 1º frame e cacheado.
@@ -26,21 +26,23 @@ struct EnumCtx {
 }
 
 unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let ctx = &mut *(lparam.0 as *mut EnumCtx);
-    let mut pid = 0u32;
-    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == ctx.pid && IsWindowVisible(hwnd).as_bool() {
-        let mut buf = [0u16; 64];
-        let n = GetWindowTextW(hwnd, &mut buf);
-        let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
-        // A janela do egui tem o título exato; o console do debug tem o
-        // caminho do exe — não bate.
-        if title == "LocalKeys" {
-            ctx.found = hwnd.0 as isize;
-            return BOOL(0); // para de enumerar
+    unsafe {
+        let ctx = &mut *(lparam.0 as *mut EnumCtx);
+        let mut pid = 0u32;
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == ctx.pid && IsWindowVisible(hwnd).as_bool() {
+            let mut buf = [0u16; 64];
+            let n = GetWindowTextW(hwnd, &mut buf);
+            let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+            // A janela do egui tem o título exato; o console do debug tem o
+            // caminho do exe — não bate.
+            if title == "LocalKeys" {
+                ctx.found = hwnd.0 as isize;
+                return BOOL(0); // para de enumerar
+            }
         }
+        BOOL(1)
     }
-    BOOL(1)
 }
 
 /// Descobre e cacheia o HWND (chamado no 1º `update`, já com janela viva).
@@ -59,11 +61,7 @@ pub fn discover() {
 
 fn hwnd() -> Option<HWND> {
     let v = HWND_CACHE.load(Ordering::Relaxed);
-    if v != 0 {
-        Some(HWND(v as *mut core::ffi::c_void))
-    } else {
-        None
-    }
+    if v != 0 { Some(HWND(v as *mut core::ffi::c_void)) } else { None }
 }
 
 pub fn is_visible() -> bool {

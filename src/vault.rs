@@ -1,14 +1,14 @@
 //! Schema do vault `.tkeys` (o JSON dentro do blob cifrado), compatível com o
 //! LocalKeys oficial — lá o schema vive no front TS (`src/types.ts`); aqui só
-//! o subconjunto que o lab usa.
+//! o subconjunto que o app usa.
 //!
-//! ESCRITA CONSERVADORA: o lab acrescenta itens (login/nota) e anexos a um
+//! ESCRITA CONSERVADORA: o app acrescenta itens (login/nota) e anexos a um
 //! item. Pastas, campos custom, histórico de senha e o que mais existir num
 //! cofre REAL atravessam intactos — manipulamos o JSON bruto
 //! (`serde_json::Value`), nunca um struct que re-serializaria só os campos
 //! conhecidos.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Vault recém-criado — mesma semente do oficial (`lib.rs` do LocalKeys).
 pub const EMPTY_VAULT: &str = r#"{"version":1,"folders":[],"items":[]}"#;
@@ -263,7 +263,7 @@ pub fn login_full(raw: &Value, id: &str) -> Option<LoginFull> {
 /// mudou (e a anterior não era vazia), a anterior vai pro topo do
 /// `passwordHistory` com cap de 20 entradas.
 ///
-/// `uris`: só a PRIMEIRA posição entra pelo form — as outras (que o lab não
+/// `uris`: só a PRIMEIRA posição entra pelo form — as outras (que o app não
 /// mostra) continuam onde estão; lista vazia vira `[""]`, como o `emptyItem`.
 pub fn edit_login(raw: &mut Value, id: &str, form: LoginForm<'_>) -> bool {
     let LoginForm { name, username, password, totp, url, notes } = form;
@@ -332,7 +332,7 @@ pub fn delete_login(raw: &mut Value, id: &str) -> bool {
 ///
 /// Espelha o oficial: o ★ do editor chama `updateItem`, que grava
 /// `updatedAt: Date.now()` junto (o store não tem um `toggleFavorite` à
-/// parte) — então favoritar MEXE em `updatedAt`, e o lab faz igual.
+/// parte) — então favoritar MEXE em `updatedAt`, e o app faz igual.
 pub fn set_favorite(raw: &mut Value, id: &str, favorite: bool) -> bool {
     let Some(it) = item_mut(raw, id) else {
         return false;
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn add_preserva_campos_desconhecidos() {
-        // Um cofre REAL tem anexos/campos custom que o lab não conhece —
+        // Um cofre REAL tem anexos/campos custom que o app não conhece —
         // acrescentar item não pode derrubar nada disso.
         let mut v: Value = serde_json::from_str(
             r#"{"version":1,"folders":[{"id":"f1","name":"Pessoal"}],
@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn editar_url_troca_a_primeira_uri_e_preserva_as_outras() {
-        // O form edita só uris[0]; o resto da lista (que o lab não mostra)
+        // O form edita só uris[0]; o resto da lista (que o app não mostra)
         // continua onde estava — escrita conservadora.
         let mut v: Value = serde_json::from_str(
             r#"{"version":1,"folders":[],"items":[{"id":"x","kind":"login","name":"N",
@@ -846,7 +846,7 @@ mod tests {
 
     #[test]
     fn editar_item_sem_login_cria_o_login() {
-        // note/card não têm login; se o usuário "editar" um desses no lab,
+        // note/card não têm login; se o usuário "editar" um desses no app,
         // o login nasce com a forma completa do oficial.
         let mut v: Value = serde_json::from_str(
             r#"{"version":1,"folders":[],"items":[{"id":"n1","kind":"note","name":"nota",
@@ -1012,7 +1012,7 @@ mod tests {
     #[test]
     fn atomic_write_escreve_e_reescreve() {
         let dir = std::env::temp_dir()
-            .join(format!("lab-keys-aw-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            .join(format!("local-keys-aw-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("v.tkeys");
         atomic_write(&p, b"um").unwrap();

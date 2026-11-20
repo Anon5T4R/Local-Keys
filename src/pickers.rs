@@ -7,7 +7,7 @@
 //! decide o que fazer — tipicamente cai no campo de caminho digitado).
 //!
 //! Backends do rfd 0.17 (defaults): Windows = diálogo nativo; Linux = portal
-//! XDG via zbus (Rust puro, fallback Zenity). macOS não é alvo dos pilotos;
+//! XDG via zbus (Rust puro, fallback Zenity). macOS não é alvo da suíte;
 //! se um dia for, criar o future na main thread antes de spawnar (ver
 //! local-pdf).
 

@@ -13,7 +13,7 @@ mod imp {
     //! Clipboard no Windows com **exclusão do histórico (Win+V) e da nuvem**.
     use std::time::Duration;
 
-    use clipboard_win::{empty, get_clipboard_string, raw, register_format, with_clipboard, Clipboard};
+    use clipboard_win::{Clipboard, empty, get_clipboard_string, raw, register_format, with_clipboard};
 
     /// Formatos que instruem o Windows a não guardar/sincronizar o conteúdo.
     const EXCLUSION_FORMATS: [&str; 3] =
@@ -39,12 +39,12 @@ mod imp {
         // (para não apagar algo que o usuário copiou depois).
         std::thread::spawn(move || {
             std::thread::sleep(CLEAR_AFTER);
-            if let Ok(current) = get_clipboard_string() {
-                if current == text {
-                    let _ = with_clipboard(|| {
-                        let _ = empty();
-                    });
-                }
+            if let Ok(current) = get_clipboard_string()
+                && current == text
+            {
+                let _ = with_clipboard(|| {
+                    let _ = empty();
+                });
             }
         });
         Ok(())

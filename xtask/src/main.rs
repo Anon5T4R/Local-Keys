@@ -4,8 +4,8 @@
 //!   cargo-deny e espelhos do local-libs (deny/mirror pulam com aviso se faltar a ferramenta).
 //! - `cargo xtask fmt` — `fmt --check` só dos pacotes do workspace (nunca as árvores de `libs/`).
 //! - `cargo xtask version set X.Y.Z` (ou `version X.Y.Z`, o jeito antigo) — bump atômico: Cargo.toml do
-//!   app + lab-ui + refresh do Cargo.lock.
-//! - `cargo xtask check` — confere que as 2 versões estão sincronizadas.
+//!   app + refresh do Cargo.lock.
+//! - `cargo xtask check` — confere a versão do Cargo.toml.
 //!
 //! Zero dependências: manipulação de texto com std só (política de deps).
 
@@ -31,7 +31,7 @@ fn main() {
 
 /// (arquivo, prefixo da linha de versão)
 fn version_slots() -> Vec<(String, String)> {
-    vec![("Cargo.toml".into(), "version = ".into()), ("lab-ui/Cargo.toml".into(), "version = ".into())]
+    vec![("Cargo.toml".into(), "version = ".into())]
 }
 
 fn read_version(path: &str, prefix: &str) -> String {
@@ -111,11 +111,7 @@ fn cargo() -> Command {
 fn run(mut cmd: Command, what: &str) -> Result<(), String> {
     eprintln!("$ {what}");
     let status = cmd.status().map_err(|e| format!("{what}: falhou ao iniciar: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{what}: saiu com {status}"))
-    }
+    if status.success() { Ok(()) } else { Err(format!("{what}: saiu com {status}")) }
 }
 
 /// Nomes dos pacotes do workspace (`cargo metadata --no-deps`), sem dependências: o objeto de um pacote é

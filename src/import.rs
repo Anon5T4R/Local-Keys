@@ -7,15 +7,15 @@
 //! - CSV (Chrome/Edge, LastPass, 1Password e genérico) por mapeamento de colunas.
 //! - KeePass `.kdbx` — a leitura/decifragem é do `kdbx.rs`; aqui só mapeamos.
 //!
-//! ESCOPO: o lab só gerencia itens de LOGIN e NOTE. Card e identity do
+//! ESCOPO: o app só gerencia itens de LOGIN e NOTE. Card e identity do
 //! Bitwarden NÃO são importados — são contados em `skipped_card_identity` e
-//! descartados, porque o lab não tem UI de edição para eles (o `.tkeys` de
+//! descartados, porque o app não tem UI de edição para eles (o `.tkeys` de
 //! origem continua intacto; nada se perde lá).
 
 use serde_json::Value;
 
 use crate::kdbx::KdbxEntry;
-use crate::vault::{custom_field, make_item, LoginFields, NewItem};
+use crate::vault::{LoginFields, NewItem, custom_field, make_item};
 
 /// Formato detectado a partir do nome do arquivo (ou do conteúdo, sem extensão
 /// conhecida) — mesma regra do `detectFormat` do TS.
@@ -52,7 +52,7 @@ pub fn detect_format(filename: &str, content: Option<&str>) -> ImportFormat {
 #[derive(Debug, Default)]
 pub struct ImportReport {
     pub items: Vec<Value>,
-    /// Itens de cartão/identidade que o lab não gerencia (só contados).
+    /// Itens de cartão/identidade que o app não gerencia (só contados).
     pub skipped_card_identity: usize,
 }
 
@@ -192,11 +192,11 @@ fn is_secret_header(norm: &str) -> bool {
 
 fn exact_index(norm: &[String], consumed: &mut [bool], keys: &[&str]) -> Option<usize> {
     for k in keys {
-        if let Some(i) = norm.iter().position(|h| h == k) {
-            if !consumed[i] {
-                consumed[i] = true;
-                return Some(i);
-            }
+        if let Some(i) = norm.iter().position(|h| h == k)
+            && !consumed[i]
+        {
+            consumed[i] = true;
+            return Some(i);
         }
     }
     None
@@ -369,7 +369,7 @@ pub fn parse_bitwarden_json(text: &str) -> Result<ImportReport, String> {
     let mut report = ImportReport::default();
     for b in arr {
         let kind = bw_kind(b.get("type"));
-        // Decisão de escopo: o lab só gerencia login/note.
+        // Decisão de escopo: o app só gerencia login/note.
         if kind == "card" || kind == "identity" {
             report.skipped_card_identity += 1;
             continue;

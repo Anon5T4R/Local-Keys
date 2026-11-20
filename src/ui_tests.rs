@@ -3,12 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
+use craft_icons::ThemeMode;
 use egui::accesskit::Role;
-use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
-use lab_ui::config::Config;
-use lab_ui::i18n::Lang;
-use lab_ui::theme::Appearance;
+use egui_kittest::kittest::{NodeT, Queryable};
+
+use crate::prefs::Prefs;
 
 use crate::KeysApp;
 
@@ -18,15 +18,15 @@ fn scratch(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("local-keys-ui-{name}-{nanos}"))
 }
 
-fn app(name: &str, cfg: Config) -> KeysApp {
-    let mut app = KeysApp::bare(cfg);
+fn app(name: &str, prefs: Prefs) -> KeysApp {
+    let mut app = KeysApp::bare(prefs);
     app.config_file = scratch(name).join("config.json");
     app
 }
 
 /// Um cofre destrancado com itens (favorito ★, não favorito ☆, com TOTP), para os testes verem a tela de verdade.
-fn unlocked(name: &str, cfg: Config) -> KeysApp {
-    let mut app = app(name, cfg);
+fn unlocked(name: &str, prefs: Prefs) -> KeysApp {
+    let mut app = app(name, prefs);
     let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
     for (item, user, totp) in [("192.168.1.34", "taylor", ""), ("account.matrix.org", "hades66669", "JBSWY3DPEHPK3PXP"), ("1lib.sk", "hades", "")] {
         let form = crate::vault::LoginForm { name: item, username: user, password: "x", totp, url: "", notes: "" };
@@ -43,7 +43,9 @@ fn harness_sized(app: KeysApp, width: f32) -> Harness<'static, KeysApp> {
     Harness::builder().with_size(egui::vec2(width, 640.0)).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut KeysApp| {
             egui_extras::install_image_loaders(ui.ctx());
-            lab_ui::theme::apply(ui.ctx(), app.cfg.theme);
+            // O idioma vale por thread (a interface roda numa só): cada teste fixa o seu a cada quadro.
+            crate::i18n::set_language(&app.prefs.language);
+            crate::theme::apply(ui.ctx(), app.prefs.mode());
             app.frame(ui);
         },
         app,
@@ -106,17 +108,17 @@ fn shot(harness: &mut Harness<'_, KeysApp>, name: &str) {
 /// O botão de tema da barra gira Automático -> Claro -> Escuro -> Automático e grava a escolha.
 #[test]
 fn the_theme_button_cycles_the_three_modes() {
-    let mut harness = harness(app("theme", Config::default()));
-    assert_eq!(harness.state().cfg.theme, Appearance::System);
+    let mut harness = harness(app("theme", Prefs::default()));
+    assert_eq!(harness.state().prefs.mode(), ThemeMode::System);
     click_bar(&mut harness, THEME);
-    assert_eq!(harness.state().cfg.theme, Appearance::Light);
+    assert_eq!(harness.state().prefs.mode(), ThemeMode::Light);
     click_bar(&mut harness, THEME);
-    assert_eq!(harness.state().cfg.theme, Appearance::Dark);
+    assert_eq!(harness.state().prefs.mode(), ThemeMode::Dark);
     click_bar(&mut harness, THEME);
-    assert_eq!(harness.state().cfg.theme, Appearance::System);
+    assert_eq!(harness.state().prefs.mode(), ThemeMode::System);
     // Cada troca foi gravada: o arquivo de teste (nunca o real) guarda o modo atual.
-    let saved = lab_ui::config::load_from(&harness.state().config_file);
-    assert_eq!(saved.theme, Appearance::System);
+    let saved = Prefs::load_from(&harness.state().config_file);
+    assert_eq!(saved.mode(), ThemeMode::System);
 }
 
 /// Uma preferência de tema gravada por versões antigas (id que a casca não conhece) abre no Automático.
@@ -126,32 +128,32 @@ fn an_old_theme_id_falls_back_to_automatic() {
     std::fs::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("config.json");
     std::fs::write(&file, r#"{"theme":"PunkPrincess","lang":"En"}"#).expect("write config");
-    let cfg = lab_ui::config::load_from(&file);
-    assert_eq!(cfg.theme, Appearance::System);
-    assert_eq!(cfg.lang, Lang::En);
+    let prefs = Prefs::load_from(&file);
+    assert_eq!(prefs.mode(), ThemeMode::System);
+    assert_eq!(prefs.language, "en");
 }
 
 /// A engrenagem abre as Configurações; lá o idioma troca e o tema vira pelas três opções.
 #[test]
 fn the_gear_opens_settings_with_language_and_theme() {
-    let mut harness = harness(app("gear", Config { theme: Appearance::Dark, lang: Lang::En }));
+    let mut harness = harness(app("gear", Prefs::new("en", ThemeMode::Dark)));
     click_bar(&mut harness, GEAR);
     assert!(harness.state().settings_open);
     harness.get_by_label("About Local Keys");
     shot(&mut harness, "settings-dark");
     harness.get_by_label("Light").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().cfg.theme, Appearance::Light);
+    assert_eq!(harness.state().prefs.mode(), ThemeMode::Light);
     shot(&mut harness, "settings-light");
     harness.get_by_label("Automatic").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().cfg.theme, Appearance::System);
+    assert_eq!(harness.state().prefs.mode(), ThemeMode::System);
     // O idioma sai da barra e mora aqui: o combo troca para o português.
     harness.get_by_role(Role::ComboBox).click();
     harness.run_steps(2);
-    harness.get_by_label("Português").click();
+    harness.get_by_label("Português (Brasil)").click();
     harness.run_steps(2);
-    assert_eq!(harness.state().cfg.lang, Lang::Pt);
+    assert_eq!(harness.state().prefs.language, "pt-br");
     harness.get_by_label("Sobre o Local Keys");
     // Esc fecha a janela.
     press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
@@ -161,7 +163,7 @@ fn the_gear_opens_settings_with_language_and_theme() {
 /// A lupa e o Ctrl+K abrem a paleta; Enter roda o comando escolhido.
 #[test]
 fn the_search_icon_and_ctrl_k_open_the_palette_and_run_a_command() {
-    let mut harness = harness(app("palette", Config { theme: Appearance::Light, lang: Lang::En }));
+    let mut harness = harness(app("palette", Prefs::new("en", ThemeMode::Light)));
     assert!(!harness.state().palette.is_open());
     click_bar(&mut harness, SEARCH);
     assert!(harness.state().palette.is_open());
@@ -181,7 +183,7 @@ fn the_search_icon_and_ctrl_k_open_the_palette_and_run_a_command() {
 /// Com o cofre trancado a paleta oferece só destrancar, configurações, atualizações, sobre e sair.
 #[test]
 fn a_locked_vault_gets_no_vault_commands_in_the_palette() {
-    let app = app("locked", Config::default());
+    let app = app("locked", Prefs::default());
     assert!(app.locked());
     let ids: Vec<String> = app.commands().into_iter().map(|command| command.id).collect();
     for id in &ids {
@@ -199,7 +201,7 @@ fn a_locked_vault_gets_no_vault_commands_in_the_palette() {
 /// "Exit" na paleta pede o encerramento pelo caminho da bandeja (a flag que o frame vira em Close).
 #[test]
 fn exit_in_the_palette_raises_the_quit_flag() {
-    let mut harness = harness(app("exit", Config { theme: Appearance::Dark, lang: Lang::En }));
+    let mut harness = harness(app("exit", Prefs::new("en", ThemeMode::Dark)));
     press(&mut harness, egui::Key::K, egui::Modifiers::COMMAND);
     harness.input_mut().events.push(egui::Event::Text("exit".into()));
     harness.run_steps(2);
@@ -210,7 +212,7 @@ fn exit_in_the_palette_raises_the_quit_flag() {
 /// Os três botões da barra continuam inteiros (sem cobrir "LocalKeys") na largura estreita.
 #[test]
 fn the_top_bar_fits_a_narrow_window() {
-    let mut harness = harness_sized(app("narrow", Config { theme: Appearance::Light, lang: Lang::Pt }), 340.0);
+    let mut harness = harness_sized(app("narrow", Prefs::new("pt-br", ThemeMode::Light)), 340.0);
     harness.run_steps(2);
     let rects = bar_buttons(&harness);
     assert_eq!(rects.len(), 3);
@@ -223,7 +225,7 @@ fn the_top_bar_fits_a_narrow_window() {
 /// Na largura mínima os campos da tela de destrancar cabem na janela.
 #[test]
 fn the_unlock_fields_fit_the_narrow_window() {
-    let mut harness = harness_sized(app("unlock-narrow", Config { theme: Appearance::Light, lang: Lang::Pt }), 340.0);
+    let mut harness = harness_sized(app("unlock-narrow", Prefs::new("pt-br", ThemeMode::Light)), 340.0);
     harness.run_steps(2);
     let fields: Vec<egui::Rect> =
         harness.get_all_by_role(Role::TextInput).chain(harness.get_all_by_role(Role::PasswordInput)).map(|node| node.rect()).collect();
@@ -236,7 +238,7 @@ fn the_unlock_fields_fit_the_narrow_window() {
 /// Os campos de senha se anunciam pelo rótulo (leitor de tela).
 #[test]
 fn the_password_fields_have_names() {
-    let harness = harness(app("unlock-names", Config { theme: Appearance::Dark, lang: Lang::En }));
+    let harness = harness(app("unlock-names", Prefs::new("en", ThemeMode::Dark)));
     let names: Vec<String> = harness.get_all_by_role(Role::PasswordInput).map(|node| node.accesskit_node().label().unwrap_or_default()).collect();
     assert_eq!(names.len(), 3);
     assert!(names.iter().all(|name| !name.is_empty()), "campo de senha sem nome: {names:?}");
@@ -246,7 +248,7 @@ fn the_password_fields_have_names() {
 #[test]
 fn the_palette_fits_a_narrow_window_over_the_vault() {
     for width in [340.0, 500.0] {
-        let mut harness = harness_sized(unlocked("palette-narrow", Config { theme: Appearance::Dark, lang: Lang::En }), width);
+        let mut harness = harness_sized(unlocked("palette-narrow", Prefs::new("en", ThemeMode::Dark)), width);
         harness.run_steps(2);
         click_bar(&mut harness, SEARCH);
         let rows: Vec<egui::Rect> = harness.get_all_by_role(Role::ListBoxOption).map(|node| node.rect()).collect();
@@ -260,7 +262,7 @@ fn the_palette_fits_a_narrow_window_over_the_vault() {
 /// Na largura mínima o caminho do cofre corta antes do "Lock" em vez de passar por baixo dele.
 #[test]
 fn the_vault_path_stops_before_the_buttons() {
-    let mut harness = harness_sized(unlocked("path-narrow", Config { theme: Appearance::Light, lang: Lang::En }), 340.0);
+    let mut harness = harness_sized(unlocked("path-narrow", Prefs::new("en", ThemeMode::Light)), 340.0);
     harness.run_steps(2);
     let path = harness.get_by_label_contains("meu-cofre.tkeys").rect();
     let lock = harness.get_by_label("Lock").rect();
@@ -280,7 +282,7 @@ fn click_more(harness: &mut Harness<'_, KeysApp>) {
 /// Importar, exportar e trocar a senha mestra saem da linha de ferramentas e moram no ⋯; criar pasta fica em Pastas.
 #[test]
 fn rare_vault_actions_live_in_the_more_menu() {
-    let mut harness = harness_sized(unlocked("more", Config { theme: Appearance::Light, lang: Lang::En }), 340.0);
+    let mut harness = harness_sized(unlocked("more", Prefs::new("en", ThemeMode::Light)), 340.0);
     harness.run_steps(2);
     for gone in ["Import", "Export", "Change master password", "New folder"] {
         assert!(harness.query_by_label(gone).is_none(), "{gone} ainda está na linha de ferramentas");
@@ -308,7 +310,7 @@ fn every_dialog_fits_the_narrow_window() {
         ("trash", |app| app.trash_open = true),
     ];
     for (name, open) in dialogs {
-        let mut app = unlocked("dialogs", Config { theme: Appearance::Dark, lang: Lang::Pt });
+        let mut app = unlocked("dialogs", Prefs::new("pt-br", ThemeMode::Dark));
         open(&mut app);
         let mut harness = harness_sized(app, 340.0);
         harness.run_steps(3);
@@ -326,8 +328,8 @@ fn every_dialog_fits_the_narrow_window() {
 #[test]
 fn review_shots() {
     for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
-        for (appearance, name) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {
-            let mut harness = harness_sized(app("shots", Config { theme: appearance, lang: Lang::En }), width);
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let mut harness = harness_sized(app("shots", Prefs::new("en", appearance)), width);
             harness.run_steps(2);
             shot(&mut harness, &format!("bar-{name}-{label}"));
             click_bar(&mut harness, GEAR);
@@ -336,7 +338,7 @@ fn review_shots() {
             click_bar(&mut harness, SEARCH);
             shot(&mut harness, &format!("palette-{name}-{label}"));
 
-            let mut harness = harness_sized(unlocked("shots-vault", Config { theme: appearance, lang: Lang::En }), width);
+            let mut harness = harness_sized(unlocked("shots-vault", Prefs::new("en", appearance)), width);
             harness.run_steps(2);
             shot(&mut harness, &format!("vault-{name}-{label}"));
             click_bar(&mut harness, SEARCH);

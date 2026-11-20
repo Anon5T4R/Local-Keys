@@ -1,3 +1,4 @@
+@id	language.name	Português (Brasil)
 	Language	Idioma
 	Theme	Tema
 	Error	Erro
@@ -52,15 +53,13 @@
 	Open folder	Abrir pasta
 	Uninstall and remove shortcuts?	Desinstalar e remover atalhos?
 	running	rodando
-	restart Lab Hub	reinicie o Lab Hub
-	The item goes to trash — recoverable in the official LocalKeys.	O item vai pra lixeira — recuperável no LocalKeys oficial.
+	The item goes to the Trash, where you can restore it.	O item vai para a Lixeira, de onde dá para restaurar.
 	Import	Importar
 	Bitwarden (encrypted export)	Bitwarden (export cifrado)
 	File	Arquivo
 	File password	Senha do arquivo
 	items imported	itens importados
-	card/identity skipped — the lab only manages login/note	de cartão/identidade pulados — o lab só gerencia login/nota
-	Import	Importação
+	card/identity skipped — Local Keys keeps logins and notes	de cartão/identidade pulados — o Local Keys guarda logins e notas
 	Generator	Gerador
 	Generate	Gerar
 	Use	Usar
@@ -88,7 +87,6 @@
 	master password changed	senha mestra trocada
 	Attachments	Anexos
 	Add attachment	Adicionar anexo
-	Save	Salvar
 	no attachments	sem anexos
 	Settings	Configurações
 	Global hotkey	Atalho global
@@ -126,7 +124,6 @@
 	Delete folder	Excluir pasta
 	No folder	Sem pasta
 	Folder name	Nome da pasta
-	Attachments	Anexos
 	Delete attachment	Excluir anexo
 	All	Todas
 	CPU	CPU

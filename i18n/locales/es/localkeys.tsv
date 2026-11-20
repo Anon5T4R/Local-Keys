@@ -1,3 +1,4 @@
+@id	language.name	Español
 	Language	Idioma
 	Theme	Tema
 	Error	Error
@@ -52,15 +53,13 @@
 	Open folder	Abrir carpeta
 	Uninstall and remove shortcuts?	¿Desinstalar y quitar accesos?
 	running	ejecutando
-	restart Lab Hub	reinicie Lab Hub
-	The item goes to trash — recoverable in the official LocalKeys.	El elemento va a la papelera — recuperable en LocalKeys oficial.
+	The item goes to the Trash, where you can restore it.	El elemento va a la Papelera, desde donde se puede restaurar.
 	Import	Importar
 	Bitwarden (encrypted export)	Bitwarden (exportación cifrada)
 	File	Archivo
 	File password	Contraseña del archivo
 	items imported	elementos importados
-	card/identity skipped — the lab only manages login/note	de tarjeta/identidad omitidos — el lab solo gestiona login/nota
-	Import	Importación
+	card/identity skipped — Local Keys keeps logins and notes	de tarjeta/identidad omitidos — Local Keys guarda inicios de sesión y notas
 	Generator	Generador
 	Generate	Generar
 	Use	Usar
@@ -88,7 +87,6 @@
 	master password changed	contraseña maestra cambiada
 	Attachments	Adjuntos
 	Add attachment	Añadir adjunto
-	Save	Guardar
 	no attachments	sin adjuntos
 	Settings	Configuración
 	Global hotkey	Atajo global
@@ -126,7 +124,6 @@
 	Delete folder	Eliminar carpeta
 	No folder	Sin carpeta
 	Folder name	Nombre de la carpeta
-	Attachments	Adjuntos
 	Delete attachment	Eliminar adjunto
 	All	Todas
 	CPU	CPU

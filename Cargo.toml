@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["xtask", "lab-ui"]
-default-members = [".", "lab-ui"]
+members = ["xtask"]
+default-members = ["."]
 exclude = ["libs"]
 
 [workspace.package]
@@ -34,11 +34,11 @@ rustls-rustcrypto = { path = "libs/rustls-rustcrypto" }
 [package]
 name = "local-keys"
 version = "0.11.16"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 publish.workspace = true
 repository = "https://github.com/Anon5T4R/Local-Keys"
-description = "Gerenciador de senhas 100% local e offline — piloto egui da avaliação da suíte Local"
+description = "Gerenciador de senhas 100% local e offline da suíte Local"
 
 [build-dependencies]
 # Embute o ícone no .exe (Windows) — sem isso o Explorer mostra ícone genérico.
@@ -49,7 +49,7 @@ eframe = "0.37"
 # 0.37: os emojis monocromáticos (★ ☆ 📎 👁 ⚠ ✓…) saíram do padrão; sem eles a tela mostra caixinhas.
 egui = { version = "0.37", features = ["default_fonts", "monochrome_emoji_fonts"] }
 image = "0.25"
-lab-ui = { path = "lab-ui" }
+craft-i18n = { path = "libs/craft-libs/crates/i18n" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Cripto — MESMOS pins do LocalKeys oficial (crypto.rs/totp.rs copiados verbatim)

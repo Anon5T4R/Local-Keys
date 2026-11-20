@@ -1,7 +1,5 @@
-//! ⚠️ ARQUIVO COPIADO VERBATIM de `LocalKeys@0.9.0 · src-tauri/src/crypto.rs`
-//! (repo da suíte, MIT). É a PROVA de reuso do lab: o núcleo criptográfico do
-//! cofre `.tkeys` — zero Tauri, zero mudança — rodando sob UI egui. Qualquer
-//! diferença de comportamento entre LocalKeys e lab-keys NÃO pode estar aqui.
+//! Veio do `LocalKeys@0.9.0 · src-tauri/src/crypto.rs` (o app Tauri da suíte, MIT) sem mudança de formato:
+//! um cofre `.tkeys` criado por qualquer versão abre em qualquer outra. Mudança aqui é mudança de formato.
 //!
 //! Núcleo criptográfico do LocalKeys — o formato de arquivo `.tkeys`.
 //!

@@ -7,8 +7,8 @@
 //! (que é semeado e não serve para segredos). A força usa o `zxcvbn` (mesmo
 //! algoritmo do Bitwarden/Dropbox), não uma heurística caseira.
 
-use rand::rngs::OsRng;
 use rand::Rng;
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 /// Wordlist EFF "large" (7776 palavras, uma por linha no formato `12345\tword`).

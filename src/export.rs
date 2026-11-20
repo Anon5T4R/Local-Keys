@@ -2,7 +2,7 @@
 //! `LocalKeys/src/export.ts`. SEM cifra de propósito: serve só pra migrar pra
 //! outro app, e a UI mostra um aviso forte antes de gravar.
 //!
-//! Diferença de FORMA (não de conteúdo): o `serde_json` do lab (sem a feature
+//! Diferença de FORMA (não de conteúdo): o `serde_json` do app (sem a feature
 //! `preserve_order`) ordena as chaves alfabeticamente, então o JSON sai com as
 //! chaves em outra ordem que o `JSON.stringify` do TS. Os dados são os mesmos.
 
@@ -56,11 +56,7 @@ pub fn export_csv(raw: &Value) -> String {
 /// quebra de linha; a aspa dobra (`"` → `""`).
 fn csv_escape(value: &str) -> String {
     let needs_quotes = value.chars().any(|c| matches!(c, '"' | ',' | '\n' | '\r'));
-    if needs_quotes {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
+    if needs_quotes { format!("\"{}\"", value.replace('"', "\"\"")) } else { value.to_string() }
 }
 
 /// `a ?? b ?? ""` do TS: a primeira string que EXISTE vence — string vazia

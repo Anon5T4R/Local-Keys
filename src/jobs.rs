@@ -16,12 +16,12 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use zeroize::Zeroizing;
 
-use crate::{bitwarden_encrypted, bwdecrypt, crypto, import, kdbx, mime_by_ext, vault, ImportKind};
+use crate::{ImportKind, bitwarden_encrypted, bwdecrypt, crypto, import, kdbx, mime_by_ext, vault};
 
-/// Cap de anexo do lab: 10 MiB. O cofre INTEIRO é regravado (e recifrado) a
+/// Cap de anexo do app: 10 MiB. O cofre INTEIRO é regravado (e recifrado) a
 /// cada save e o anexo viaja em base64 dentro do JSON — um anexo grande infla
 /// toda gravação. O LocalKeys oficial não tem esse limite; aqui é decisão do
-/// lab (o limite é checado por `metadata()` ANTES de ler o arquivo).
+/// app (o limite é checado por `metadata()` ANTES de ler o arquivo).
 pub const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
 
 /// O que rodar na thread. Tudo que é segredo viaja dentro de `Zeroizing`.
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn spawn_devolve_o_resultado_pelo_canal() {
-        let dir = std::env::temp_dir().join(format!("lab-keys-job-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("local-keys-job-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let target = dir.join("anexo.bin");
         let target_str = target.display().to_string();
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn anexo_pequeno_e_lido_e_codificado() {
-        let dir = std::env::temp_dir().join(format!("lab-keys-anexo-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("local-keys-anexo-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let src = dir.join("nota.txt");
         assert!(std::fs::write(&src, b"oi").is_ok());
