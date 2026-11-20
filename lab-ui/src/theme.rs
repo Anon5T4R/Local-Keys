@@ -98,7 +98,8 @@ impl Tokens {
             text_dim: Color32::from_black_alpha(140),
             hover: Color32::from_black_alpha(14),
             pressed: Color32::from_black_alpha(28),
-            accent: Color32::from_rgb(0x2f, 0x8f, 0x55),
+            // 5,3:1 com branco por cima (pill primário) e sobre a base (links): AA. O #2f8f55 de antes dava 4,0:1.
+            accent: Color32::from_rgb(0x26, 0x7a, 0x48),
             shadow: Color32::from_black_alpha(45),
         }
     }

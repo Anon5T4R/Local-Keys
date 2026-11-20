@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use egui::accesskit::Role;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use lab_ui::config::Config;
 use lab_ui::i18n::Lang;
@@ -24,23 +24,30 @@ fn app(name: &str, cfg: Config) -> KeysApp {
     app
 }
 
-// Os campos de senha da tela de desbloqueio ainda não têm nome acessível (achado em docs/achados.md), então a
-// checagem de acessibilidade do kittest fica desligada aqui.
-// O kittest não tem o provedor de fontes do sistema: ✓ e os emojis da tela viram "tofu" nos testes.
+/// Um cofre destrancado com itens (favorito ★, não favorito ☆, com TOTP), para os testes verem a tela de verdade.
+fn unlocked(name: &str, cfg: Config) -> KeysApp {
+    let mut app = app(name, cfg);
+    let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
+    for (item, user, totp) in [("192.168.1.34", "taylor", ""), ("account.matrix.org", "hades66669", "JBSWY3DPEHPK3PXP"), ("1lib.sk", "hades", "")] {
+        let form = crate::vault::LoginForm { name: item, username: user, password: "x", totp, url: "", notes: "" };
+        crate::vault::add_login(&mut raw, form);
+    }
+    raw["items"][0]["favorite"] = serde_json::Value::Bool(true);
+    app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
+    app.adopt(crate::crypto::test_session(), raw);
+    app
+}
+
+// O kittest falha se algum texto da tela cair numa fonte sem o glyph (a "caixinha"): é o guarda dos emojis.
 fn harness_sized(app: KeysApp, width: f32) -> Harness<'static, KeysApp> {
-    Harness::builder()
-        .with_size(egui::vec2(width, 640.0))
-        .with_step_dt(1.0 / 60.0)
-        .allow_missing_glyphs()
-        .with_accessibility_check(false)
-        .build_ui_state(
-            |ui, app: &mut KeysApp| {
-                egui_extras::install_image_loaders(ui.ctx());
-                lab_ui::theme::apply(ui.ctx(), app.cfg.theme);
-                app.frame(ui);
-            },
-            app,
-        )
+    Harness::builder().with_size(egui::vec2(width, 640.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut KeysApp| {
+            egui_extras::install_image_loaders(ui.ctx());
+            lab_ui::theme::apply(ui.ctx(), app.cfg.theme);
+            app.frame(ui);
+        },
+        app,
+    )
 }
 
 fn harness(app: KeysApp) -> Harness<'static, KeysApp> {
@@ -213,6 +220,53 @@ fn the_top_bar_fits_a_narrow_window() {
     shot(&mut harness, "narrow-light");
 }
 
+/// Na largura mínima os campos da tela de destrancar cabem na janela.
+#[test]
+fn the_unlock_fields_fit_the_narrow_window() {
+    let mut harness = harness_sized(app("unlock-narrow", Config { theme: Appearance::Light, lang: Lang::Pt }), 340.0);
+    harness.run_steps(2);
+    let fields: Vec<egui::Rect> =
+        harness.get_all_by_role(Role::TextInput).chain(harness.get_all_by_role(Role::PasswordInput)).map(|node| node.rect()).collect();
+    assert_eq!(fields.len(), 5, "dois caminhos e três senhas: {fields:?}");
+    for rect in &fields {
+        assert!(rect.min.x >= 0.0 && rect.max.x <= 340.0, "campo fora da janela: {rect:?}");
+    }
+}
+
+/// Os campos de senha se anunciam pelo rótulo (leitor de tela).
+#[test]
+fn the_password_fields_have_names() {
+    let harness = harness(app("unlock-names", Config { theme: Appearance::Dark, lang: Lang::En }));
+    let names: Vec<String> = harness.get_all_by_role(Role::PasswordInput).map(|node| node.accesskit_node().label().unwrap_or_default()).collect();
+    assert_eq!(names.len(), 3);
+    assert!(names.iter().all(|name| !name.is_empty()), "campo de senha sem nome: {names:?}");
+}
+
+/// Com o cofre aberto, a paleta inteira fica dentro da janela estreita (o caso do print de 2026-11-20).
+#[test]
+fn the_palette_fits_a_narrow_window_over_the_vault() {
+    for width in [340.0, 500.0] {
+        let mut harness = harness_sized(unlocked("palette-narrow", Config { theme: Appearance::Dark, lang: Lang::En }), width);
+        harness.run_steps(2);
+        click_bar(&mut harness, SEARCH);
+        let rows: Vec<egui::Rect> = harness.get_all_by_role(Role::ListBoxOption).map(|node| node.rect()).collect();
+        assert!(!rows.is_empty());
+        for rect in &rows {
+            assert!(rect.min.x >= 0.0 && rect.max.x <= width, "linha da paleta fora da janela de {width}: {rect:?}");
+        }
+    }
+}
+
+/// Na largura mínima o caminho do cofre corta antes do "Lock" em vez de passar por baixo dele.
+#[test]
+fn the_vault_path_stops_before_the_buttons() {
+    let mut harness = harness_sized(unlocked("path-narrow", Config { theme: Appearance::Light, lang: Lang::En }), 340.0);
+    harness.run_steps(2);
+    let path = harness.get_by_label_contains("meu-cofre.tkeys").rect();
+    let lock = harness.get_by_label("Lock").rect();
+    assert!(path.max.x <= lock.min.x, "o caminho {path:?} passa por baixo do Lock {lock:?}");
+}
+
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.
 #[test]
 fn review_shots() {
@@ -226,6 +280,12 @@ fn review_shots() {
             press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
             click_bar(&mut harness, SEARCH);
             shot(&mut harness, &format!("palette-{name}-{label}"));
+
+            let mut harness = harness_sized(unlocked("shots-vault", Config { theme: appearance, lang: Lang::En }), width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("vault-{name}-{label}"));
+            click_bar(&mut harness, SEARCH);
+            shot(&mut harness, &format!("vault-palette-{name}-{label}"));
         }
     }
 }

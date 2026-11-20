@@ -353,7 +353,8 @@ impl Skin {
 
     fn from_visuals(v: &egui::Visuals) -> Self {
         let text = v.override_text_color.unwrap_or(v.widgets.noninteractive.fg_stroke.color);
-        let accent = v.selection.bg_fill;
+        // No claro, a seleção translúcida ficava verde-pálido com texto branco (ilegível): o pill usa o accent cheio.
+        let accent = if v.dark_mode { v.selection.bg_fill } else { v.hyperlink_color };
         Self {
             card: v.extreme_bg_color,
             field: v.panel_fill,
@@ -1420,7 +1421,11 @@ impl KeysApp {
                     .show(ui, |ui| {
                         // Um toast curto não pode impor largura ao próximo.
                         ui.set_max_width((screen.width() - 64.0).clamp(1.0, 560.0));
-                        ui.add(egui::Label::new(egui::RichText::new(format!("✓ {msg}")).color(skin.inverted_text)).wrap());
+                        // O ✓ é o ícone da suíte (o glyph não existe nas fontes embutidas).
+                        ui.horizontal(|ui| {
+                            ui.add(craft_icons::ui::image(ui, craft_icons::Icon::Check).tint(skin.inverted_text));
+                            ui.add(egui::Label::new(egui::RichText::new(msg).color(skin.inverted_text)).wrap());
+                        });
                     });
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -2517,11 +2522,13 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         ui.heading(t(Key::Vault));
         ui.add_space(10.0);
+        // Os campos encolhem com a janela (340 pt é a largura mínima) e nunca passam de 260.
+        let field = (ui.available_width() - 150.0).clamp(120.0, 260.0);
 
         egui::Grid::new("unlock").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-            ui.label(".tkeys");
+            let label = ui.label(".tkeys");
             ui.horizontal(|ui| {
-                ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(260.0));
+                ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(field)).labelled_by(label.id);
                 if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                     let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
                     let _ = self.pickers.ask(
@@ -2538,8 +2545,8 @@ impl KeysApp {
             });
             ui.end_row();
 
-            ui.label(t(Key::MasterPassword));
-            ui.add(line(&mut self.master).password(true).desired_width(260.0));
+            let label = ui.label(t(Key::MasterPassword));
+            ui.add(line(&mut self.master).password(true).desired_width(field)).labelled_by(label.id);
             ui.end_row();
         });
 
@@ -2571,9 +2578,9 @@ impl KeysApp {
         ui.heading(t(Key::NewVault));
         ui.add_space(6.0);
         egui::Grid::new("new").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-            ui.label(".tkeys");
+            let label = ui.label(".tkeys");
             ui.horizontal(|ui| {
-                ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(260.0));
+                ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(field)).labelled_by(label.id);
                 if ui.button("…").on_hover_text(i18n::tr(self.cfg.lang, "Choose file…")).clicked() {
                     let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("novo-cofre.tkeys");
                     let _ = self.pickers.ask(
@@ -2588,11 +2595,11 @@ impl KeysApp {
                 }
             });
             ui.end_row();
-            ui.label(t(Key::MasterPassword));
-            ui.add(line(&mut self.master).password(true));
+            let label = ui.label(t(Key::MasterPassword));
+            ui.add(line(&mut self.master).password(true).desired_width(field)).labelled_by(label.id);
             ui.end_row();
-            ui.label(format!("{} ✓", t(Key::Password)));
-            ui.add(line(&mut self.confirm).password(true));
+            let label = ui.label(t(Key::ConfirmPassword));
+            ui.add(line(&mut self.confirm).password(true).desired_width(field)).labelled_by(label.id);
             ui.end_row();
         });
         ui.add_space(10.0);
@@ -2626,8 +2633,8 @@ impl KeysApp {
         rows.sort_by(|a, b| b.favorite.cmp(&a.favorite).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
         let needle = self.search.trim().to_lowercase();
 
+        // Os botões primeiro (à direita); o caminho ocupa o que sobra e corta com "…" na janela estreita.
         ui.horizontal(|ui| {
-            ui.strong(&self.path);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if pill(ui, t(Key::Add), true).clicked() {
                     self.open_add_form();
@@ -2635,6 +2642,9 @@ impl KeysApp {
                 if pill(ui, t(Key::Lock), false).clicked() {
                     self.lock();
                 }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&self.path).strong()).truncate()).on_hover_text(&self.path);
+                });
             });
         });
 

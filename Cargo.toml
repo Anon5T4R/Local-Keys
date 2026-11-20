@@ -46,7 +46,8 @@ winresource = "0.1"
 
 [dependencies]
 eframe = "0.37"
-egui = "0.37"
+# 0.37: os emojis monocromáticos (★ ☆ 📎 👁 ⚠ ✓…) saíram do padrão; sem eles a tela mostra caixinhas.
+egui = { version = "0.37", features = ["default_fonts", "monochrome_emoji_fonts"] }
 image = "0.25"
 lab-ui = { path = "lab-ui" }
 serde = { version = "1", features = ["derive"] }

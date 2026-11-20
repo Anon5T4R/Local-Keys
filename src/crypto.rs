@@ -219,6 +219,12 @@ fn encrypt_vault_with(password: &str, plaintext: &[u8], params: KdfParams) -> Re
     Ok(create_vault_with(password, plaintext, params)?.0)
 }
 
+/// Sessão barata (Argon2 mínimo) para os testes de UI montarem um cofre destrancado.
+#[cfg(test)]
+pub(crate) fn test_session() -> SessionKey {
+    create_vault_with("qa", b"{}", KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 }).expect("sessão de teste").1
+}
+
 /// Abre um arquivo `.tkeys`: valida o header, deriva a chave e decifra. Devolve o
 /// plaintext (`Zeroizing`, apagado ao sair de escopo) e a `SessionKey` para salvar
 /// depois. Falha **genérica** em senha errada OU adulteração (não distingue).
