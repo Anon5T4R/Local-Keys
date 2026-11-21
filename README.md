@@ -6,14 +6,20 @@ telemetria, sem servidores de terceiros — parte da suíte Local.
 ## Recursos
 - Cofre `.tkeys` cifrado (Argon2id + cifra forte), compatível com o formato do
   gerenciador oficial (logins, TOTP, anexos, pastas, lixeira, histórico de senha)
-- Quick unlock via keyring do sistema
-- Importação de outros gerenciadores, gerador de senhas/frmases
-- Windows (instalador NSIS em `Program Files` + portable zip) e Linux (AppImage + tar.gz, PKGBUILD)
+- Desbloqueio rápido (Windows, opcional)
+- Importação: KeePass `.kdbx`, Bitwarden (cifrado ou não), CSV
+- Exportação: JSON/CSV **em claro** — o arquivo sai sem cifra, cuide dele
+- Gerador de senhas/frases
+- Casca da suíte: engrenagem (idioma, tema e Sobre), lupa/Ctrl+K (paleta de comandos)
+  e ⋯ (Importar, Exportar, Trocar senha mestra)
+- Windows: MSI per-machine (WiX) + portable zip; Linux: AppImage, tar.gz, deb, rpm
+  e Arch (PKGBUILD)
 
 ## Build
 ```
 cargo build --locked
 cargo test --locked
+cargo xtask ci    # o gate local: o mesmo que o CI roda
 ```
 
 ## Release
