@@ -37,7 +37,7 @@ class VaultFiltersTest {
     @Test
     fun favoritos_primeiro_depois_nome_sem_caixa() {
         val items = listOf(item("1", "zeta"), item("2", "Alfa"), item("3", "beta", favorite = true), item("4", "alfa2"))
-        val names = VaultFilters.visible(items, KindFilter.ALL, FolderFilter.All, "").map { it.name }
+        val names = VaultFilters.visible(items, ListFilter.NONE, FolderFilter.All, "").map { it.name }
         assertEquals(listOf("beta", "Alfa", "alfa2", "zeta"), names)
     }
 
@@ -48,7 +48,7 @@ class VaultFiltersTest {
             item("2", "lixo", deletedAt = 1_700_000_000_000),
             item("3", "zero", deletedAt = 0),
         )
-        val names = VaultFilters.visible(items, KindFilter.ALL, FolderFilter.All, "").map { it.name }
+        val names = VaultFilters.visible(items, ListFilter.NONE, FolderFilter.All, "").map { it.name }
         assertEquals(listOf("vivo", "zero"), names)
     }
 
@@ -63,15 +63,49 @@ class VaultFiltersTest {
         val withKey = item("k", "com passkey", passkeys = listOf(passkey))
         val fav = item("f", "fav", favorite = true)
         val all = listOf(totp, note, card, withAtt, onlyTrashedAtt, withKey, fav)
-        fun ids(f: KindFilter) = VaultFilters.visible(all, f, FolderFilter.All, "").map { it.id }.toSet()
-        assertEquals(setOf("t"), ids(KindFilter.WITH_TOTP))
+        fun ids(f: KindFilter) = VaultFilters.visible(all, ListFilter(f), FolderFilter.All, "").map { it.id }.toSet()
+        fun ids(o: ShowOnly) = VaultFilters.visible(all, ListFilter(only = setOf(o)), FolderFilter.All, "").map { it.id }.toSet()
+        assertEquals(setOf("t"), ids(ShowOnly.WITH_TOTP))
         assertEquals(setOf("n"), ids(KindFilter.NOTES))
         assertEquals(setOf("c"), ids(KindFilter.CARDS))
-        assertEquals(setOf("a"), ids(KindFilter.WITH_ATTACHMENTS))
-        assertEquals(setOf("k"), ids(KindFilter.WITH_PASSKEY))
-        assertEquals(setOf("f"), ids(KindFilter.FAVORITES))
+        assertEquals(setOf("a"), ids(ShowOnly.WITH_ATTACHMENTS))
+        assertEquals(setOf("k"), ids(ShowOnly.WITH_PASSKEY))
+        assertEquals(setOf("f"), ids(ShowOnly.FAVORITES))
         assertEquals(setOf("t", "a", "b", "k", "f"), ids(KindFilter.LOGINS))
         assertTrue(ids(KindFilter.IDENTITIES).isEmpty())
+    }
+
+    @Test
+    fun filtros_combinados_sao_e() {
+        val totp = Login("u", "p", emptyList(), "JBSWY3DPEHPK3PXP")
+        val favTotp = item("1", "fav com totp", favorite = true, login = totp)
+        val fav = item("2", "fav sem totp", favorite = true)
+        val onlyTotp = item("3", "totp sem fav", login = totp)
+        val favKey = item("4", "fav com passkey", favorite = true, passkeys = listOf(passkey))
+        val favNote = item("5", "nota favorita", kind = ItemKind.NOTE, favorite = true)
+        val all = listOf(favTotp, fav, onlyTotp, favKey, favNote)
+        fun ids(f: ListFilter, folder: FolderFilter = FolderFilter.All) =
+            VaultFilters.visible(all, f, folder, "").map { it.id }.toSet()
+        assertEquals(setOf("1"), ids(ListFilter(only = setOf(ShowOnly.FAVORITES, ShowOnly.WITH_TOTP))))
+        assertEquals(setOf("1", "2", "4"), ids(ListFilter(KindFilter.LOGINS, setOf(ShowOnly.FAVORITES))))
+        assertEquals(setOf("5"), ids(ListFilter(KindFilter.NOTES, setOf(ShowOnly.FAVORITES))))
+        assertTrue(ids(ListFilter(KindFilter.NOTES, setOf(ShowOnly.WITH_TOTP))).isEmpty())
+        assertTrue(ids(ListFilter(only = setOf(ShowOnly.WITH_TOTP, ShowOnly.WITH_PASSKEY))).isEmpty())
+        assertTrue(ids(ListFilter(only = setOf(ShowOnly.FAVORITES)), FolderFilter.In("x")).isEmpty())
+        assertEquals(5, ids(ListFilter.NONE).size)
+    }
+
+    @Test
+    fun contagem_e_forma_salvavel_do_filtro() {
+        assertEquals(0, ListFilter.NONE.activeCount)
+        val f = ListFilter(KindFilter.CARDS, setOf(ShowOnly.WITH_PASSKEY, ShowOnly.FAVORITES))
+        assertEquals(3, f.activeCount)
+        assertEquals(1, ListFilter(only = setOf(ShowOnly.WITH_TOTP)).activeCount)
+        assertEquals(f, ListFilter.decode(f.encode()))
+        assertEquals(ListFilter.NONE, ListFilter.decode(ListFilter.NONE.encode()))
+        assertEquals(ListFilter.NONE, ListFilter.decode(null))
+        // Nome antigo ("FAVORITES" era um tipo na 0.4) ou desconhecido não derruba a restauração.
+        assertEquals(ListFilter(only = setOf(ShowOnly.WITH_TOTP)), ListFilter.decode("FAVORITES|WITH_TOTP,XYZ"))
     }
 
     @Test
@@ -82,7 +116,7 @@ class VaultFiltersTest {
             item("3", "c", folderId = "f2"),
             item("4", "d", folderId = ""),
         )
-        fun ids(f: FolderFilter) = VaultFilters.visible(items, KindFilter.ALL, f, "").map { it.id }
+        fun ids(f: FolderFilter) = VaultFilters.visible(items, ListFilter.NONE, f, "").map { it.id }
         assertEquals(listOf("1", "2", "3", "4"), ids(FolderFilter.All))
         assertEquals(listOf("2", "4"), ids(FolderFilter.NoFolder))
         assertEquals(listOf("3"), ids(FolderFilter.In("f2")))
@@ -105,7 +139,7 @@ class VaultFiltersTest {
             customFields = listOf(CustomField("c1", "rede", "casa", false), CustomField("c2", "pin", "segredo", true)),
         )
         val all = listOf(a, b, c)
-        fun ids(q: String) = VaultFilters.visible(all, KindFilter.ALL, FolderFilter.All, q).map { it.id }
+        fun ids(q: String) = VaultFilters.visible(all, ListFilter.NONE, FolderFilter.All, q).map { it.id }
         assertEquals(listOf("1"), ids("MARIA"))
         assertEquals(listOf("1"), ids("banco.com"))
         assertEquals(listOf("2"), ids("github"))

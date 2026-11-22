@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.localkeys.android.ui.HostCallbacks
+import com.localkeys.android.ui.UpdateViewModel
 import com.localkeys.android.ui.VaultViewModel
 import com.localkeys.android.ui.launchVaultBiometric
 import com.localkeys.android.ui.theme.LocalKeysAppTheme
@@ -21,6 +22,9 @@ import com.localkeys.android.ui.theme.LocalKeysAppTheme
 class MainActivity : AppCompatActivity() {
 
     private val viewModel: VaultViewModel by viewModels()
+
+    /** Atualizador opcional (desligado por padrão); independe do cofre. */
+    private val updates: UpdateViewModel by viewModels()
 
     /** Senha nova digitada na tela de criar — guardada só até o SAF responder. */
     private var pendingCreatePassword: String? = null
@@ -75,6 +79,7 @@ class MainActivity : AppCompatActivity() {
             LocalKeysAppTheme(this, state.themeMode) {
                 LocalKeysApp(
                     viewModel = viewModel,
+                    updates = updates,
                     onPickDocument = {
                         openVaultLauncher.launch(arrayOf("application/octet-stream", "*/*"))
                     },
@@ -91,5 +96,11 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Verificação automática (só se ligada, no máximo a cada 24 h) e a volta da tela de permissão de instalar.
+        updates.onResume()
     }
 }

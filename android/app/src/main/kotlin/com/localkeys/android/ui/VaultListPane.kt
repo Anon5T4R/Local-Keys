@@ -2,7 +2,6 @@ package com.localkeys.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,17 +14,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Fingerprint
@@ -43,8 +39,6 @@ import androidx.compose.material.icons.outlined.SyncAlt
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -81,7 +75,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.localkeys.android.R
-import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.Vault
 import com.localkeys.android.ui.theme.FavoriteAmber
@@ -97,24 +90,24 @@ data class VaultMenuActions(
 )
 
 /** Estado salvável da lista: busca, filtro e pasta. Sobrevive a rotação e a ida e volta das outras telas. */
-class ListFilterState(query: String, searching: Boolean, kind: KindFilter, folderKey: String?) {
+class ListFilterState(query: String, searching: Boolean, filter: ListFilter, folderKey: String?) {
     var query by mutableStateOf(query)
     var searching by mutableStateOf(searching)
-    var kind by mutableStateOf(kind)
+    var filter by mutableStateOf(filter)
     var folderKey by mutableStateOf(folderKey)
     val folder: FolderFilter get() = FolderFilter.fromKey(folderKey)
 
     companion object {
         val Saver = androidx.compose.runtime.saveable.listSaver<ListFilterState, Any?>(
-            save = { listOf(it.query, it.searching, it.kind.name, it.folderKey) },
-            restore = { ListFilterState(it[0] as String, it[1] as Boolean, KindFilter.valueOf(it[2] as String), it[3] as String?) },
+            save = { listOf(it.query, it.searching, it.filter.encode(), it.folderKey) },
+            restore = { ListFilterState(it[0] as String, it[1] as Boolean, ListFilter.decode(it[2] as String?), it[3] as String?) },
         )
     }
 }
 
 @Composable
 fun rememberListFilterState(): ListFilterState =
-    rememberSaveable(saver = ListFilterState.Saver) { ListFilterState("", false, KindFilter.ALL, null) }
+    rememberSaveable(saver = ListFilterState.Saver) { ListFilterState("", false, ListFilter.NONE, null) }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,10 +123,12 @@ fun VaultListPane(
     onNew: () -> Unit,
     onToggleFavorite: (String) -> Unit,
     onLock: () -> Unit,
+    /** Cartão do atualizador no topo da lista (null = nada a mostrar). */
+    banner: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    val visible = remember(vault.items, filters.query, filters.kind, filters.folderKey) {
-        VaultFilters.visible(vault.items, filters.kind, filters.folder, filters.query)
+    val visible = remember(vault.items, filters.query, filters.filter, filters.folderKey) {
+        VaultFilters.visible(vault.items, filters.filter, filters.folder, filters.query)
     }
     val anyLive = remember(vault.items) { vault.items.any { !it.inTrash } }
 
@@ -168,7 +163,8 @@ fun VaultListPane(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            FilterRow(filters = filters, folders = vault.folders)
+            banner?.invoke()
+            ListFilterBar(filters = filters, folders = vault.folders)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             if (visible.isEmpty()) {
                 if (!anyLive) {
@@ -317,84 +313,6 @@ private fun ListTopBar(filters: ListFilterState, busy: Boolean, menu: VaultMenuA
         },
     )
 }
-
-/** Seletor de pasta + chips de filtro, numa fileira só que rola na horizontal. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FilterRow(filters: ListFilterState, folders: List<Folder>) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = Gutter, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FolderSelector(filters, folders)
-        KindFilter.entries.forEach { kind ->
-            FilterChip(
-                selected = filters.kind == kind,
-                onClick = { filters.kind = kind },
-                label = { Text(kindFilterLabel(kind), maxLines = 1) },
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FolderSelector(filters: ListFilterState, folders: List<Folder>) {
-    var open by remember { mutableStateOf(false) }
-    val current = when (val f = filters.folder) {
-        FolderFilter.All -> stringResource(R.string.folder_filter_all_folders)
-        FolderFilter.NoFolder -> stringResource(R.string.folder_sem)
-        is FolderFilter.In -> folders.firstOrNull { it.id == f.id }?.name ?: stringResource(R.string.folder_filter_all_folders)
-    }
-    Box {
-        FilterChip(
-            selected = filters.folder != FolderFilter.All,
-            onClick = { open = true },
-            label = { Text(current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = FolderLabelMax)) },
-            leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) },
-            trailingIcon = { Icon(Icons.Outlined.ArrowDropDown, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) },
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.folder_filter_all_folders)) },
-                onClick = { filters.folderKey = FolderFilter.All.key; open = false },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.folder_sem)) },
-                onClick = { filters.folderKey = FolderFilter.NoFolder.key; open = false },
-            )
-            if (folders.isNotEmpty()) HorizontalDivider()
-            folders.sortedBy { it.name.lowercase() }.forEach { folder ->
-                DropdownMenuItem(
-                    text = { Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    onClick = { filters.folderKey = folder.id; open = false },
-                )
-            }
-        }
-    }
-}
-
-/** Nome de pasta longo não estica o chip além disto (fica com reticências). */
-private val FolderLabelMax = 140.dp
-
-@Composable
-fun kindFilterLabel(kind: KindFilter): String = stringResource(
-    when (kind) {
-        KindFilter.ALL -> R.string.filter_all
-        KindFilter.FAVORITES -> R.string.filter_favorites
-        KindFilter.LOGINS -> R.string.filter_logins
-        KindFilter.NOTES -> R.string.filter_notes
-        KindFilter.CARDS -> R.string.filter_cards
-        KindFilter.IDENTITIES -> R.string.filter_identities
-        KindFilter.WITH_TOTP -> R.string.filter_totp
-        KindFilter.WITH_ATTACHMENTS -> R.string.filter_attachments
-        KindFilter.WITH_PASSKEY -> R.string.filter_passkey
-    },
-)
 
 @Composable
 private fun ItemRow(

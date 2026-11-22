@@ -225,6 +225,14 @@
     <string name="filter_attachments">With attachments</string>
     <string name="filter_passkey">With passkey</string>
     <string name="folder_filter_all_folders">All folders</string>
+    <string name="filter_button">Filter</string>
+    <string name="filter_button_count">Filter (%1$d)</string>
+    <string name="filter_sheet_title">Filters</string>
+    <string name="filter_section_type">Type</string>
+    <string name="filter_section_only">Show only</string>
+    <string name="filter_clear">Clear filters</string>
+    <string name="filter_done">Done</string>
+    <string name="filter_remove">Remove filter %1$s</string>
     <string name="badge_totp">Has a TOTP code</string>
     <string name="badge_passkey">Has a passkey</string>
     <string name="badge_attachment">Has an attachment</string>
@@ -361,5 +369,35 @@
     <!-- Nomes dos idiomas no próprio idioma (iguais nos dois arquivos). -->
     <string name="lang_pt_br">Português (Brasil)</string>
     <string name="lang_en">English</string>
-</resources>
 
+    <!-- Atualizações -->
+    <string name="settings_updates">Updates</string>
+    <string name="update_auto_title">Check for updates automatically</string>
+    <string name="update_auto_body">Off by default. When on, Local Keys looks for a new version at most once a day. The only connection is to GitHub, to read the releases of Anon5T4R/Local-Keys; nothing about you or your vault is sent.</string>
+    <string name="update_check_now">Check now</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_status_never">Not checked yet.</string>
+    <string name="update_status_up_to_date">Up to date (checked %1$s).</string>
+    <string name="update_status_available">New version %1$s available.</string>
+    <string name="update_status_error">Could not check: %1$s.</string>
+    <string name="update_current_version">Installed version: %1$s</string>
+    <string name="update_error_network">no connection to GitHub</string>
+    <string name="update_error_http">GitHub answered with error %1$d</string>
+    <string name="update_error_parse">unexpected answer from GitHub</string>
+    <string name="update_error_too_large">the file is larger than allowed</string>
+    <string name="update_error_digest">the download does not match the checksum published on GitHub and was discarded</string>
+    <string name="update_error_storage">could not save the download</string>
+    <string name="update_error_install">the installation did not complete</string>
+    <string name="update_banner">Local Keys %1$s is available</string>
+    <string name="update_action">Update</string>
+    <string name="update_action_version">Update to %1$s</string>
+    <string name="update_dismiss">Dismiss</string>
+    <string name="update_downloading">Downloading Local Keys %1$s… %2$d%%</string>
+    <string name="update_installing">Installing Local Keys %1$s…</string>
+    <string name="update_permission_title">Allow installing updates</string>
+    <string name="update_permission_body">Android only lets Local Keys install its own update after you allow \"Install unknown apps\" for it. On the next screen, turn the switch on and come back: the update continues by itself. Android only accepts the new version if it is signed with the same key as the one installed.</string>
+    <string name="update_permission_open">Open settings</string>
+    <string name="update_done_notice">Updated to Local Keys %1$s.</string>
+    <string name="update_cancelled_notice">Update cancelled.</string>
+    <string name="update_failed_notice">Update failed: %1$s</string>
+</resources>

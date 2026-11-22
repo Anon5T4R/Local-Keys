@@ -8,6 +8,12 @@
          como toast (LocalKeysAutofillService.notify). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Atualizador opcional (desligado por padrão): a única rede do app é ler as releases do Local Keys no GitHub
+         e baixar o APK, e só com a verificação automática ligada ou no "verificar agora". -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Entregar o APK baixado ao instalador do sistema (o usuário ainda libera "instalar apps desconhecidos"). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -70,6 +76,11 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.LocalKeys.Base" />
+
+        <!-- Resultado da instalação da atualização (PackageInstaller). Só o PendingIntent do próprio app chega aqui. -->
+        <receiver
+            android:name=".data.update.UpdateInstallReceiver"
+            android:exported="false" />
 
         <!-- Idioma por app antes do Android 13: o AppCompat guarda a escolha sozinho (autoStoreLocales). -->
         <service

@@ -8,8 +8,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext
 import com.localkeys.android.ui.CreateScreen
 import com.localkeys.android.ui.HostCallbacks
+import com.localkeys.android.ui.InstallPermissionDialog
+import com.localkeys.android.ui.UpdateViewModel
 import com.localkeys.android.ui.UnlockScreen
 import com.localkeys.android.ui.VaultHost
 import com.localkeys.android.ui.VaultViewModel
@@ -24,18 +27,21 @@ import com.localkeys.android.ui.VaultViewModel
 @Composable
 fun LocalKeysApp(
     viewModel: VaultViewModel,
+    updates: UpdateViewModel,
     onPickDocument: () -> Unit,
     onCreateDocument: (String) -> Unit,
     callbacks: HostCallbacks,
 ) {
     val state by viewModel.state.collectAsState()
+    val updateState by updates.state.collectAsState()
+    val context = LocalContext.current
     var showCreate by rememberSaveable { mutableStateOf(false) }
     val vault = state.vault
 
     when {
         state.screen == VaultViewModel.Screen.Vault && vault != null -> {
             LaunchedEffect(Unit) { showCreate = false }
-            VaultHost(viewModel = viewModel, state = state, vault = vault, callbacks = callbacks)
+            VaultHost(viewModel = viewModel, state = state, vault = vault, callbacks = callbacks, updates = updates, updateState = updateState)
         }
         showCreate -> {
             BackHandler { showCreate = false; viewModel.clearError() }
@@ -59,6 +65,14 @@ fun LocalKeysApp(
             onUnlock = viewModel::unlock,
             onBiometricUnlock = { callbacks.onRequestBiometric(com.localkeys.android.ui.BiometricRequest.Unlock) },
             onErrorShown = viewModel::clearError,
+        )
+    }
+
+    // A permissão de instalar vale com o cofre aberto ou trancado (o atualizador não usa o cofre).
+    if (updateState.needsInstallPermission) {
+        InstallPermissionDialog(
+            onOpen = { updates.openInstallPermission(context) },
+            onDismiss = updates::dismissInstallPermission,
         )
     }
 }

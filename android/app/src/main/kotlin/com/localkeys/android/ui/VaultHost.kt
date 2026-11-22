@@ -60,6 +60,8 @@ fun VaultHost(
     state: VaultViewModel.UiState,
     vault: Vault,
     callbacks: HostCallbacks,
+    updates: UpdateViewModel,
+    updateState: UpdateViewModel.UiState,
 ) {
     var stack by rememberSaveable(stateSaver = RouteStackSaver) { mutableStateOf(emptyList<Route>()) }
     val twoPane = LocalConfiguration.current.screenWidthDp >= TWO_PANE_MIN_DP
@@ -83,6 +85,20 @@ fun VaultHost(
         viewModel.clearError()
         snackScope.launch { snackbar.showSnackbar(error) }
     }
+
+    // Aviso de instalação (atualizou, cancelou, falhou): uma snackbar e some.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(updateState.notice) {
+        val notice = updateState.notice ?: return@LaunchedEffect
+        updates.consumeNotice()
+        snackScope.launch { snackbar.showSnackbar(noticeText(context, notice)) }
+    }
+    val updateActions = UpdateActions(
+        onAutoCheck = updates::setAutoCheck,
+        onCheckNow = updates::checkNow,
+        onUpdate = updates::startUpdate,
+        onDismissBanner = updates::dismissBanner,
+    )
 
     BackHandler(enabled = stack.isNotEmpty()) { stack = stack.dropLast(1) }
 
@@ -117,6 +133,11 @@ fun VaultHost(
                 onNew = { push(Route.Edit(null)) },
                 onToggleFavorite = viewModel::toggleFavorite,
                 onLock = viewModel::lock,
+                banner = if (updateState.showBanner) {
+                    { UpdateBanner(updateState, updateActions) }
+                } else {
+                    null
+                },
                 modifier = modifier,
             )
         }
@@ -199,6 +220,8 @@ fun VaultHost(
                 onImportFile = callbacks.onPickImport,
                 onImportOther = callbacks.onImportOther,
                 onExport = { exportOpen = true },
+                updateState = updateState,
+                updateActions = updateActions,
             )
             else -> PaneContent(route, inPane = false)
         }

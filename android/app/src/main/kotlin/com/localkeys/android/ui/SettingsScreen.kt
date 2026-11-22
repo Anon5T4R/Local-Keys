@@ -91,6 +91,8 @@ fun SettingsScreen(
     onImportFile: () -> Unit,
     onImportOther: (() -> Unit)?,
     onExport: () -> Unit,
+    updateState: UpdateViewModel.UiState,
+    updateActions: UpdateActions,
 ) {
     val context = LocalContext.current
     // Muda a cada ON_RESUME: o usuário volta das telas do sistema e o status é relido.
@@ -181,6 +183,8 @@ fun SettingsScreen(
                 SettingsAction(Icons.Outlined.SyncAlt, stringResource(R.string.menu_import_other), stringResource(R.string.settings_import_other_body), !busy, onImportOther)
             }
             SettingsAction(Icons.Outlined.FileUpload, stringResource(R.string.menu_export), stringResource(R.string.settings_export_body), !busy, onExport)
+
+            UpdateSettingsSection(updateState, updateActions)
 
             SectionTitle(stringResource(R.string.settings_about))
             if (vaultName != null) {

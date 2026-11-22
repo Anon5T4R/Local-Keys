@@ -3,17 +3,44 @@ package com.localkeys.android.ui
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 
-/** Filtro da fileira de chips da lista. */
+/** Tipo de item (escolha única no painel de filtros). */
 enum class KindFilter {
     ALL,
-    FAVORITES,
     LOGINS,
     NOTES,
     CARDS,
     IDENTITIES,
+}
+
+/** "Mostrar só" (várias de uma vez, combinadas com E). */
+enum class ShowOnly {
+    FAVORITES,
     WITH_TOTP,
     WITH_ATTACHMENTS,
     WITH_PASSKEY,
+}
+
+/** Filtros do painel: um tipo e qualquer combinação de [ShowOnly]. A pasta fica de fora (seletor próprio). */
+data class ListFilter(val kind: KindFilter = KindFilter.ALL, val only: Set<ShowOnly> = emptySet()) {
+    /** Quantos filtros estão ligados (o número do botão "Filtrar (n)"). */
+    val activeCount: Int get() = (if (kind != KindFilter.ALL) 1 else 0) + only.size
+
+    /** Forma salvável: "LOGINS|FAVORITES,WITH_TOTP". */
+    fun encode(): String = kind.name + "|" + only.sortedBy { it.ordinal }.joinToString(",") { it.name }
+
+    companion object {
+        val NONE = ListFilter()
+
+        /** Inverso de [encode]; nome desconhecido é ignorado (a restauração nunca derruba a lista). */
+        fun decode(raw: String?): ListFilter {
+            if (raw.isNullOrEmpty()) return NONE
+            val kind = KindFilter.entries.firstOrNull { it.name == raw.substringBefore('|') } ?: KindFilter.ALL
+            val only = raw.substringAfter('|', "").split(',')
+                .mapNotNull { name -> ShowOnly.entries.firstOrNull { it.name == name } }
+                .toSet()
+            return ListFilter(kind, only)
+        }
+    }
 }
 
 /**
@@ -48,12 +75,13 @@ sealed interface FolderFilter {
 object VaultFilters {
 
     /** Itens visíveis: fora da lixeira, no filtro e na pasta, casando com a busca; favoritos primeiro, depois nome. */
-    fun visible(items: List<Item>, kind: KindFilter, folder: FolderFilter, query: String): List<Item> {
+    fun visible(items: List<Item>, filter: ListFilter, folder: FolderFilter, query: String): List<Item> {
         val q = query.trim().lowercase()
         return items
             .asSequence()
             .filter { !it.inTrash }
-            .filter { matchesKind(it, kind) }
+            .filter { matchesKind(it, filter.kind) }
+            .filter { item -> filter.only.all { matchesOnly(item, it) } }
             .filter { matchesFolder(it, folder) }
             .filter { q.isEmpty() || matchesQuery(it, q) }
             .sortedWith(ORDER)
@@ -67,14 +95,17 @@ object VaultFilters {
 
     fun matchesKind(item: Item, kind: KindFilter): Boolean = when (kind) {
         KindFilter.ALL -> true
-        KindFilter.FAVORITES -> item.favorite
         KindFilter.LOGINS -> item.kind == ItemKind.LOGIN
         KindFilter.NOTES -> item.kind == ItemKind.NOTE
         KindFilter.CARDS -> item.kind == ItemKind.CARD
         KindFilter.IDENTITIES -> item.kind == ItemKind.IDENTITY
-        KindFilter.WITH_TOTP -> hasTotp(item)
-        KindFilter.WITH_ATTACHMENTS -> item.liveAttachments.isNotEmpty()
-        KindFilter.WITH_PASSKEY -> item.livePasskeys.isNotEmpty()
+    }
+
+    fun matchesOnly(item: Item, only: ShowOnly): Boolean = when (only) {
+        ShowOnly.FAVORITES -> item.favorite
+        ShowOnly.WITH_TOTP -> hasTotp(item)
+        ShowOnly.WITH_ATTACHMENTS -> item.liveAttachments.isNotEmpty()
+        ShowOnly.WITH_PASSKEY -> item.livePasskeys.isNotEmpty()
     }
 
     fun matchesFolder(item: Item, folder: FolderFilter): Boolean = when (folder) {

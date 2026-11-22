@@ -224,6 +224,14 @@
     <string name="filter_attachments">Com anexos</string>
     <string name="filter_passkey">Com passkey</string>
     <string name="folder_filter_all_folders">Todas as pastas</string>
+    <string name="filter_button">Filtrar</string>
+    <string name="filter_button_count">Filtrar (%1$d)</string>
+    <string name="filter_sheet_title">Filtros</string>
+    <string name="filter_section_type">Tipo</string>
+    <string name="filter_section_only">Mostrar só</string>
+    <string name="filter_clear">Limpar filtros</string>
+    <string name="filter_done">Pronto</string>
+    <string name="filter_remove">Remover filtro %1$s</string>
     <string name="badge_totp">Tem código TOTP</string>
     <string name="badge_passkey">Tem passkey</string>
     <string name="badge_attachment">Tem anexo</string>
@@ -360,5 +368,35 @@
     <!-- Nomes dos idiomas no próprio idioma (iguais nos dois arquivos). -->
     <string name="lang_pt_br">Português (Brasil)</string>
     <string name="lang_en">English</string>
-</resources>
 
+    <!-- Atualizações -->
+    <string name="settings_updates">Atualizações</string>
+    <string name="update_auto_title">Procurar atualizações automaticamente</string>
+    <string name="update_auto_body">Desligado por padrão. Ligado, o Local Keys procura versão nova no máximo uma vez por dia. A única conexão é com o GitHub, para ler as releases de Anon5T4R/Local-Keys; nada sobre você ou o seu cofre é enviado.</string>
+    <string name="update_check_now">Verificar agora</string>
+    <string name="update_checking">Verificando…</string>
+    <string name="update_status_never">Ainda não verificado.</string>
+    <string name="update_status_up_to_date">Em dia (verificado em %1$s).</string>
+    <string name="update_status_available">Nova versão %1$s disponível.</string>
+    <string name="update_status_error">Não foi possível verificar: %1$s.</string>
+    <string name="update_current_version">Versão instalada: %1$s</string>
+    <string name="update_error_network">sem conexão com o GitHub</string>
+    <string name="update_error_http">o GitHub respondeu com erro %1$d</string>
+    <string name="update_error_parse">resposta inesperada do GitHub</string>
+    <string name="update_error_too_large">o arquivo é maior que o permitido</string>
+    <string name="update_error_digest">o download não confere com o checksum publicado no GitHub e foi descartado</string>
+    <string name="update_error_storage">não foi possível salvar o download</string>
+    <string name="update_error_install">a instalação não foi concluída</string>
+    <string name="update_banner">O Local Keys %1$s está disponível</string>
+    <string name="update_action">Atualizar</string>
+    <string name="update_action_version">Atualizar para %1$s</string>
+    <string name="update_dismiss">Dispensar</string>
+    <string name="update_downloading">Baixando o Local Keys %1$s… %2$d%%</string>
+    <string name="update_installing">Instalando o Local Keys %1$s…</string>
+    <string name="update_permission_title">Permitir instalar atualizações</string>
+    <string name="update_permission_body">O Android só deixa o Local Keys instalar a própria atualização depois que você libera \"Instalar apps desconhecidos\" para ele. Na próxima tela, ligue a chave e volte: a atualização continua sozinha. O Android só aceita a versão nova se ela for assinada com a mesma chave da instalada.</string>
+    <string name="update_permission_open">Abrir configurações</string>
+    <string name="update_done_notice">Atualizado para o Local Keys %1$s.</string>
+    <string name="update_cancelled_notice">Atualização cancelada.</string>
+    <string name="update_failed_notice">A atualização falhou: %1$s</string>
+</resources>
