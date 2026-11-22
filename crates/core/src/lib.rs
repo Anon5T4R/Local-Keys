@@ -1,0 +1,15 @@
+//! Núcleo do Local Keys, sem UI: o formato `.tkeys` (Argon2id + XChaCha20-Poly1305), o cofre em JSON
+//! bruto (escrita conservadora: o que o app não conhece atravessa intacto), os importadores (Bitwarden,
+//! KeePass, CSV), a exportação, o TOTP e o gerador de senhas.
+//!
+//! O app desktop usa esta crate direto; o Android vai usá-la por UniFFI, para o formato e as regras serem o
+//! mesmo código nos dois lados.
+
+pub mod bwdecrypt;
+pub mod crypto;
+pub mod export;
+pub mod generator;
+pub mod import;
+pub mod kdbx;
+pub mod totp;
+pub mod vault;

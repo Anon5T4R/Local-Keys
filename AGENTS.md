@@ -1,7 +1,7 @@
 # AGENTS.md — LocalKeys
 
 Gerenciador de senhas 100% local e offline, parte da suíte Local do João.
-Rust puro + egui, app single-crate. Sem conta, sem telemetria, sem dependência de servidores de terceiros.
+Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-core`). Sem conta, sem telemetria, sem dependência de servidores de terceiros.
 
 ## Regras
 - **Dependências:** toda dep que entra/sai/atualiza exige `Cargo.lock` commitado +
@@ -16,7 +16,10 @@ Rust puro + egui, app single-crate. Sem conta, sem telemetria, sem dependência 
   está frio ou feito, mantém durante iteração ativa); fora dele, `cargo clean` ao terminar. Builds pesados são do CI.
 
 ## Estrutura
-- `src/` — app single-crate (`src/pickers.rs`: seletor nativo async via rfd + pollster,
+- `crates/core` — `localkeys-core`, o núcleo sem UI: formato `.tkeys` (`crypto.rs`), cofre em JSON bruto com
+  escrita conservadora (`vault.rs`), importadores, exportação, TOTP e gerador. O Keys Android vai usá-lo por UniFFI
+  (`docs/planos/android.md` do dev-notes); nada de UI ou i18n entra aqui.
+- `src/` — o app (`src/pickers.rs`: seletor nativo async via rfd + pollster,
   portal XDG no Linux; também `src/i18n.rs`, `src/prefs.rs`, `src/theme.rs`, `src/shell.rs` e
   `i18n/locales/<code>/*.tsv`)
 - Casca da suíte = `src/shell.rs` + craft-icons + craft-palette + craft-desktop-theme

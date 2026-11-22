@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["xtask"]
+members = ["xtask", "crates/core"]
 default-members = ["."]
 exclude = ["libs"]
 
@@ -45,6 +45,8 @@ description = "Gerenciador de senhas 100% local e offline da suíte Local"
 winresource = "0.1"
 
 [dependencies]
+# O núcleo sem UI (formato, cofre, importadores, TOTP, gerador): crates/core.
+localkeys-core = { path = "crates/core" }
 eframe = "0.37"
 # 0.37: os emojis monocromáticos (★ ☆ 📎 👁 ⚠ ✓…) saíram do padrão; sem eles a tela mostra caixinhas.
 egui = { version = "0.37", features = ["default_fonts", "monochrome_emoji_fonts"] }
@@ -53,27 +55,15 @@ craft-i18n = { path = "libs/craft-libs/crates/i18n" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Cripto — MESMOS pins do LocalKeys oficial (crypto.rs/totp.rs copiados verbatim)
-argon2 = "0.5"
-chacha20poly1305 = "0.10"
-rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
-totp-rs = { version = "5", default-features = false }
 arboard = { version = "3.6", features = ["wayland-data-control"] }
 # Base64 em TODAS as plataformas: anexos (vault.rs) e o import do export
 # cifrado do Bitwarden (bwdecrypt.rs) usam — o desbloqueio rápido no keyring
 # também, e continua funcionando.
 base64 = "0.22"
 # Import de cofres KeePass (.kdbx) — lê/decifra com a senha do usuário.
-keepass = "0.7"
 # Gerador de senha/passphrase + medidor de força (zxcvbn).
-zxcvbn = "3"
 # Import do export CIFRADO do Bitwarden (PBKDF2/Argon2id → HKDF → AES-CBC+HMAC).
-pbkdf2 = "0.12"
-hkdf = "0.12"
-sha2 = "0.10"
-aes = "0.8"
-cbc = { version = "0.1", features = ["alloc"] }
-hmac = "0.12"
 # Atualização: craft_update (libs/craft-libs) — check no GitHub, prompt egui e
 # self-update (Windows: MSI/portable; Linux: AppImage/tar.gz). O `egui` liga o
 # prompt e o Updater de UI.
@@ -96,6 +86,7 @@ rfd = "0.17"
 pollster = "1.0"
 
 [dev-dependencies]
+localkeys-core = { path = "crates/core", features = ["test-support"] }
 # Testes de UI sem janela (egui_kittest): a barra, as Configurações e a paleta respondem a cliques e teclas.
 egui_kittest = { version = "0.37", default-features = false, features = ["wgpu"] }
 

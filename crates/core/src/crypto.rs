@@ -218,8 +218,8 @@ fn encrypt_vault_with(password: &str, plaintext: &[u8], params: KdfParams) -> Re
 }
 
 /// Sessão barata (Argon2 mínimo) para os testes de UI montarem um cofre destrancado.
-#[cfg(test)]
-pub(crate) fn test_session() -> SessionKey {
+#[cfg(any(test, feature = "test-support"))]
+pub fn test_session() -> SessionKey {
     create_vault_with("qa", b"{}", KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 }).expect("sessão de teste").1
 }
 

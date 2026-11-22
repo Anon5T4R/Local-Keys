@@ -14,21 +14,13 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod bwdecrypt;
 mod clipboard;
-mod crypto;
-mod export;
-mod generator;
 mod i18n;
-mod import;
 mod jobs;
-mod kdbx;
 mod pickers;
 mod prefs;
 mod shell;
 mod theme;
-mod totp;
-mod vault;
 
 #[cfg(windows)]
 mod winctl;
@@ -36,6 +28,7 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
+use localkeys_core::{bwdecrypt, crypto, export, generator, import, kdbx, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;

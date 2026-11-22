@@ -3402,12 +3402,8 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 name = "local-keys"
 version = "0.12.0"
 dependencies = [
- "aes",
  "arboard",
- "argon2",
  "base64 0.22.1",
- "cbc",
- "chacha20poly1305",
  "clipboard-win",
  "craft-desktop-theme",
  "craft-i18n",
@@ -3418,22 +3414,37 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_kittest",
+ "image",
+ "keyring",
+ "localkeys-core",
+ "pollster 1.0.1",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tray-icon",
+ "windows 0.58.0",
+ "winresource",
+ "zeroize",
+]
+
+[[package]]
+name = "localkeys-core"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "argon2",
+ "base64 0.22.1",
+ "cbc",
+ "chacha20poly1305",
  "hkdf",
  "hmac",
- "image",
  "keepass",
- "keyring",
  "pbkdf2",
- "pollster 1.0.1",
  "rand 0.8.8",
- "rfd",
  "serde",
  "serde_json",
  "sha2",
  "totp-rs",
- "tray-icon",
- "windows 0.58.0",
- "winresource",
  "zeroize",
  "zxcvbn",
 ]
