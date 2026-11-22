@@ -763,7 +763,7 @@ private fun ItemDetailDialog(
                 item.customFields?.forEach { field ->
                     FieldRow(field.name, field.value, field.value, onCopy)
                 }
-                item.attachments?.takeIf { it.isNotEmpty() }?.let { atts ->
+                item.attachments?.filter { it.live }?.takeIf { it.isNotEmpty() }?.let { atts ->
                     Text(
                         text = stringResource(R.string.attach_title),
                         style = MaterialTheme.typography.labelMedium,

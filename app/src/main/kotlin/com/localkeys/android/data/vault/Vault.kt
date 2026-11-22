@@ -320,14 +320,19 @@ data class Attachment(
     val size: Long,
     val mime: String,
     val dataB64: String,
+    /** Lixeira de anexos do desktop: com data, o anexo está na lixeira e não aparece. */
+    val deletedAt: Long? = null,
     val extra: Extra = Extra.NONE,
 ) {
+    val live: Boolean get() = deletedAt == null
+
     fun toJson(): JSONObject = extra.base().apply {
         put("id", id)
         put("name", name)
         put("size", size)
         put("mime", mime)
         put("dataB64", dataB64)
+        put("deletedAt", deletedAt ?: JSONObject.NULL)
     }
 
     companion object {
@@ -337,7 +342,8 @@ data class Attachment(
             size = json.optLong("size", 0),
             mime = json.optString("mime", ""),
             dataB64 = json.optString("dataB64", ""),
-            extra = Extra.unknownKeys(json, setOf("id", "name", "size", "mime", "dataB64")),
+            deletedAt = if (json.isNull("deletedAt")) null else json.optLong("deletedAt"),
+            extra = Extra.unknownKeys(json, setOf("id", "name", "size", "mime", "dataB64", "deletedAt")),
         )
     }
 }

@@ -121,6 +121,7 @@ fun ItemEditorDialog(
                     ?: return@withContext (displayName to ByteArray(0))
                 displayName to data
             }
+            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
             if (bytes.isEmpty()) {
                 Toast.makeText(context, R.string.attach_read_failed, Toast.LENGTH_SHORT).show()
                 return@launch
@@ -133,14 +134,16 @@ fun ItemEditorDialog(
                 id = UUID.randomUUID().toString(),
                 name = name,
                 size = bytes.size.toLong(),
-                mime = "",
+                mime = mime,
                 dataB64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
             )).toMutableList()
         }
     }
 
+    // Como no desktop: remover manda o anexo para a lixeira (some da lista, fica no arquivo).
     fun removeAttachment(id: String) {
-        attachments = attachments.filterNot { it.id == id }.toMutableList()
+        val now = System.currentTimeMillis()
+        attachments = attachments.map { if (it.id == id) it.copy(deletedAt = now) else it }.toMutableList()
     }
 
     fun addField() {
@@ -459,7 +462,7 @@ fun ItemEditorDialog(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                attachments.forEach { att ->
+                attachments.filter { it.live }.forEach { att ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,

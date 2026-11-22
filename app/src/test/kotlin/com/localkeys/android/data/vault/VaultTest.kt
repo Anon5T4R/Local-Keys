@@ -134,6 +134,21 @@ class VaultTest {
         assertEquals(2, other.getJSONArray("x").length())
     }
 
+    /** A lixeira de anexos do desktop (`deletedAt`) é lida e gravada de volta. */
+    @Test
+    fun anexo_na_lixeira_do_desktop_nao_esta_vivo() {
+        val json = """{"version":1,"folders":[],"items":[{"id":"i1","kind":"note","name":"n","favorite":false,""" +
+            """"folderId":null,"notes":"","createdAt":1,"updatedAt":1,"deletedAt":null,"attachments":[""" +
+            """{"id":"a","name":"vivo.txt","size":1,"mime":"text/plain","dataB64":"QQ==","deletedAt":null},""" +
+            """{"id":"b","name":"lixo.txt","size":1,"mime":"text/plain","dataB64":"QQ==","deletedAt":5}]}]}"""
+        val atts = Vault.parse(json).items[0].attachments!!
+        assertTrue(atts[0].live)
+        assertFalse(atts[1].live)
+        val out = JSONObject(Vault.parse(json).toJson()).getJSONArray("items").getJSONObject(0).getJSONArray("attachments")
+        assertTrue(out.getJSONObject(0).isNull("deletedAt"))
+        assertEquals(5L, out.getJSONObject(1).getLong("deletedAt"))
+    }
+
     /** Uma parte apagada no app sai do arquivo, mesmo que o JSON original a tivesse. */
     @Test
     fun parte_apagada_sai_do_arquivo() {
