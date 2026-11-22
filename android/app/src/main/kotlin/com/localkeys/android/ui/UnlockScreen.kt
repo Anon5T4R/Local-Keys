@@ -1,6 +1,5 @@
 package com.localkeys.android.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -163,10 +162,11 @@ fun UnlockScreen(
  */
 @Composable
 fun StartLayout(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    // Surface (não só um fundo pintado): define também a cor do texto, senão o título sai preto no tema escuro.
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
     Box(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .imePadding(),
         contentAlignment = Alignment.Center,
@@ -181,6 +181,7 @@ fun StartLayout(modifier: Modifier = Modifier, content: @Composable ColumnScope.
             verticalArrangement = Arrangement.Center,
             content = content,
         )
+    }
     }
 }
 
