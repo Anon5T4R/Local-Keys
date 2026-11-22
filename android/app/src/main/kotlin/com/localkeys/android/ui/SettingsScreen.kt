@@ -37,8 +37,8 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Pin
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.SyncAlt
 import androidx.compose.material.icons.outlined.TextFields
@@ -71,6 +71,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.localkeys.android.BuildConfig
 import com.localkeys.android.R
+import com.localkeys.android.data.store.RecentVault
 import com.localkeys.android.credentials.LocalKeysCredentialService
 
 /**
@@ -81,6 +82,9 @@ import com.localkeys.android.credentials.LocalKeysCredentialService
 fun SettingsScreen(
     biometricOn: Boolean,
     vaultName: String?,
+    vaultUri: String?,
+    recentVaults: List<RecentVault>,
+    vaultActions: VaultSwitchActions,
     themeMode: String,
     onThemeMode: (String) -> Unit,
     busy: Boolean,
@@ -91,6 +95,8 @@ fun SettingsScreen(
     onImportFile: () -> Unit,
     onImportOther: (() -> Unit)?,
     onExport: () -> Unit,
+    copyTotpAfterAutofill: Boolean,
+    onCopyTotpAfterAutofill: (Boolean) -> Unit,
     updateState: UpdateViewModel.UiState,
     updateActions: UpdateActions,
 ) {
@@ -106,6 +112,7 @@ fun SettingsScreen(
     val autofillOn = remember(resumes) { autofillEnabled(context) }
     val autofillSupported = remember(resumes) { autofillSupported(context) }
     val credentialsOn = remember(resumes) { credentialProviderEnabled(context) }
+    val credentialsPreferred = remember(resumes) { credentialProviderPreferred(context) }
     val biometricHardware = remember(resumes) {
         BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
             BiometricManager.BIOMETRIC_SUCCESS
@@ -122,6 +129,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
+            VaultSection(vaultName, vaultUri, recentVaults, busy, vaultActions)
+
             AppearanceSection(themeMode, onThemeMode)
 
             SectionTitle(stringResource(R.string.settings_security))
@@ -167,12 +176,26 @@ fun SettingsScreen(
                     onOpen = { openAutofillSettings(context) },
                 )
             }
+            ListItem(
+                leadingContent = { Icon(Icons.Outlined.Pin, contentDescription = null) },
+                headlineContent = { Text(stringResource(R.string.settings_copy_totp)) },
+                supportingContent = { Text(stringResource(R.string.settings_copy_totp_body)) },
+                trailingContent = {
+                    Switch(checked = copyTotpAfterAutofill, onCheckedChange = onCopyTotpAfterAutofill)
+                },
+                modifier = Modifier.clickable { onCopyTotpAfterAutofill(!copyTotpAfterAutofill) },
+            )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 DefaultServiceCard(
                     icon = Icons.Outlined.Key,
                     title = stringResource(R.string.settings_credentials),
                     body = stringResource(R.string.settings_credentials_body),
                     active = credentialsOn,
+                    detail = when (credentialsPreferred) {
+                        true -> stringResource(R.string.settings_credentials_preferred_yes)
+                        false -> stringResource(R.string.settings_credentials_preferred_no)
+                        null -> null
+                    },
                     onOpen = { openCredentialSettings(context) },
                 )
             }
@@ -180,20 +203,20 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_import_export))
             SettingsAction(Icons.Outlined.FileDownload, stringResource(R.string.menu_import_file), stringResource(R.string.settings_import_file_body), !busy, onImportFile)
             if (onImportOther != null) {
-                SettingsAction(Icons.Outlined.SyncAlt, stringResource(R.string.menu_import_other), stringResource(R.string.settings_import_other_body), !busy, onImportOther)
+                SettingsAction(
+                    Icons.Outlined.SyncAlt,
+                    stringResource(R.string.menu_import_other),
+                    stringResource(R.string.settings_import_other_body),
+                    !busy,
+                    onImportOther,
+                    note = stringResource(R.string.settings_import_other_note),
+                )
             }
             SettingsAction(Icons.Outlined.FileUpload, stringResource(R.string.menu_export), stringResource(R.string.settings_export_body), !busy, onExport)
 
             UpdateSettingsSection(updateState, updateActions)
 
             SectionTitle(stringResource(R.string.settings_about))
-            if (vaultName != null) {
-                ListItem(
-                    leadingContent = { Icon(Icons.Outlined.InsertDriveFile, contentDescription = null) },
-                    headlineContent = { Text(stringResource(R.string.unlock_vault_file)) },
-                    supportingContent = { Text(vaultName) },
-                )
-            }
             ListItem(
                 leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
                 headlineContent = { Text(stringResource(R.string.app_name)) },
@@ -298,11 +321,31 @@ private fun ChoiceDialog(
 }
 
 @Composable
-private fun SettingsAction(icon: ImageVector, title: String, body: String, enabled: Boolean, onClick: () -> Unit) {
+private fun SettingsAction(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    /** Uma linha a mais, menor, embaixo do texto (o que a opção precisa para funcionar). */
+    note: String? = null,
+) {
     ListItem(
         leadingContent = { Icon(icon, contentDescription = null) },
         headlineContent = { Text(title) },
-        supportingContent = { Text(body) },
+        supportingContent = {
+            Column {
+                Text(body)
+                if (note != null) {
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+        },
         colors = if (enabled) ListItemDefaults.colors() else ListItemDefaults.colors(headlineColor = MaterialTheme.colorScheme.outline),
         modifier = Modifier.clickable(enabled = enabled, onClick = onClick),
     )
@@ -310,7 +353,15 @@ private fun SettingsAction(icon: ImageVector, title: String, body: String, enabl
 
 /** Cartão de um serviço do sistema: o que faz, se o Local Keys está ativo nele e o botão para abrir a tela do Android. */
 @Composable
-private fun DefaultServiceCard(icon: ImageVector, title: String, body: String, active: Boolean, onOpen: () -> Unit) {
+private fun DefaultServiceCard(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    active: Boolean,
+    onOpen: () -> Unit,
+    /** Uma linha de estado a mais, só quando o sistema deixa saber com certeza (null = não mostra). */
+    detail: String? = null,
+) {
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -343,6 +394,14 @@ private fun DefaultServiceCard(icon: ImageVector, title: String, body: String, a
                 FilledTonalButton(onClick = onOpen) {
                     Text(stringResource(if (active) R.string.settings_open_system else R.string.settings_turn_on))
                 }
+            }
+            if (detail != null) {
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
     }
@@ -390,4 +449,16 @@ private fun openCredentialSettings(context: Context) {
             Toast.makeText(context, R.string.settings_open_failed, Toast.LENGTH_LONG).show()
         }
     }
+}
+
+/**
+ * Android 14+: o Local Keys é o *serviço preferencial* (o que o sistema oferece primeiro, inclusive para
+ * passkeys em apps)? O Android não tem API pública para isso; tenta ler a configuração do sistema e, se ela não
+ * puder ser lida (bloqueada ou ausente), devolve null: a tela então não mostra estado nenhum, em vez de chutar.
+ */
+private fun credentialProviderPreferred(context: Context): Boolean? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
+    val raw = runCatching { Settings.Secure.getString(context.contentResolver, "credential_service_primary") }
+        .getOrNull() ?: return null
+    return raw.split(':').any { ComponentName.unflattenFromString(it)?.packageName == context.packageName }
 }

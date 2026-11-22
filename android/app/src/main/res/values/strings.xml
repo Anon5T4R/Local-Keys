@@ -88,7 +88,6 @@
     <string name="attach_add">Add attachment</string>
     <string name="attach_too_large">Attachment too large (max. 10 MB).</string>
     <string name="attach_read_failed">Could not read the attachment.</string>
-    <string name="attach_save_failed">Could not save the attachment.</string>
 
     <!-- Histórico de senhas -->
     <string name="history_title">Password history (%1$d)</string>
@@ -165,8 +164,7 @@
     <!-- Erros internos de I/O do documento -->
     <string name="err_file_not_found">file not found</string>
     <string name="err_no_file">the vault is not linked to a file</string>
-    <string name="err_write_failed">could not write the vault</string>
-    <string name="err_write_retry_failed">the write came out corrupted and the retry failed</string>
+    <string name="err_write_retry_failed">the write came out corrupted and the retry failed: %1$s</string>
     <string name="err_write_unrecoverable">the written file does not reopen; try opening another vault</string>
 
     <!-- Erros do .tkeys (mapeados por tipo no ViewModel) -->
@@ -339,7 +337,7 @@
     <string name="settings_autofill">Autofill</string>
     <string name="settings_autofill_body">Fills username and password in the login fields of apps and websites, and offers to store new logins in the vault.</string>
     <string name="settings_credentials">Passwords and passkeys</string>
-    <string name="settings_credentials_body">Android 14 or newer: Local Keys shows up when an app or website asks for a password or a passkey, and stores new passkeys in the vault.</string>
+    <string name="settings_credentials_body">Android 14 or newer: apps and websites offer the “preferred service” chosen in Settings › Passwords, passkeys &amp; accounts. For Local Keys to be offered (passkeys in apps included), make it the preferred service or turn it on as an additional provider.</string>
     <string name="settings_status_on">Active</string>
     <string name="settings_status_off">Off</string>
     <string name="settings_turn_on">Turn on</string>
@@ -347,7 +345,7 @@
     <string name="settings_open_failed">Could not open this system screen on this device.</string>
     <string name="settings_import_export">Import and export</string>
     <string name="settings_import_file_body">Bitwarden (JSON, encrypted or not), KeePass (.kdbx) or CSV.</string>
-    <string name="settings_import_other_body">Passwords and passkeys from Google Password Manager or another app that supports FIDO credential exchange. Needs Google Play services.</string>
+    <string name="settings_import_other_body">Passwords and passkeys from Google Password Manager or another app that supports FIDO credential exchange.</string>
     <string name="settings_export_body">JSON or CSV, not encrypted — only to move to another app.</string>
     <string name="settings_about">About</string>
     <string name="settings_version">Version %1$s</string>
@@ -400,4 +398,33 @@
     <string name="update_done_notice">Updated to Local Keys %1$s.</string>
     <string name="update_cancelled_notice">Update cancelled.</string>
     <string name="update_failed_notice">Update failed: %1$s</string>
+
+    <!-- gravação em provedores de nuvem -->
+    <string name="err_write_failed_cause">could not write the vault (%1$s)</string>
+    <string name="err_write_not_truncated">the storage app wrote the vault but kept old bytes at the end (%2$d bytes instead of %1$d). Save the vault to local storage and try again</string>
+    <string name="attach_save_failed_cause">Could not save the attachment: %1$s</string>
+
+    <!-- troca de cofre -->
+    <string name="switch_forget">Remove</string>
+    <string name="switch_forget_named">Remove %1$s from the list</string>
+    <string name="switch_forget_title">Remove from the list?</string>
+    <string name="switch_forget_message">%1$s leaves the list of recent vaults. The file is not deleted; you can open it again at any time.</string>
+
+    <!-- TOTP no autofill -->
+    <string name="settings_copy_totp">Copy TOTP after autofill</string>
+    <string name="settings_copy_totp_body">When a login with a TOTP is filled, its current code goes to the clipboard (marked sensitive), ready to paste.</string>
+    <string name="autofill_totp_label">TOTP code</string>
+    <string name="autofill_totp_copied">TOTP code copied</string>
+
+    <!-- serviço preferencial e Play services -->
+    <string name="settings_credentials_preferred_yes">Local Keys is the preferred service.</string>
+    <string name="settings_credentials_preferred_no">Local Keys is not the preferred service: apps offer the preferred one first.</string>
+    <string name="settings_import_other_note">Needs Google Play services.</string>
+
+    <!-- Cofre (troca de cofre nas configurações) -->
+    <string name="settings_vault">Vault</string>
+    <string name="settings_vault_current">Open now</string>
+    <string name="settings_vault_switch_hint">Tap to switch (locks the current vault)</string>
+    <string name="settings_vault_open_other">Open another vault…</string>
+    <string name="settings_vault_open_other_body">Pick a .tkeys file; the current vault is locked first.</string>
 </resources>

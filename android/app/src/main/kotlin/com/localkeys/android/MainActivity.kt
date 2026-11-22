@@ -11,6 +11,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.localkeys.android.data.PlayServices
 import com.localkeys.android.ui.HostCallbacks
 import com.localkeys.android.ui.UpdateViewModel
 import com.localkeys.android.ui.VaultViewModel
@@ -69,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         // Sem pedir a permissão de notificação na abertura: a única notificação do app é o aviso do autofill
         // ("destrave para salvar"), e ele cai para um toast quando as notificações estão desligadas
         // (LocalKeysAutofillService.notify). Quem quiser a notificação liga nas configurações do Android.
-        val importOther: (() -> Unit)? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        val importOther: (() -> Unit)? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && PlayServices.isInstalled(this)) {
             { viewModel.importFromOtherManager(this) }
         } else {
             null
@@ -92,6 +93,7 @@ class MainActivity : AppCompatActivity() {
                         onExport = ::startExport,
                         onRequestBiometric = { launchVaultBiometric(viewModel, it) },
                         onImportOther = importOther,
+                        onOpenVault = { openVaultLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
                     ),
                 )
             }

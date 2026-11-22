@@ -15,12 +15,14 @@ import java.io.IOException
 /**
  * Preferências locais (DataStore) — só configuração, nunca segredo em claro:
  *
- *  - `vault_uri`: URI de documento (SAF) do último cofre aberto/criado. O
- *    arquivo em si fica no armazenamento do usuário; aqui só a referência.
- *  - `wrapped_key_hex`: a chave derivada do vault (32 bytes) cifrada com a
- *    chave AES/GCM autenticada por biometria do Android Keystore (formato
- *    `iv || ct`, em hex). Sem a biometria do dono não é decifrável.
- *  - `biometric_enabled`: opt-in de desbloqueio rápido por biometria.
+ *  - `vault_uri`: URI de documento (SAF) do cofre atual. O arquivo em si fica no armazenamento do usuário; aqui
+ *    só a referência.
+ *  - `recent_vaults`: os cofres abertos recentemente (URI + nome), para trocar entre eles ([RecentVaults]).
+ *  - `biometric_keys`: por cofre, a chave derivada dele (32 bytes) cifrada com a chave AES/GCM do Android
+ *    Keystore que só a biometria libera (`iv || ct`, em hex; [BiometricKeys]). Sem a biometria do dono não é
+ *    decifrável, e a de um cofre nunca é usada em outro. (As chaves `wrapped_key_hex`/`biometric_enabled` das
+ *    versões antigas são migradas por [migrateLegacy].)
+ *  - `copy_totp_after_autofill`: copiar o TOTP depois de preencher um login (padrão: ligado).
  *  - `theme_mode`: tema do app ("system", "light" ou "dark"). O idioma não mora aqui: é o idioma por app do
  *    Android (AppCompatDelegate), que o próprio sistema guarda.
  *  - `update_*`: o atualizador (desligado por padrão), ver [UpdatePrefs]. Nada dele toca o cofre.
@@ -32,15 +34,6 @@ class SettingsStore(private val context: Context) {
     val vaultUri: Flow<String?> = context.dataStore.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { it[Keys.VAULT_URI] }
-
-    /** Chave do vault (32 bytes) cifrada + IV, em hex — ou null se não ativada. */
-    val wrappedKeyHex: Flow<String?> = context.dataStore.data
-        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
-        .map { it[Keys.WRAPPED_KEY_HEX] }
-
-    val biometricEnabled: Flow<Boolean> = context.dataStore.data
-        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
-        .map { it[Keys.BIOMETRIC_ENABLED] ?: false }
 
     /** Tema escolhido nas configurações: "system", "light" ou "dark". */
     val themeMode: Flow<String> = context.dataStore.data
@@ -57,14 +50,80 @@ class SettingsStore(private val context: Context) {
         }
     }
 
-    suspend fun setWrappedKeyHex(hex: String?) {
-        context.dataStore.edit { prefs ->
-            if (hex == null) prefs.remove(Keys.WRAPPED_KEY_HEX) else prefs[Keys.WRAPPED_KEY_HEX] = hex
+    /** Cofres abertos recentemente (o atual incluído), do mais novo para o mais velho. */
+    val recentVaults: Flow<List<RecentVault>> = context.dataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { RecentVaults.decode(it[Keys.RECENT_VAULTS]) }
+
+    /** Põe o cofre no topo da lista de recentes (com o nome que o provedor mostra). */
+    suspend fun touchRecentVault(uri: String, name: String?) {
+        context.dataStore.edit { p ->
+            p[Keys.RECENT_VAULTS] = RecentVaults.encode(RecentVaults.touch(RecentVaults.decode(p[Keys.RECENT_VAULTS]), uri, name))
         }
     }
 
-    suspend fun setBiometricEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs -> prefs[Keys.BIOMETRIC_ENABLED] = enabled }
+    /**
+     * Esquece um cofre da lista (e a chave biométrica dele). O arquivo fica onde está. Devolve quantas chaves
+     * biométricas sobraram (zero = a chave do Keystore pode ir embora).
+     */
+    suspend fun forgetRecentVault(uri: String): Int {
+        var left = 0
+        context.dataStore.edit { p ->
+            p[Keys.RECENT_VAULTS] = RecentVaults.encode(RecentVaults.remove(RecentVaults.decode(p[Keys.RECENT_VAULTS]), uri))
+            val keys = BiometricKeys.decode(p[Keys.BIOMETRIC_KEYS]) - uri
+            p[Keys.BIOMETRIC_KEYS] = BiometricKeys.encode(keys)
+            left = keys.size
+        }
+        return left
+    }
+
+    /** Chaves de cofre cifradas pela biometria, uma por cofre (URI → hex). Ver [BiometricKeys]. */
+    val biometricKeys: Flow<Map<String, String>> = context.dataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { BiometricKeys.decode(it[Keys.BIOMETRIC_KEYS]) }
+
+    /** Guarda (hex) ou apaga (null) a chave biométrica de um cofre. Devolve quantas chaves sobraram. */
+    suspend fun setBiometricKey(uri: String, hex: String?): Int {
+        var left = 0
+        context.dataStore.edit { p ->
+            val map = BiometricKeys.decode(p[Keys.BIOMETRIC_KEYS])
+            val next = if (hex == null) map - uri else map + (uri to hex)
+            p[Keys.BIOMETRIC_KEYS] = BiometricKeys.encode(next)
+            left = next.size
+        }
+        return left
+    }
+
+    /** Apaga todas as chaves biométricas (a chave do Keystore foi invalidada: nenhuma serve mais). */
+    suspend fun clearBiometricKeys() {
+        context.dataStore.edit { p -> p.remove(Keys.BIOMETRIC_KEYS) }
+    }
+
+    /**
+     * Uma vez: a chave biométrica única das versões antigas vira a do cofre que estava aberto, e o cofre atual
+     * entra na lista de recentes. As chaves velhas somem das preferências.
+     */
+    suspend fun migrateLegacy() {
+        context.dataStore.edit { p ->
+            val legacyHex = p[Keys.WRAPPED_KEY_HEX]
+            val legacyOn = p[Keys.BIOMETRIC_ENABLED] ?: false
+            val uri = p[Keys.VAULT_URI]
+            if (legacyHex != null || p.contains(Keys.BIOMETRIC_ENABLED)) {
+                val migrated = BiometricKeys.migrateLegacy(BiometricKeys.decode(p[Keys.BIOMETRIC_KEYS]), legacyHex, legacyOn, uri)
+                p[Keys.BIOMETRIC_KEYS] = BiometricKeys.encode(migrated)
+                p.remove(Keys.WRAPPED_KEY_HEX)
+                p.remove(Keys.BIOMETRIC_ENABLED)
+            }
+        }
+    }
+
+    /** Copiar o TOTP para a área de transferência depois de preencher um login que tem TOTP (padrão: ligado). */
+    val copyTotpAfterAutofill: Flow<Boolean> = context.dataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { it[Keys.COPY_TOTP] ?: true }
+
+    suspend fun setCopyTotpAfterAutofill(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.COPY_TOTP] = enabled }
     }
 
     val updatePrefs: Flow<UpdatePrefs> = context.dataStore.data
@@ -119,6 +178,9 @@ class SettingsStore(private val context: Context) {
         val WRAPPED_KEY_HEX = stringPreferencesKey("wrapped_key_hex")
         val BIOMETRIC_ENABLED = booleanPreferencesKey("biometric_enabled")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val RECENT_VAULTS = stringPreferencesKey("recent_vaults")
+        val BIOMETRIC_KEYS = stringPreferencesKey("biometric_keys")
+        val COPY_TOTP = booleanPreferencesKey("copy_totp_after_autofill")
         val UPDATE_AUTO = booleanPreferencesKey("update_auto")
         val UPDATE_LAST_CHECK = longPreferencesKey("update_last_check")
         val UPDATE_LAST_STATUS = stringPreferencesKey("update_last_status")

@@ -14,6 +14,11 @@
     <!-- Entregar o APK baixado ao instalador do sistema (o usuário ainda libera "instalar apps desconhecidos"). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Ver se o Google Play services existe: só a importação de outro gerenciador depende dele (PlayServices). -->
+    <queries>
+        <package android:name="com.google.android.gms" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -50,6 +55,15 @@
                 android:name="android.autofill"
                 android:resource="@xml/autofill_service_config" />
         </service>
+
+        <!-- Escolher no autofill um login com TOTP: monta o código na hora (e o copia, se ligado). Invisível;
+             só o PendingIntent do próprio serviço a abre. -->
+        <activity
+            android:name=".autofill.AutofillTotpActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- Provedor do Credential Manager (Android 14+): senhas e passkeys. Ativado em
              Configurações > Senhas, passkeys e contas. -->

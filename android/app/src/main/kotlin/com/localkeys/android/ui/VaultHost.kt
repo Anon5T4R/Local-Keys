@@ -47,6 +47,8 @@ data class HostCallbacks(
     val onRequestBiometric: (BiometricRequest) -> Unit,
     /** null = aparelho sem Credential Exchange (Android < 14). */
     val onImportOther: (() -> Unit)?,
+    /** Seletor do sistema para abrir outro cofre (troca de cofre nas configurações). */
+    val onOpenVault: () -> Unit,
 )
 
 /**
@@ -210,6 +212,13 @@ fun VaultHost(
             Route.Settings -> SettingsScreen(
                 biometricOn = state.biometricAvailable,
                 vaultName = state.vaultName,
+                vaultUri = state.vaultUri,
+                recentVaults = state.recentVaults,
+                vaultActions = VaultSwitchActions(
+                    onSwitch = viewModel::switchVault,
+                    onOpenOther = callbacks.onOpenVault,
+                    onForget = viewModel::forgetVault,
+                ),
                 themeMode = state.themeMode,
                 onThemeMode = viewModel::setThemeMode,
                 busy = state.busy,
@@ -220,6 +229,8 @@ fun VaultHost(
                 onImportFile = callbacks.onPickImport,
                 onImportOther = callbacks.onImportOther,
                 onExport = { exportOpen = true },
+                copyTotpAfterAutofill = state.copyTotpAfterAutofill,
+                onCopyTotpAfterAutofill = viewModel::setCopyTotpAfterAutofill,
                 updateState = updateState,
                 updateActions = updateActions,
             )

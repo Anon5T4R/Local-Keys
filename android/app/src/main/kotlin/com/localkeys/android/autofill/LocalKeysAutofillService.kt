@@ -6,26 +6,32 @@ import android.content.Intent
 import android.os.Build
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
-import android.service.autofill.Dataset
 import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
 import android.service.autofill.SaveCallback
+import android.service.autofill.SaveInfo
 import android.service.autofill.SaveRequest
 import android.view.autofill.AutofillId
-import android.view.autofill.AutofillValue
+import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.localkeys.android.MainActivity
 import com.localkeys.android.R
 import com.localkeys.android.data.autofill.AutofillMatcher
+import com.localkeys.android.data.autofill.FieldClassifier
+import com.localkeys.android.data.autofill.FieldKind
+import com.localkeys.android.data.autofill.FieldSignals
+import com.localkeys.android.data.autofill.FillPlan
+import com.localkeys.android.data.vault.AutofillPrefs
 import com.localkeys.android.data.vault.AutofillSaveBridge
-import com.localkeys.android.data.vault.Login
 import com.localkeys.android.data.vault.VaultAutofillCache
 
 /**
- * Autofill nativo do Android (API do SO, zero Play Services) para login/senha.
+ * Autofill nativo do Android (API do SO, zero Play Services) para login, senha e o código TOTP (campo de
+ * código de uso único: o código atual do login casado; ver [FieldClassifier] e [FillPlan]). Escolher um login
+ * com TOTP passa pela [AutofillTotpActivity], que monta o código na hora e, se ligado, o copia.
  * Roda no processo do app: enquanto o cofre está destrancado o [VaultAutofillCache]
  * tem o vault em memória e os campos são preenchidos direto; se estiver trancado,
  * o picker oferece "Desbloquear o LocalKeys" (abre o app).
@@ -44,36 +50,49 @@ class LocalKeysAutofillService : AutofillService() {
             ?: return callback.onSuccess(null)
 
         val auth = findAuthFields(structure)
+        val fields = AutofillDatasets.Fields(auth.usernameId, auth.passwordId, auth.otpId)
+
+        // Tela com senha: o Android oferece "Salvar no Local Keys?" depois do envio (casando ou não, trancado ou
+        // não; com o cofre trancado o onSaveRequest só avisa para destrancar, nada é gravado).
+        val saveInfo = saveInfoFor(auth)
 
         val vault = VaultAutofillCache.unlocked
         if (vault == null) {
-            callback.onSuccess(unlockResponse(auth.usernameId, auth.passwordId))
+            callback.onSuccess(unlockResponse(fields, saveInfo))
             return
         }
 
-        if (auth.usernameId == null && auth.passwordId == null) {
+        if (fields.isEmpty) {
             callback.onSuccess(null)
             return
         }
 
-        val webDomain = if (structure.windowNodeCount > 0) {
-            structure.getWindowNodeAt(0).rootViewNode.webDomain
-        } else {
-            null
-        }
+        val webDomain = webDomainOf(structure)
         val packageName = structure.activityComponent?.packageName
 
-        val logins = AutofillMatcher.loginsFor(vault, packageName, webDomain)
-        if (logins.isEmpty()) {
-            callback.onSuccess(null)
-            return
-        }
-
+        // Mesmas regras de casamento para senha e TOTP: só o site ou o app que pediu, nunca outros.
+        val items = AutofillMatcher.itemsFor(vault, packageName, webDomain)
         val response = FillResponse.Builder()
-        logins.forEach { login ->
-            buildDataset(login, auth.usernameId, auth.passwordId)?.let { response.addDataset(it) }
+        var count = 0
+        items.forEachIndexed { index, item ->
+            val plan = FillPlan.of(
+                hasLoginField = fields.hasLogin,
+                hasOtpField = fields.otpId != null,
+                itemHasTotp = AutofillDatasets.hasTotp(item),
+                copySetting = AutofillPrefs.copyTotp,
+            )
+            val dataset = when (plan) {
+                FillPlan.Skip -> null
+                FillPlan.Direct -> AutofillDatasets.filled(this, item, fields, code = null)
+                is FillPlan.Deferred -> AutofillDatasets.deferred(this, item, fields, plan.copyTotp, REQUEST_BASE + index)
+            }
+            if (dataset != null) {
+                response.addDataset(dataset)
+                count++
+            }
         }
-        callback.onSuccess(response.build())
+        saveInfo?.let { response.setSaveInfo(it) }
+        callback.onSuccess(if (count > 0 || saveInfo != null) response.build() else null)
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
@@ -88,12 +107,9 @@ class LocalKeysAutofillService : AutofillService() {
         }
         // Só grava quando há senha preenchida; sem usuário ainda dá pra salvar
         // (campo de usuário vazio é legítimo em alguns cadastros).
-        val uris = buildList {
-            if (structure.windowNodeCount > 0) {
-                structure.getWindowNodeAt(0).rootViewNode.webDomain?.let { add(it) }
-            }
-            structure.activityComponent?.packageName?.let { add(it) }
-        }
+        // Página no navegador: o site (não o pacote do navegador, que casaria com qualquer página). App: o pacote.
+        val uris = webDomainOf(structure)?.let { listOf("https://$it") }
+            ?: listOfNotNull(structure.activityComponent?.packageName)
 
         if (!AutofillSaveBridge.save(
                 AutofillSaveBridge.LoginSaveRequest(
@@ -148,6 +164,9 @@ class LocalKeysAutofillService : AutofillService() {
     companion object {
         private const val NOTIF_CHANNEL = "autofill_save"
         private const val NOTIF_ID = 1001
+
+        /** Base dos requestCodes dos PendingIntents das entradas com TOTP (um por entrada da lista). */
+        private const val REQUEST_BASE = 100
     }
 
     /**
@@ -155,8 +174,8 @@ class LocalKeysAutofillService : AutofillService() {
      * o atalho e, ao tocar, abre o app para o usuário destrancar. Depois de
      * voltar ao campo, um novo onFillRequest encontra o vault aberto.
      */
-    private fun unlockResponse(usernameId: AutofillId?, passwordId: AutofillId?): FillResponse? {
-        val ids = listOfNotNull(usernameId, passwordId).toTypedArray()
+    private fun unlockResponse(fields: AutofillDatasets.Fields, saveInfo: SaveInfo?): FillResponse? {
+        val ids = listOfNotNull(fields.usernameId, fields.passwordId, fields.otpId).toTypedArray()
         if (ids.isEmpty()) return null
         val unlockSender = PendingIntent.getActivity(
             this,
@@ -167,42 +186,69 @@ class LocalKeysAutofillService : AutofillService() {
         val view = RemoteViews(packageName, R.layout.autofill_unlock)
         return FillResponse.Builder()
             .setAuthentication(ids, unlockSender, view)
+            .apply { saveInfo?.let { setSaveInfo(it) } }
             .build()
     }
 
-    /** Campos de autenticação encontrados (ids para o fill + valores p/ o save). */
+    /** "Salvar no Local Keys?": obrigatório o campo de senha, opcional o de usuário. Sem senha na tela, nada. */
+    private fun saveInfoFor(auth: AuthFields): SaveInfo? {
+        val password = auth.passwordId ?: return null
+        val builder = SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_USERNAME or SaveInfo.SAVE_DATA_TYPE_PASSWORD, arrayOf(password))
+        auth.usernameId?.let { builder.setOptionalIds(arrayOf(it)) }
+        return builder.build()
+    }
+
+    /**
+     * O site da página (navegador): o primeiro `webDomain` da árvore. No Chrome ele fica no nó da página, não na
+     * raiz da janela. Null = app nativo (casa pelo pacote).
+     */
+    private fun webDomainOf(structure: AssistStructure): String? {
+        fun find(node: AssistStructure.ViewNode): String? {
+            node.webDomain?.takeIf { it.isNotBlank() }?.let { return it }
+            for (i in 0 until node.childCount) find(node.getChildAt(i))?.let { return it }
+            return null
+        }
+        for (w in 0 until structure.windowNodeCount) find(structure.getWindowNodeAt(w).rootViewNode)?.let { return it }
+        return null
+    }
+
+    /** Campos encontrados (ids para o fill + valores p/ o save). */
     private class AuthFields(
         val usernameId: AutofillId?,
         val passwordId: AutofillId?,
+        val otpId: AutofillId?,
         val usernameValue: String?,
         val passwordValue: String?,
     )
 
-    /** Procura os campos de usuário/senha na árvore da tela assistida. */
+    /** Procura os campos de usuário, senha e código de uso único na árvore da tela assistida. */
     private fun findAuthFields(structure: AssistStructure): AuthFields {
         var usernameId: AutofillId? = null
         var passwordId: AutofillId? = null
+        var otpId: AutofillId? = null
         var usernameValue: String? = null
         var passwordValue: String? = null
 
+        fun textOf(node: AssistStructure.ViewNode): String? {
+            val value = node.autofillValue
+            return if (value?.isText == true) value.textValue.toString() else null
+        }
+
         fun visit(node: AssistStructure.ViewNode) {
-            if (usernameId != null && passwordId != null) return
+            if (usernameId != null && passwordId != null && otpId != null) return
             val id = node.autofillId
             if (id != null) {
-                val hints = node.autofillHints.orEmpty().map { it.lowercase() }
-                if (hints.any { it == "password" || it == "currentpassword" || it == "newpassword" }) {
-                    if (passwordId == null) {
+                when (FieldClassifier.classify(signalsOf(node))) {
+                    FieldKind.PASSWORD -> if (passwordId == null) {
                         passwordId = id
-                        val value = node.autofillValue
-                        passwordValue = if (value?.isText == true) value.textValue.toString() else null
+                        passwordValue = textOf(node)
                     }
-                }
-                if (hints.any { it == "username" || it == "emailaddress" || it == "loginid" || it == "texturi" }) {
-                    if (usernameId == null) {
+                    FieldKind.USERNAME -> if (usernameId == null) {
                         usernameId = id
-                        val value = node.autofillValue
-                        usernameValue = if (value?.isText == true) value.textValue.toString() else null
+                        usernameValue = textOf(node)
                     }
+                    FieldKind.OTP -> if (otpId == null) otpId = id
+                    FieldKind.NONE -> Unit
                 }
             }
             for (i in 0 until node.childCount) visit(node.getChildAt(i))
@@ -211,25 +257,37 @@ class LocalKeysAutofillService : AutofillService() {
         for (w in 0 until structure.windowNodeCount) {
             visit(structure.getWindowNodeAt(w).rootViewNode)
         }
-        return AuthFields(usernameId, passwordId, usernameValue, passwordValue)
+        return AuthFields(usernameId, passwordId, otpId, usernameValue, passwordValue)
     }
 
-    private fun buildDataset(
-        login: Login,
-        usernameId: AutofillId?,
-        passwordId: AutofillId?,
-    ): Dataset? {
-        val builder = Dataset.Builder()
-        var any = false
-        if (passwordId != null) {
-            builder.setValue(passwordId, AutofillValue.forText(login.password))
-            any = true
+    /**
+     * As pistas de um campo para o [FieldClassifier]. As palavras (id, dica, atributos HTML) só contam em campo
+     * de texto editável: um rótulo "Digite o código" ao lado não é campo.
+     */
+    private fun signalsOf(node: AssistStructure.ViewNode): FieldSignals {
+        val html = node.htmlInfo
+        val attrs = html?.attributes.orEmpty().associate { (it.first ?: "").lowercase() to (it.second ?: "") }
+        val editable = node.autofillType == View.AUTOFILL_TYPE_TEXT &&
+            (html == null || html.tag.equals("input", ignoreCase = true)) &&
+            attrs["type"]?.lowercase() !in setOf("hidden", "submit", "button", "checkbox", "radio")
+        val texts = if (editable) {
+            listOfNotNull(
+                node.idEntry,
+                node.hint,
+                node.contentDescription?.toString(),
+                attrs["name"],
+                attrs["id"],
+                attrs["placeholder"],
+                attrs["aria-label"],
+                attrs["label"],
+            )
+        } else {
+            emptyList()
         }
-        if (usernameId != null) {
-            builder.setValue(usernameId, AutofillValue.forText(login.username))
-            any = true
-        }
-        if (!any) return null
-        return builder.build()
+        return FieldSignals(
+            autofillHints = node.autofillHints.orEmpty().toList(),
+            htmlAutocomplete = attrs["autocomplete"],
+            texts = texts,
+        )
     }
 }
