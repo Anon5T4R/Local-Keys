@@ -59,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -151,13 +152,19 @@ fun ItemEditorScreen(
         ) {
             if (state.isNew) KindSelector(state)
 
+            // O aviso de nome vazio só aparece depois que a pessoa mexeu no nome (trocar o tipo não conta).
+            var nameTouched by rememberSaveable { mutableStateOf(false) }
+            val nameMissing = nameTouched && state.name.isBlank()
             OutlinedTextField(
                 value = state.name,
-                onValueChange = { state.name = it },
+                onValueChange = {
+                    state.name = it
+                    nameTouched = true
+                },
                 label = { Text(stringResource(R.string.editor_name_label)) },
                 singleLine = true,
-                isError = state.name.isBlank() && state.isDirty,
-                supportingText = if (state.name.isBlank() && state.isDirty) {
+                isError = nameMissing,
+                supportingText = if (nameMissing) {
                     { Text(stringResource(R.string.editor_name_required)) }
                 } else {
                     null

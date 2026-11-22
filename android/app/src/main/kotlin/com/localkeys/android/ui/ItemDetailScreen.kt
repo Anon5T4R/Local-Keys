@@ -339,7 +339,7 @@ private fun AttachmentsSection(item: Item, actions: DetailActions, busy: Boolean
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    context.contentResolver.openOutputStream(uri)?.use {
+                    openTruncating(context.contentResolver, uri)?.use {
                         it.write(Base64.decode(att.dataB64, Base64.NO_WRAP))
                     } != null
                 }.getOrDefault(false)

@@ -16,6 +16,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -67,17 +69,19 @@ fun VaultHost(
     val holder = rememberSaveableStateHolder()
     var exportOpen by rememberSaveable { mutableStateOf(false) }
 
+    // Consumir o aviso muda a chave do LaunchedEffect e o cancelaria: a snackbar roda num escopo à parte.
+    val snackScope = rememberCoroutineScope()
     LaunchedEffect(state.notice) {
         val notice = state.notice ?: return@LaunchedEffect
         viewModel.consumeNotice()
-        snackbar.showSnackbar(notice)
+        snackScope.launch { snackbar.showSnackbar(notice) }
     }
     // Erro fora do diálogo de import: vira snackbar (no diálogo, aparece dentro dele).
     LaunchedEffect(state.error, state.pendingImport) {
         val error = state.error ?: return@LaunchedEffect
         if (state.pendingImport != null) return@LaunchedEffect
         viewModel.clearError()
-        snackbar.showSnackbar(error)
+        snackScope.launch { snackbar.showSnackbar(error) }
     }
 
     BackHandler(enabled = stack.isNotEmpty()) { stack = stack.dropLast(1) }

@@ -105,7 +105,7 @@
     <!-- Editor de item -->
     <string name="editor_new_title">New item</string>
     <string name="editor_edit_title">Edit item</string>
-    <string name="editor_name_label">Name</string>
+    <string name="editor_name_label">Title</string>
     <string name="editor_kind_label">Type</string>
     <string name="editor_save">Save</string>
     <string name="editor_cancel">Cancel</string>
@@ -257,7 +257,7 @@
     <string name="attach_limit_hint">Up to 10 MB per attachment. Attachments live inside the encrypted vault.</string>
 
     <!-- Editor -->
-    <string name="editor_name_required">Give the item a name.</string>
+    <string name="editor_name_required">Give the item a title.</string>
     <string name="editor_add_site">Add website</string>
     <string name="editor_remove_site">Remove website</string>
     <string name="editor_totp_hint">The key the website shows when you turn on two-step verification.</string>
@@ -316,6 +316,7 @@
     <string name="folder_none_title">No folders</string>
     <string name="folder_rename_named">Rename %1$s</string>
     <string name="folder_delete_named">Delete %1$s</string>
+    <string name="folder_empty">Empty</string>
     <plurals name="folder_count">
         <item quantity="one">%1$d item</item>
         <item quantity="other">%1$d items</item>

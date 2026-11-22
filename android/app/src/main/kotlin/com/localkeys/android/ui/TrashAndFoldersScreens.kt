@@ -3,7 +3,6 @@ package com.localkeys.android.ui
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,7 +29,14 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -187,7 +193,9 @@ fun FoldersScreen(
                 ListItem(
                     leadingContent = { Icon(Icons.Outlined.Folder, contentDescription = null) },
                     headlineContent = { Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(pluralStringResource(R.plurals.folder_count, n, n)) },
+                    supportingContent = {
+                        Text(if (n == 0) stringResource(R.string.folder_empty) else pluralStringResource(R.plurals.folder_count, n, n))
+                    },
                     trailingContent = {
                         androidx.compose.foundation.layout.Row {
                             IconButton(onClick = { renaming = folder }, enabled = !busy) {
@@ -242,7 +250,10 @@ fun FoldersScreen(
 
 @Composable
 private fun FolderNameDialog(title: String, initial: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var name by rememberSaveable { mutableStateOf(initial) }
+    // O nome atual já vem selecionado: digitar substitui, e o teclado abre sozinho.
+    var name by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -252,11 +263,12 @@ private fun FolderNameDialog(title: String, initial: String, onConfirm: (String)
                 onValueChange = { name = it },
                 label = { Text(stringResource(R.string.folder_name_label)) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().imePadding(),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(name.trim()) }, enabled = name.isNotBlank()) {
+            TextButton(onClick = { onConfirm(name.text.trim()) }, enabled = name.text.isNotBlank()) {
                 Text(stringResource(R.string.editor_save))
             }
         },

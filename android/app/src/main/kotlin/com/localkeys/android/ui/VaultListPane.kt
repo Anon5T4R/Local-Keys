@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.Settings
@@ -184,6 +185,10 @@ fun VaultListPane(
                     )
                 }
             } else {
+                // Lista estreita (painel do tablet em pé): o código TOTP sai da linha para o nome caber; ele
+                // continua no detalhe ao lado.
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                val rowTotp = maxWidth >= 400.dp
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
@@ -192,11 +197,13 @@ fun VaultListPane(
                         ItemRow(
                             item = item,
                             selected = item.id == selectedId,
+                            showTotp = rowTotp,
                             totpClock = totpClock,
                             onClick = { onOpen(item.id) },
                             onToggleFavorite = { onToggleFavorite(item.id) },
                         )
                     }
+                }
                 }
             }
         }
@@ -393,6 +400,7 @@ fun kindFilterLabel(kind: KindFilter): String = stringResource(
 private fun ItemRow(
     item: Item,
     selected: Boolean,
+    showTotp: Boolean,
     totpClock: State<Long>,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
@@ -425,12 +433,12 @@ private fun ItemRow(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
-                Badges(item, Modifier.padding(start = if (subtitle.isNotEmpty()) 8.dp else 0.dp))
+                Badges(item, showTotpBadge = hasTotp && !showTotp, modifier = Modifier.padding(start = if (subtitle.isNotEmpty()) 8.dp else 0.dp))
             }
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (hasTotp) RowTotp(item.login?.totp.orEmpty(), totpClock)
+                if (hasTotp && showTotp) RowTotp(item.login?.totp.orEmpty(), totpClock)
                 IconButton(onClick = onToggleFavorite) {
                     Icon(
                         imageVector = if (item.favorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
@@ -445,9 +453,12 @@ private fun ItemRow(
 
 /** Ícones pequenos de passkey e anexo (o TOTP já aparece como código vivo na linha). */
 @Composable
-private fun Badges(item: Item, modifier: Modifier = Modifier) {
+private fun Badges(item: Item, showTotpBadge: Boolean, modifier: Modifier = Modifier) {
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (showTotpBadge) {
+            Icon(Icons.Outlined.Schedule, stringResource(R.string.badge_totp), Modifier.size(16.dp), tint)
+        }
         if (item.livePasskeys.isNotEmpty()) {
             Icon(Icons.Outlined.Fingerprint, stringResource(R.string.badge_passkey), Modifier.size(16.dp), tint)
         }

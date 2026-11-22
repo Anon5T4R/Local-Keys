@@ -45,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -60,6 +61,20 @@ import javax.crypto.Cipher
  * em silêncio o trabalho do outro dispositivo. A UI oferece recarregar ou
  * sobrescrever.
  */
+/**
+ * Abre o documento para regravar do zero. O modo "w" do SAF NÃO trunca em todo provedor (o de armazenamento
+ * externo, por exemplo): um cofre que encolheu ficava com o rabo do anterior no fim do arquivo, e a próxima
+ * gravação acusava "arquivo modificado fora do app". "wt" trunca; quem não o aceita cai no "w".
+ */
+fun openTruncating(resolver: ContentResolver, uri: Uri): java.io.OutputStream? =
+    try {
+        resolver.openOutputStream(uri, "wt")
+    } catch (_: IllegalArgumentException) {
+        resolver.openOutputStream(uri, "w")
+    } catch (_: java.io.FileNotFoundException) {
+        resolver.openOutputStream(uri, "w")
+    }
+
 class ExternalChangeException : IOException("o arquivo foi modificado fora do app")
 
 /**
@@ -123,10 +138,13 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     private var encryptedImport: String? = null
     private var pendingKdbx: ByteArray? = null
     private var pendingExport: String? = null
+    private var importJob: kotlinx.coroutines.Job? = null
 
     init {
         viewModelScope.launch {
-            settings.vaultUri.collect { uri ->
+            // Só quando a URI muda: o DataStore reemite a cada preferência gravada (tema, biometria), e reler o
+            // arquivo nessas horas trocaria a base da detecção de mudança externa no meio do uso.
+            settings.vaultUri.distinctUntilChanged().collect { uri ->
                 _state.update { it.copy(vaultUri = uri) }
                 if (uri != null) loadBlob(uri)
             }
@@ -552,8 +570,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun importFromOtherManager(activity: Activity) {
         if (_state.value.vaultUri == null || _state.value.busy) return
-        viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null) }
+        // A troca passa pela tela do sistema e pode nunca voltar (Play services desatualizado, por exemplo):
+        // o app não fica "ocupado" enquanto espera, e tocar de novo recomeça o pedido.
+        importJob?.cancel()
+        importJob = viewModelScope.launch {
+            _state.update { it.copy(error = null) }
             try {
                 val request = ImportCredentialsRequest(
                     setOf(
@@ -565,6 +586,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     setOf(KnownExtensions.KNOWN_EXTENSION_SHARED),
                 )
                 val response = ProviderEventsManager.create(activity).importCredentials(activity, request)
+                _state.update { it.copy(busy = true) }
                 val parsed = withContext(Dispatchers.Default) { CxfImport.parse(response.response.responseJson) }
                 if (parsed.items.isEmpty()) {
                     _state.update { it.copy(busy = false, notice = str(R.string.msg_import_empty)) }
@@ -630,7 +652,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         force: Boolean = false,
     ) {
         suspend fun writeOnce(): Boolean = withContext(Dispatchers.IO) {
-            resolver.openOutputStream(document)?.use { it.write(file) } != null
+            openTruncating(resolver, document)?.use { it.write(file) } != null
         }
         val known = cachedBlob
         if (!force && known != null) {
@@ -818,7 +840,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val written = getApplication<Application>().contentResolver
-                    .openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) } != null
+                    .let { openTruncating(it, uri) }?.use { it.write(content.toByteArray(Charsets.UTF_8)) } != null
                 if (!written) throw IOException(str(R.string.err_write_failed))
                 _state.update { it.copy(notice = str(R.string.msg_export_saved)) }
             } catch (e: Exception) {
