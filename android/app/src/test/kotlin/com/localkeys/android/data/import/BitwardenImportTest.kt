@@ -40,6 +40,16 @@ class BitwardenImportTest {
         assertEquals("j@x", items[2].identity?.email)
     }
 
+    /** O export real do Bitwarden traz `null` nos campos vazios: nada de TOTP ou nota com a palavra "null". */
+    @Test
+    fun campos_null_viram_vazio() {
+        val json = """{"items":[{"type":1,"name":"Site","notes":null,"login":{"username":"u","password":"p","uris":null,"totp":null}}]}"""
+        val item = BitwardenImport.parse(json).single()
+        assertEquals("", item.notes)
+        assertEquals("", item.login?.totp)
+        assertEquals("u", item.login?.username)
+    }
+
     @Test
     fun aceita_json_de_array_raiz() {
         val json = """[{"type":2,"name":"Nota","notes":"texto"}]"""

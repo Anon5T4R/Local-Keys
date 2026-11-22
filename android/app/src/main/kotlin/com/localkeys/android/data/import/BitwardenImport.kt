@@ -46,10 +46,10 @@ object BitwardenImport {
         val item = Item(
             id = UUID.randomUUID().toString(),
             kind = kind,
-            name = b.optString("name", "").ifEmpty { "(sem nome)" },
+            name = b.text("name").ifEmpty { "(sem nome)" },
             favorite = b.optBoolean("favorite", false),
             folderId = null,
-            notes = b.optString("notes", ""),
+            notes = b.text("notes"),
             createdAt = now,
             updatedAt = now,
             deletedAt = null,
@@ -74,38 +74,44 @@ object BitwardenImport {
     private fun bwLogin(l: JSONObject): Login {
         val uris = l.optJSONArray("uris")?.let { arr ->
             (0 until arr.length()).mapNotNull { i ->
-                arr.optJSONObject(i)?.optString("uri", "")?.takeIf { it.isNotEmpty() }
+                arr.optJSONObject(i)?.text("uri")?.takeIf { it.isNotEmpty() }
             }
         } ?: emptyList()
         return Login(
-            username = l.optString("username", ""),
-            password = l.optString("password", ""),
+            username = l.text("username"),
+            password = l.text("password"),
             uris = uris.ifEmpty { listOf("") },
-            totp = Importers.extractSecret(l.optString("totp", "")),
+            totp = Importers.extractSecret(l.text("totp")),
         )
     }
 
     private fun bwCard(c: JSONObject): Card = Card(
-        cardholder = c.optString("cardholderName", ""),
-        brand = c.optString("brand", ""),
-        number = c.optString("number", ""),
-        exp = listOf(c.optString("expMonth", ""), c.optString("expYear", ""))
+        cardholder = c.text("cardholderName"),
+        brand = c.text("brand"),
+        number = c.text("number"),
+        exp = listOf(c.text("expMonth"), c.text("expYear"))
             .filter { it.isNotEmpty() }
             .joinToString("/"),
-        code = c.optString("code", ""),
+        code = c.text("code"),
     )
 
     private fun bwIdentity(i: JSONObject): Identity = Identity(
-        firstName = i.optString("firstName", ""),
-        lastName = i.optString("lastName", ""),
-        email = i.optString("email", ""),
-        phone = i.optString("phone", ""),
+        firstName = i.text("firstName"),
+        lastName = i.text("lastName"),
+        email = i.text("email"),
+        phone = i.text("phone"),
         address = listOf(
-            i.optString("address1", ""),
-            i.optString("city", ""),
-            i.optString("state", ""),
-            i.optString("postalCode", ""),
-            i.optString("country", ""),
+            i.text("address1"),
+            i.text("city"),
+            i.text("state"),
+            i.text("postalCode"),
+            i.text("country"),
         ).filter { it.isNotEmpty() }.joinToString(", "),
     )
 }
+
+/**
+ * Texto do campo, vazio se ele faltar ou vier `null`. O export do Bitwarden traz `"totp": null`, `"notes": null`…
+ * e o `optString` devolve a palavra "null" nesses casos (todo login ganhava um TOTP falso).
+ */
+private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key, "")

@@ -7,8 +7,10 @@ import org.junit.Test
 class PassphraseAndStrengthTest {
 
     @Test
-    fun wordlist_tem_7776_palavras_como_no_desktop() {
-        assertEquals(7776, PasswordGenerator.wordlist.size)
+    fun wordlist_da_eff_sem_as_palavras_com_hifen() {
+        // A EFF tem 7776; as 4 com hífen saem (com o separador "-" a frase ficaria ambígua).
+        assertEquals(7772, PasswordGenerator.wordlist.size)
+        assertTrue(PasswordGenerator.wordlist.none { '-' in it })
         assertEquals("abacus", PasswordGenerator.wordlist.first())
     }
 

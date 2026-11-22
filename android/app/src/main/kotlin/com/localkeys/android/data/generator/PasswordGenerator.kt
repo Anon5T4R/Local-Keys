@@ -73,7 +73,8 @@ object PasswordGenerator {
         val stream = PasswordGenerator::class.java.getResourceAsStream("/wordlists/eff_large_en.txt")
             ?: throw IllegalStateException("wordlist ausente")
         stream.bufferedReader().useLines { lines ->
-            lines.mapNotNull { line -> line.substringAfter('	', "").trim().takeIf { it.isNotEmpty() } }.toList()
+            // As 4 palavras com hífen (t-shirt, yo-yo…) saem: com o separador "-" a frase ficaria ambígua.
+            lines.mapNotNull { line -> line.substringAfter('	', "").trim().takeIf { it.isNotEmpty() && '-' !in it } }.toList()
         }
     }
 
