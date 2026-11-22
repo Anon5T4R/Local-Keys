@@ -55,13 +55,6 @@ import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 
 /**
- * O arquivo no disco mudou desde a última leitura/gravação conhecida (ex.: o
- * OneDrive/Google Drive sincronizou uma versão nova vinda do desktop). Lançada
- * por [VaultViewModel.writeAndVerify] ANTES de gravar, para nunca sobrescrever
- * em silêncio o trabalho do outro dispositivo. A UI oferece recarregar ou
- * sobrescrever.
- */
-/**
  * Abre o documento para regravar do zero. O modo "w" do SAF NÃO trunca em todo provedor (o de armazenamento
  * externo, por exemplo): um cofre que encolheu ficava com o rabo do anterior no fim do arquivo, e a próxima
  * gravação acusava "arquivo modificado fora do app". "wt" trunca; quem não o aceita cai no "w".
@@ -75,6 +68,13 @@ fun openTruncating(resolver: ContentResolver, uri: Uri): java.io.OutputStream? =
         resolver.openOutputStream(uri, "w")
     }
 
+/**
+ * O arquivo no disco mudou desde a última leitura/gravação conhecida (ex.: o
+ * OneDrive/Google Drive sincronizou uma versão nova vinda do desktop). Lançada
+ * por [VaultViewModel.writeAndVerify] ANTES de gravar, para nunca sobrescrever
+ * em silêncio o trabalho do outro dispositivo. A UI oferece recarregar ou
+ * sobrescrever.
+ */
 class ExternalChangeException : IOException("o arquivo foi modificado fora do app")
 
 /**
