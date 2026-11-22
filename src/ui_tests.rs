@@ -244,9 +244,11 @@ fn the_password_fields_have_names() {
     assert!(names.iter().all(|name| !name.is_empty()), "campo de senha sem nome: {names:?}");
 }
 
-/// Com o cofre aberto, a paleta inteira fica dentro da janela estreita (o caso do print de 2026-11-20).
+/// Com o cofre aberto, a paleta inteira fica dentro da janela estreita do teste (o caso do print de
+/// 2026-11-20), nos dois eixos.
 #[test]
 fn the_palette_fits_a_narrow_window_over_the_vault() {
+    const HEIGHT: f64 = 640.0;
     for width in [340.0, 500.0] {
         let mut harness = harness_sized(unlocked("palette-narrow", Prefs::new("en", ThemeMode::Dark)), width);
         harness.run_steps(2);
@@ -254,7 +256,10 @@ fn the_palette_fits_a_narrow_window_over_the_vault() {
         let rows: Vec<egui::Rect> = harness.get_all_by_role(Role::ListBoxOption).map(|node| node.rect()).collect();
         assert!(!rows.is_empty());
         for rect in &rows {
-            assert!(rect.min.x >= 0.0 && rect.max.x <= width, "linha da paleta fora da janela de {width}: {rect:?}");
+            assert!(
+                rect.min.x >= 0.0 && rect.max.x <= width && rect.min.y >= 0.0 && rect.max.y <= HEIGHT as f32,
+                "linha da paleta fora da janela de {width}: {rect:?}"
+            );
         }
     }
 }
@@ -295,7 +300,9 @@ fn rare_vault_actions_live_in_the_more_menu() {
     assert!(harness.state().change_open);
 }
 
-/// Todo diálogo do cofre cabe na largura mínima: nenhum controle passa da borda da janela.
+/// Todo diálogo do cofre cabe na janela do teste (340×640, menor que a inicial de 480×660): nenhum
+/// controle passa da borda em nenhum dos dois eixos. Hoje nenhum passa de 640 de altura, então nenhum
+/// precisa de rolagem.
 #[test]
 fn every_dialog_fits_the_narrow_window() {
     type Open = fn(&mut KeysApp);
@@ -309,16 +316,22 @@ fn every_dialog_fits_the_narrow_window() {
         ("new-folder", |app| app.folder_new_open = true),
         ("trash", |app| app.trash_open = true),
     ];
+    const WIDTH: f64 = 340.0;
+    const HEIGHT: f64 = 640.0;
     for (name, open) in dialogs {
         let mut app = unlocked("dialogs", Prefs::new("pt-br", ThemeMode::Dark));
         open(&mut app);
-        let mut harness = harness_sized(app, 340.0);
+        let mut harness = harness_sized(app, WIDTH as f32);
         harness.run_steps(3);
         shot(&mut harness, &format!("dialog-{name}-340"));
         for node in harness.root().children_recursive() {
             let Some(rect) = node.accesskit_node().bounding_box() else { continue };
             if rect.width() > 0.0 {
-                assert!(rect.x0 >= 0.0 && rect.x1 <= 340.0, "{name}: {:?} fora da janela: {rect:?}", node.accesskit_node().role());
+                assert!(
+                    rect.x0 >= 0.0 && rect.x1 <= WIDTH && rect.y0 >= 0.0 && rect.y1 <= HEIGHT,
+                    "{name}: {:?} fora da janela: {rect:?}",
+                    node.accesskit_node().role()
+                );
             }
         }
     }
