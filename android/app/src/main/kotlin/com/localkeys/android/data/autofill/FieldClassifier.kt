@@ -16,6 +16,8 @@ data class FieldSignals(
     val autofillHints: List<String> = emptyList(),
     val htmlAutocomplete: String? = null,
     val texts: List<String> = emptyList(),
+    /** Campo de texto com tipo senha (inputType de senha ou `<input type="password">`). */
+    val isPasswordInput: Boolean = false,
 )
 
 /**
@@ -53,19 +55,29 @@ object FieldClassifier {
     fun classify(signals: FieldSignals): FieldKind {
         val hints = signals.autofillHints.map { it.lowercase() }
         if (hints.any { it in PASSWORD_HINTS }) return FieldKind.PASSWORD
+        val autocomplete = signals.htmlAutocomplete?.lowercase()?.split(' ')?.filter { it.isNotBlank() }.orEmpty()
+        if ("current-password" in autocomplete || "new-password" in autocomplete) return FieldKind.PASSWORD
         if (hints.any(::isOtpHint)) return FieldKind.OTP
         if (hints.any { it in USERNAME_HINTS }) return FieldKind.USERNAME
+        if ("username" in autocomplete || "email" in autocomplete) return FieldKind.USERNAME
         signals.htmlAutocomplete?.let { ac ->
             val tokens = ac.lowercase().split(' ').filter { it.isNotBlank() }
             if ("one-time-code" in tokens) return FieldKind.OTP
             // Outro autocomplete declarado ("postal-code", "cc-csc"…) diz o que o campo é: não é código de login.
             if (tokens.any { it != "on" && it != "off" }) return FieldKind.NONE
         }
-        // Sem dica declarada: as palavras do campo.
+        // Sem dica declarada: as palavras do campo. Um campo de senha sem dica (a maioria dos apps não declara
+        // nenhuma) é senha, a não ser que as palavras digam que é o código.
         val words = signals.texts.flatMap(::tokens).toSet()
-        if (words.isEmpty() || words.any { it in NOT_OTP_WORDS }) return FieldKind.NONE
+        val excluded = words.any { it in NOT_OTP_WORDS }
         val joined = words.joinToString("")
-        return if (words.any { it in OTP_WORDS } || OTP_JOINED.any { it in joined }) FieldKind.OTP else FieldKind.NONE
+        val otpWords = words.isNotEmpty() && !excluded &&
+            (words.any { it in OTP_WORDS } || OTP_JOINED.any { it in joined })
+        return when {
+            otpWords -> FieldKind.OTP
+            signals.isPasswordInput -> FieldKind.PASSWORD
+            else -> FieldKind.NONE
+        }
     }
 
     /** "verificationCode" / "codigo_de_verificação" / "otp-input" → palavras minúsculas e sem acento. */

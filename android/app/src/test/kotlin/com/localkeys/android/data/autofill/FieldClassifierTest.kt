@@ -54,6 +54,23 @@ class FieldClassifierTest {
     }
 
     @Test
+    fun `password inputs without hints are passwords unless the words say code`() {
+        val pw = { texts: List<String> -> FieldClassifier.classify(FieldSignals(texts = texts, isPasswordInput = true)) }
+        assertEquals(FieldKind.PASSWORD, pw(emptyList()))
+        assertEquals(FieldKind.PASSWORD, pw(listOf("com.app:id/password", "Senha")))
+        assertEquals(FieldKind.OTP, pw(listOf("verification_code")))
+        // Cupom em campo de senha continua não sendo código de login: vale como senha.
+        assertEquals(FieldKind.PASSWORD, pw(listOf("promo code")))
+        // HTML: autocomplete de senha e de usuário.
+        assertEquals(FieldKind.PASSWORD, kind(autocomplete = "current-password"))
+        assertEquals(FieldKind.PASSWORD, kind(autocomplete = "new-password"))
+        assertEquals(FieldKind.USERNAME, kind(autocomplete = "username"))
+        assertEquals(FieldKind.USERNAME, kind(autocomplete = "email"))
+        // O código declarado vence o tipo senha.
+        assertEquals(FieldKind.OTP, FieldClassifier.classify(FieldSignals(htmlAutocomplete = "one-time-code", isPasswordInput = true)))
+    }
+
+    @Test
     fun `fields without hints or words are nothing`() {
         assertEquals(FieldKind.NONE, kind())
         assertEquals(FieldKind.NONE, words("first_name", "Nome"))

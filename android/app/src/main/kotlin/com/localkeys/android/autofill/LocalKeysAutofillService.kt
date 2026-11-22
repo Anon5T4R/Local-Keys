@@ -13,6 +13,7 @@ import android.service.autofill.SaveCallback
 import android.service.autofill.SaveInfo
 import android.service.autofill.SaveRequest
 import android.view.autofill.AutofillId
+import android.text.InputType
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
@@ -234,6 +235,9 @@ class LocalKeysAutofillService : AutofillService() {
             return if (value?.isText == true) value.textValue.toString() else null
         }
 
+        // Último campo de texto comum antes da senha: o usuário, quando o app não diz qual é (o caso comum).
+        var lastText: AssistStructure.ViewNode? = null
+
         fun visit(node: AssistStructure.ViewNode) {
             if (usernameId != null && passwordId != null && otpId != null) return
             val id = node.autofillId
@@ -242,13 +246,18 @@ class LocalKeysAutofillService : AutofillService() {
                     FieldKind.PASSWORD -> if (passwordId == null) {
                         passwordId = id
                         passwordValue = textOf(node)
+                        val guess = lastText
+                        if (usernameId == null && guess != null) {
+                            usernameId = guess.autofillId
+                            usernameValue = textOf(guess)
+                        }
                     }
                     FieldKind.USERNAME -> if (usernameId == null) {
                         usernameId = id
                         usernameValue = textOf(node)
                     }
                     FieldKind.OTP -> if (otpId == null) otpId = id
-                    FieldKind.NONE -> Unit
+                    FieldKind.NONE -> if (passwordId == null && isPlainTextInput(node)) lastText = node
                 }
             }
             for (i in 0 until node.childCount) visit(node.getChildAt(i))
@@ -286,8 +295,31 @@ class LocalKeysAutofillService : AutofillService() {
         }
         return FieldSignals(
             autofillHints = node.autofillHints.orEmpty().toList(),
-            htmlAutocomplete = attrs["autocomplete"],
+            htmlAutocomplete = attrs["autocomplete"] ?: (if (attrs["type"].equals("email", ignoreCase = true)) "email" else null),
             texts = texts,
+            isPasswordInput = editable && (isPasswordType(node.inputType) || attrs["type"].equals("password", ignoreCase = true)),
         )
+    }
+
+    /** Campo de texto editável e visível, de uma linha (candidato a usuário). */
+    private fun isPlainTextInput(node: AssistStructure.ViewNode): Boolean {
+        if (node.autofillType != View.AUTOFILL_TYPE_TEXT || node.visibility != View.VISIBLE) return false
+        val html = node.htmlInfo
+        if (html != null) {
+            if (!html.tag.equals("input", ignoreCase = true)) return false
+            val type = html.attributes.orEmpty().firstOrNull { it.first.equals("type", ignoreCase = true) }?.second?.lowercase()
+            return type == null || type in setOf("text", "email", "tel")
+        }
+        val cls = node.inputType and InputType.TYPE_MASK_CLASS
+        return cls == InputType.TYPE_CLASS_TEXT || cls == InputType.TYPE_CLASS_PHONE || (node.inputType == 0 && node.className?.contains("EditText") == true)
+    }
+
+    /** inputType de texto com variação de senha (o "numberPassword" de PIN não conta). */
+    private fun isPasswordType(inputType: Int): Boolean {
+        if (inputType and InputType.TYPE_MASK_CLASS != InputType.TYPE_CLASS_TEXT) return false
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        return variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
     }
 }
