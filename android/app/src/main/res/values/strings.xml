@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LocalKeys</string>
+
+    <!-- Desbloquear / abrir -->
+    <string name="unlock_subtitle">Gerenciador de senhas 100%% local e offline</string>
+    <string name="unlock_no_vault">Comece abrindo um cofre .tkeys existente ou criando um novo.</string>
+    <string name="unlock_open">Abrir cofre existente</string>
+    <string name="unlock_create">Criar cofre novo</string>
+    <string name="unlock_biometric">Desbloquear com biometria</string>
+    <string name="unlock_password">Senha-mestra</string>
+    <string name="unlock_show">Mostrar senha</string>
+    <string name="unlock_hide">Ocultar senha</string>
+    <string name="unlock_button">Desbloquear</string>
+    <string name="unlock_change_vault">Escolher outro cofre</string>
+
+    <!-- Criar cofre -->
+    <string name="create_title">Criar cofre</string>
+    <string name="create_subtitle">Escolha uma senha-mestra forte. Sem ela, o cofre não abre em lugar nenhum.</string>
+    <string name="create_password">Senha-mestra</string>
+    <string name="create_confirm">Confirme a senha</string>
+    <string name="create_password_short">Use pelo menos 8 caracteres.</string>
+    <string name="create_mismatch">As senhas não conferem.</string>
+    <string name="create_button">Criar cofre</string>
+    <string name="create_back">Voltar</string>
+
+    <!-- Cofre aberto -->
+    <string name="vault_save">Salvar</string>
+    <string name="vault_lock">Travar</string>
+    <string name="vault_import">Importar</string>
+    <string name="vault_export">Exportar</string>
+    <string name="vault_add">Adicionar</string>
+    <string name="vault_empty">Seu cofre está vazio. Toque em + para adicionar o primeiro item.</string>
+    <string name="search_placeholder">Buscar…</string>
+
+    <!-- Importar de outro gerenciador -->
+    <string name="import_title">Importar de outro gerenciador</string>
+    <string name="import_file">Arquivo: %1$s</string>
+    <string name="import_encrypted_hint">Este export está cifrado. Digite a senha usada para exportá-lo.</string>
+    <string name="import_kdbx_hint">Este é um cofre KeePass. Digite a senha-mestra usada para criá-lo.</string>
+    <string name="import_password_label">Senha do Bitwarden</string>
+    <string name="import_kdbx_password_label">Senha do KeePass</string>
+    <string name="import_confirm">Importar</string>
+    <string name="import_cancel">Cancelar</string>
+
+    <!-- Exportar -->
+    <string name="export_title">Exportar cofre</string>
+    <string name="export_warning">O arquivo sai SEM cifra, em texto claro. Use apenas para migrar de app — não para backup.</string>
+    <string name="export_json">JSON (LocalKeys)</string>
+    <string name="export_csv">CSV (planilha)</string>
+
+    <!-- Biometria -->
+    <string name="biometric_title">Desbloqueio biométrico</string>
+    <string name="biometric_hint">Ative para abrir o cofre com o dedo/rosto, sem digitar a senha.</string>
+    <string name="biometric_active">Ativo. A senha-mestra não precisa ser digitada no próximo acesso.</string>
+    <string name="biometric_enable">Ativar</string>
+    <string name="biometric_disable">Desativar</string>
+    <string name="biometric_prompt_title">Desbloquear o cofre</string>
+    <string name="biometric_prompt_subtitle">Confirme sua identidade para abrir o LocalKeys</string>
+    <string name="biometric_prompt_cancel">Cancelar</string>
+    <string name="biometric_unavailable">Biometria indisponível: %1$s</string>
+
+    <!-- Detalhe do item / cópia -->
+    <string name="dialog_copy">Copiar</string>
+    <string name="dialog_close">Fechar</string>
+    <string name="copy_copied">Copiado</string>
+    <string name="field_username">Usuário</string>
+    <string name="field_password">Senha</string>
+    <string name="field_uri">Site</string>
+    <string name="field_note">Nota</string>
+    <string name="field_cardholder">Titular</string>
+    <string name="field_brand">Bandeira</string>
+    <string name="field_number">Número</string>
+    <string name="field_exp">Validade</string>
+    <string name="field_code">Código</string>
+    <string name="field_first_name">Nome</string>
+    <string name="field_last_name">Sobrenome</string>
+    <string name="field_email">E-mail</string>
+    <string name="field_phone">Telefone</string>
+    <string name="field_address">Endereço</string>
+    <string name="field_notes">Notas</string>
+    <string name="field_totp">Chave TOTP</string>
+    <string name="field_folder">Pasta</string>
+
+    <!-- Campos personalizados -->
+    <string name="custom_fields">Campos personalizados</string>
+    <string name="custom_field_name">Nome</string>
+    <string name="custom_field_value">Valor</string>
+    <string name="custom_field_hidden">Oculto</string>
+    <string name="custom_field_add">Adicionar campo</string>
+    <string name="custom_field_remove">Remover campo</string>
+
+    <!-- Anexos -->
+    <string name="attach_title">Anexos</string>
+    <string name="attach_add">Adicionar anexo</string>
+    <string name="attach_remove">Remover anexo</string>
+    <string name="attach_save">Salvar</string>
+    <string name="attach_size_kb">%1$d KB</string>
+    <string name="attach_too_large">Anexo grande demais (máx. 1 MB)</string>
+    <string name="attach_read_failed">Não foi possível ler o anexo.</string>
+    <string name="attach_save_failed">Não foi possível salvar o anexo.</string>
+
+    <!-- Histórico de senhas -->
+    <string name="history_title">Histórico de senhas (%1$d)</string>
+
+    <!-- Pastas -->
+    <string name="folders_title">Pastas</string>
+    <string name="folder_manage">Gerenciar pastas</string>
+    <string name="folder_filter_all">Todos</string>
+    <string name="folder_sem">Sem pasta</string>
+    <string name="folder_none">Nenhuma pasta ainda. Crie a primeira acima.</string>
+    <string name="folder_name_label">Nome da pasta</string>
+    <string name="folder_add">Adicionar</string>
+    <string name="folder_rename">Renomear pasta</string>
+    <string name="folder_delete">Excluir pasta</string>
+    <string name="folder_delete_message">Excluir a pasta "%1$s"? Os itens dela não são excluídos — ficam sem pasta.</string>
+
+    <!-- Editor de item -->
+    <string name="editor_new_title">Novo item</string>
+    <string name="editor_edit_title">Editar item</string>
+    <string name="editor_name_label">Nome</string>
+    <string name="editor_kind_label">Tipo</string>
+    <string name="editor_save">Salvar</string>
+    <string name="editor_cancel">Cancelar</string>
+    <string name="editor_favorite">Favorito</string>
+    <string name="editor_generate">Gerar senha</string>
+    <string name="kind_login">Login</string>
+    <string name="kind_note">Nota</string>
+    <string name="kind_card">Cartão</string>
+    <string name="kind_identity">Identidade</string>
+
+    <!-- Detalhe / editar / excluir -->
+    <string name="item_edit">Editar</string>
+    <string name="item_delete">Excluir</string>
+    <string name="delete_title">Remover item</string>
+    <string name="delete_message">Remover "%1$s"? Esta ação não pode ser desfeita.</string>
+    <string name="item_favorite">Favoritar</string>
+    <string name="item_unfavorite">Desfavoritar</string>
+
+    <!-- Autofill -->
+    <string name="autofill_service_label">Preenchimento do LocalKeys</string>
+    <string name="autofill_unlock">Desbloquear o LocalKeys</string>
+    <string name="autofill_notify_channel">Autofill</string>
+    <string name="autofill_save_locked">Destrave o LocalKeys para salvar credenciais novas.</string>
+
+    <!-- Mensagens do ViewModel (notícias e erros de operação) -->
+    <string name="msg_password_empty">Digite a senha-mestra.</string>
+    <string name="msg_no_vault_loaded">Nenhum cofre carregado.</string>
+    <string name="msg_load_failed">Não foi possível ler o cofre: %1$s</string>
+    <string name="msg_create_failed">Não foi possível criar o cofre: %1$s</string>
+    <string name="msg_vault_saved">Cofre salvo.</string>
+    <string name="msg_op_failed">%1$s: %2$s</string>
+    <string name="op_save">Falha ao salvar</string>
+    <string name="op_save_item">Falha ao salvar o item</string>
+    <string name="op_delete_item">Falha ao remover o item</string>
+    <string name="op_favorite">Falha ao atualizar o favorito</string>
+    <string name="op_create_folder">Falha ao criar a pasta</string>
+    <string name="op_rename_folder">Falha ao renomear a pasta</string>
+    <string name="op_delete_folder">Falha ao excluir a pasta</string>
+    <string name="op_import">Falha ao importar</string>
+    <string name="msg_biometric_enabled">Desbloqueio biométrico ativado.</string>
+    <string name="msg_biometric_changed">Biometria alterada; desbloqueie com a senha.</string>
+    <string name="msg_biometric_failed">Falha na biometria: %1$s</string>
+    <string name="msg_import_password_empty">Digite a senha do export.</string>
+    <string name="msg_import_empty">Nenhum item para importar.</string>
+    <string name="msg_import_empty_in">Nenhum item para importar em %1$s.</string>
+    <string name="msg_imported">%1$d itens importados.</string>
+    <string name="msg_import_generic">Falha ao importar.</string>
+    <string name="import_default_kdbx">cofre KeePass</string>
+    <string name="import_default_bitwarden">export bitwarden</string>
+    <string name="msg_item_added">Item adicionado.</string>
+    <string name="msg_item_updated">Item atualizado.</string>
+    <string name="msg_item_deleted">Item removido.</string>
+    <string name="msg_folder_created">Pasta criada.</string>
+    <string name="msg_folder_renamed">Pasta renomeada.</string>
+    <string name="msg_folder_deleted">Pasta excluída.</string>
+    <string name="msg_export_prepare_failed">Falha ao preparar o export: %1$s</string>
+    <string name="msg_export_saved">Export salvo. Sem cifra — use só para migrar.</string>
+    <string name="msg_export_save_failed">Falha ao salvar o export: %1$s</string>
+    <string name="msg_reloaded">Cofre recarregado do disco.</string>
+    <string name="msg_reload_failed">Falha ao recarregar: %1$s</string>
+
+    <!-- Erros internos de I/O do documento -->
+    <string name="err_file_not_found">arquivo não encontrado</string>
+    <string name="err_no_file">cofre não está associado a um arquivo</string>
+    <string name="err_write_failed">não foi possível gravar o cofre</string>
+    <string name="err_write_retry_failed">a gravação saiu corrompida e a correção falhou</string>
+    <string name="err_write_unrecoverable">arquivo gravado não reabre; tente abrir outro cofre</string>
+
+    <!-- Erros do .tkeys (mapeados por tipo no ViewModel) -->
+    <string name="tkeys_bad_format">arquivo não é um vault .tkeys válido</string>
+    <string name="tkeys_unsupported_version">versão de formato .tkeys não suportada: %1$d</string>
+    <string name="tkeys_kdf">falha ao derivar a chave (KDF)</string>
+    <string name="tkeys_decrypt">senha incorreta ou arquivo corrompido/adulterado</string>
+    <string name="tkeys_corrupted">arquivo corrompido (estrutura inválida)</string>
+
+    <!-- Conflito de sincronização (arquivo mudou fora do app) -->
+    <string name="external_change_title">Arquivo modificado fora do app</string>
+    <string name="external_change_message">O cofre no disco mudou desde que foi aberto — provavelmente outro dispositivo sincronizou uma versão nova (OneDrive/Google Drive). Recarregar descarta suas alterações não salvas e adota a versão do disco; sobrescrever grava a sua versão por cima da outra.</string>
+    <string name="external_change_reload">Recarregar</string>
+    <string name="external_change_overwrite">Sobrescrever</string>
+
+    <!-- Detalhe do item: código TOTP -->
+    <string name="field_totp_code">Código TOTP</string>
+</resources>
