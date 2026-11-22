@@ -130,7 +130,12 @@ data class Item(
     val customFields: List<CustomField>?,
     val attachments: List<Attachment>?,
     val extra: Extra = Extra.NONE,
+    /** Passkeys deste login (o Local Keys como provedor de credenciais, ou importadas de outro gerenciador). */
+    val passkeys: List<Passkey>? = null,
 ) {
+    /** Passkeys vivas. */
+    val livePasskeys: List<Passkey> get() = passkeys.orEmpty()
+
     fun toJson(): JSONObject = extra.base().apply {
         put("id", id)
         put("kind", kind.wire)
@@ -151,6 +156,8 @@ data class Item(
         if (passwordHistory == null) remove("passwordHistory")
         if (customFields == null) remove("customFields")
         if (attachments == null) remove("attachments")
+        passkeys?.let { put("passkeys", JSONArray().apply { it.forEach { e -> put(e.toJson()) } }) }
+        if (passkeys == null) remove("passkeys")
         passwordHistory?.let { put("passwordHistory", JSONArray().apply { it.forEach { e -> put(e.toJson()) } }) }
         customFields?.let { put("customFields", JSONArray().apply { it.forEach { e -> put(e.toJson()) } }) }
         attachments?.let { put("attachments", JSONArray().apply { it.forEach { e -> put(e.toJson()) } }) }
@@ -179,7 +186,10 @@ data class Item(
             attachments = json.optJSONArray("attachments")?.let { arr ->
                 (0 until arr.length()).map { Attachment.parse(arr.getJSONObject(it)) }
             },
-            extra = Extra.unknownKeys(json, setOf("id", "kind", "name", "favorite", "folderId", "notes", "createdAt", "updatedAt", "deletedAt", "login", "card", "identity", "passwordHistory", "customFields", "attachments")),
+            extra = Extra.unknownKeys(json, setOf("id", "kind", "name", "favorite", "folderId", "notes", "createdAt", "updatedAt", "deletedAt", "login", "card", "identity", "passwordHistory", "customFields", "attachments", "passkeys")),
+            passkeys = json.optJSONArray("passkeys")?.let { arr ->
+                (0 until arr.length()).map { Passkey.parse(arr.getJSONObject(it)) }
+            },
         )
     }
 }
@@ -344,6 +354,59 @@ data class Attachment(
             dataB64 = json.optString("dataB64", ""),
             deletedAt = if (json.isNull("deletedAt")) null else json.optLong("deletedAt"),
             extra = Extra.unknownKeys(json, setOf("id", "name", "size", "mime", "dataB64", "deletedAt")),
+        )
+    }
+}
+
+/**
+ * Uma passkey (credencial WebAuthn), nos campos do formato de troca da FIDO (CXF): o que entra de uma
+ * importação sai igual numa exportação. Binários em base64url sem preenchimento.
+ *
+ * A chave privada fica dentro do cofre cifrado (como no Bitwarden e no KeePassDX), em PKCS#8.
+ */
+data class Passkey(
+    /** Id da credencial que o site guarda (base64url). */
+    val credentialId: String,
+    /** Domínio do site dono da passkey ("example.com"). */
+    val rpId: String,
+    val userName: String,
+    val userDisplayName: String,
+    /** Id do usuário no site (base64url). */
+    val userHandle: String,
+    /** Chave privada P-256 em PKCS#8 (base64url). */
+    val key: String,
+    /** Algoritmo COSE: -7 é ES256, o único que o Local Keys cria. */
+    val alg: Int = ES256,
+    val createdAt: Long,
+    val extra: Extra = Extra.NONE,
+) {
+    fun toJson(): JSONObject = extra.base().apply {
+        put("credentialId", credentialId)
+        put("rpId", rpId)
+        put("userName", userName)
+        put("userDisplayName", userDisplayName)
+        put("userHandle", userHandle)
+        put("key", key)
+        put("alg", alg)
+        put("createdAt", createdAt)
+    }
+
+    companion object {
+        const val ES256 = -7
+
+        fun parse(json: JSONObject): Passkey = Passkey(
+            credentialId = json.optString("credentialId", ""),
+            rpId = json.optString("rpId", ""),
+            userName = json.optString("userName", ""),
+            userDisplayName = json.optString("userDisplayName", ""),
+            userHandle = json.optString("userHandle", ""),
+            key = json.optString("key", ""),
+            alg = json.optInt("alg", ES256),
+            createdAt = json.optLong("createdAt", 0),
+            extra = Extra.unknownKeys(
+                json,
+                setOf("credentialId", "rpId", "userName", "userDisplayName", "userHandle", "key", "alg", "createdAt"),
+            ),
         )
     }
 }
