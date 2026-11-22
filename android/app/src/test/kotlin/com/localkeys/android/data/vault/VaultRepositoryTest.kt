@@ -442,4 +442,66 @@ class VaultRepositoryTest {
             repository.reload(TkeysCryptoTest.fixtureBytes())
         }
     }
+
+    // ── Lixeira de itens e de anexos (semântica do desktop) ──────────────
+
+    @Test
+    fun lixeira_marca_so_o_deletedAt_e_restaurar_zera() {
+        repository.unlock(TkeysCryptoTest.fixtureBytes(), TkeysCryptoTest.FIXTURE_PASSWORD)
+        val gmail = repository.vault.items.first { it.name == "gmail" }
+        val trashed = repository.trashItem(gmail.id, now = 1_700_000_000_000).items.first { it.id == gmail.id }
+        assertEquals(1_700_000_000_000, trashed.deletedAt)
+        assertTrue(trashed.inTrash)
+        // Só o deletedAt muda (o trashItem do oficial não toca em updatedAt nem no resto).
+        assertEquals(gmail.copy(deletedAt = 1_700_000_000_000), trashed)
+        assertEquals(listOf(gmail.id), repository.trashedItems().map { it.id })
+
+        // Continua no arquivo, na lixeira.
+        val reopened = Vault.parse(String(crypto.openVault(TkeysCryptoTest.FIXTURE_PASSWORD, repository.save()).plaintext))
+        assertTrue(reopened.items.first { it.id == gmail.id }.inTrash)
+
+        val restored = repository.restoreItem(gmail.id).items.first { it.id == gmail.id }
+        assertEquals(gmail, restored)
+        assertTrue(repository.trashedItems().isEmpty())
+    }
+
+    @Test
+    fun excluir_de_vez_tira_o_item_da_lixeira_e_do_arquivo() {
+        repository.unlock(TkeysCryptoTest.fixtureBytes(), TkeysCryptoTest.FIXTURE_PASSWORD)
+        val gmail = repository.vault.items.first { it.name == "gmail" }
+        repository.trashItem(gmail.id)
+        repository.deleteItem(gmail.id)
+        assertTrue(repository.vault.items.none { it.id == gmail.id })
+        assertTrue(repository.trashedItems().isEmpty())
+    }
+
+    @Test
+    fun anexo_vai_para_a_lixeira_volta_e_sai_de_vez() {
+        repository.unlock(TkeysCryptoTest.fixtureBytes(), TkeysCryptoTest.FIXTURE_PASSWORD)
+        val a1 = Attachment("a1", "rg.pdf", 3, "application/pdf", "AAAA")
+        val a2 = Attachment("a2", "cpf.png", 3, "image/png", "BBBB")
+        repository.addItem(login("doc", "Documentos").copy(attachments = listOf(a1, a2)))
+
+        var item = repository.trashAttachment("doc", "a1", now = 42).items.first { it.id == "doc" }
+        assertEquals(listOf("a2"), item.liveAttachments.map { it.id })
+        assertEquals(listOf("a1"), item.trashedAttachments.map { it.id })
+        assertEquals(42L, item.trashedAttachments.single().deletedAt)
+
+        item = repository.restoreAttachment("doc", "a1").items.first { it.id == "doc" }
+        assertEquals(listOf(a1, a2), item.attachments)
+
+        repository.trashAttachment("doc", "a2")
+        item = repository.deleteAttachmentForever("doc", "a2").items.first { it.id == "doc" }
+        assertEquals(listOf(a1), item.attachments)
+
+        // O resto do cofre não muda.
+        assertEquals(3, repository.vault.items.size)
+    }
+
+    @Test
+    fun lixeira_lança_se_o_vault_estiver_trancado() {
+        assertThrows(IllegalStateException::class.java) { repository.trashItem("x") }
+        assertThrows(IllegalStateException::class.java) { repository.restoreItem("x") }
+        assertThrows(IllegalStateException::class.java) { repository.trashAttachment("x", "y") }
+    }
 }

@@ -136,6 +136,18 @@ data class Item(
     /** Passkeys vivas. */
     val livePasskeys: List<Passkey> get() = passkeys.orEmpty()
 
+    /**
+     * Na lixeira? Mesma regra do desktop e do oficial: `deletedAt` com um número diferente de 0 (o 0 é falso no
+     * JS, `if (i.deletedAt)`). Um item na lixeira não aparece na lista, no autofill nem no export.
+     */
+    val inTrash: Boolean get() = (deletedAt ?: 0L) != 0L
+
+    /** Anexos visíveis (fora da lixeira de anexos). */
+    val liveAttachments: List<Attachment> get() = attachments.orEmpty().filter { it.live }
+
+    /** Anexos na lixeira de anexos do item. */
+    val trashedAttachments: List<Attachment> get() = attachments.orEmpty().filterNot { it.live }
+
     fun toJson(): JSONObject = extra.base().apply {
         put("id", id)
         put("kind", kind.wire)
@@ -321,8 +333,11 @@ data class CustomField(
     }
 }
 
-/** Limite por anexo — o blob inteiro é recifrado a cada save, então nada de arquivos grandes. */
-const val MAX_ATTACHMENT_BYTES = 1024 * 1024 // 1 MiB
+/**
+ * Limite por anexo, o mesmo do desktop (`jobs.rs`): o blob inteiro é recifrado a cada gravação, então nada de
+ * arquivos grandes.
+ */
+const val MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MiB
 
 data class Attachment(
     val id: String,

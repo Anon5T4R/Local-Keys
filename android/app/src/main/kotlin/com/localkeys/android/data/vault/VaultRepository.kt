@@ -153,10 +153,59 @@ class VaultRepository(private val crypto: TkeysCrypto) {
         return result
     }
 
-    /** Remove um item pelo id. */
-    fun deleteItem(id: String): Vault {
+    /**
+     * Exclui DE VEZ (fora da lixeira): tira o item do array, sem deixar rastro — o `deleteForever` do desktop.
+     * A exclusão normal da interface é [trashItem].
+     */
+    fun deleteItem(id: String): Vault = mutate { v -> v.copy(items = v.items.filterNot { it.id == id }) }
+
+    /**
+     * Manda o item para a lixeira: marca `deletedAt` e SÓ ele, como o `trashItem` do oficial e o `delete_login`
+     * do desktop (não toca em `updatedAt`). O item continua no arquivo e volta com [restoreItem].
+     */
+    fun trashItem(id: String, now: Long = System.currentTimeMillis()): Vault =
+        mutate { v -> v.copy(items = v.items.map { if (it.id == id) it.copy(deletedAt = now) else it }) }
+
+    /** Restaura da lixeira: zera `deletedAt` e não mexe em mais nada (o `restoreItem` do oficial). */
+    fun restoreItem(id: String): Vault =
+        mutate { v -> v.copy(items = v.items.map { if (it.id == id) it.copy(deletedAt = null) else it }) }
+
+    /** Itens na lixeira, na ordem do arquivo (como o filtro "trash" do oficial). */
+    fun trashedItems(): List<Item> = vault.items.filter { it.inTrash }
+
+    // ── Anexos (lixeira de anexos do desktop) ────────────────────────────
+
+    /** Manda um anexo para a lixeira do item (marca `deletedAt`). */
+    fun trashAttachment(itemId: String, attachmentId: String, now: Long = System.currentTimeMillis()): Vault =
+        mapAttachment(itemId, attachmentId) { it.copy(deletedAt = now) }
+
+    /** Restaura um anexo da lixeira (limpa `deletedAt`). */
+    fun restoreAttachment(itemId: String, attachmentId: String): Vault =
+        mapAttachment(itemId, attachmentId) { it.copy(deletedAt = null) }
+
+    /** Exclui um anexo de vez (remove do array do item). */
+    fun deleteAttachmentForever(itemId: String, attachmentId: String): Vault = mutate { v ->
+        v.copy(
+            items = v.items.map { item ->
+                if (item.id != itemId) return@map item
+                item.copy(attachments = item.attachments?.filterNot { it.id == attachmentId })
+            },
+        )
+    }
+
+    private fun mapAttachment(itemId: String, attachmentId: String, transform: (Attachment) -> Attachment): Vault =
+        mutate { v ->
+            v.copy(
+                items = v.items.map { item ->
+                    if (item.id != itemId) return@map item
+                    item.copy(attachments = item.attachments?.map { if (it.id == attachmentId) transform(it) else it })
+                },
+            )
+        }
+
+    private fun mutate(transform: (Vault) -> Vault): Vault {
         val v = current ?: throw IllegalStateException("vault não está destrancado")
-        val updated = v.copy(items = v.items.filterNot { it.id == id })
+        val updated = transform(v)
         current = updated
         return updated
     }
