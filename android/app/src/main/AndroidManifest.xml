@@ -4,7 +4,8 @@
     <!-- Desbloqueio rápido: o BiometricPrompt exige esta permissão (API 28+). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
-    <!-- Notificação de feedback do autofill (credencial salva / cofre trancado). -->
+    <!-- Notificação de feedback do autofill (cofre trancado). O app não a pede ao abrir: sem ela, o aviso sai
+         como toast (LocalKeysAutofillService.notify). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -12,6 +13,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.LocalKeys.Splash">
 
@@ -20,6 +22,7 @@
             android:exported="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.LocalKeys.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -66,6 +69,16 @@
             android:enabled="@bool/credential_provider_enabled"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.LocalKeys.Splash" />
+            android:theme="@style/Theme.LocalKeys.Base" />
+
+        <!-- Idioma por app antes do Android 13: o AppCompat guarda a escolha sozinho (autoStoreLocales). -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

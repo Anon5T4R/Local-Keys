@@ -22,9 +22,9 @@ android {
     defaultConfig {
         applicationId = "com.localkeys.android"
         minSdk = 28
-        targetSdk = 34
-        versionCode = 8
-        versionName = "0.3.4"
+        targetSdk = 35
+        versionCode = 9
+        versionName = "0.4.0"
 
         vectorDrawables { useSupportLibrary = true }
         // Smoke test no emulador (CI): abrir o app de verdade e ver a UI subir.
@@ -97,6 +97,9 @@ dependencies {
     // ── AndroidX core ────────────────────────────────────────────────────
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
+    // Idioma por app (AppCompatDelegate.setApplicationLocales): no Android 13+ usa o LocaleManager do sistema;
+    // antes dele, o AppCompat guarda a escolha e aplica nas AppCompatActivity.
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")

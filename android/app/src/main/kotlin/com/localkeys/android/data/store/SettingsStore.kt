@@ -20,6 +20,8 @@ import java.io.IOException
  *    chave AES/GCM autenticada por biometria do Android Keystore (formato
  *    `iv || ct`, em hex). Sem a biometria do dono não é decifrável.
  *  - `biometric_enabled`: opt-in de desbloqueio rápido por biometria.
+ *  - `theme_mode`: tema do app ("system", "light" ou "dark"). O idioma não mora aqui: é o idioma por app do
+ *    Android (AppCompatDelegate), que o próprio sistema guarda.
  */
 private val Context.dataStore by preferencesDataStore(name = "localkeys")
 
@@ -37,6 +39,15 @@ class SettingsStore(private val context: Context) {
     val biometricEnabled: Flow<Boolean> = context.dataStore.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { it[Keys.BIOMETRIC_ENABLED] ?: false }
+
+    /** Tema escolhido nas configurações: "system", "light" ou "dark". */
+    val themeMode: Flow<String> = context.dataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { it[Keys.THEME_MODE] ?: "system" }
+
+    suspend fun setThemeMode(mode: String) {
+        context.dataStore.edit { prefs -> prefs[Keys.THEME_MODE] = mode }
+    }
 
     suspend fun setVaultUri(uri: String?) {
         context.dataStore.edit { prefs ->
@@ -58,5 +69,6 @@ class SettingsStore(private val context: Context) {
         val VAULT_URI = stringPreferencesKey("vault_uri")
         val WRAPPED_KEY_HEX = stringPreferencesKey("wrapped_key_hex")
         val BIOMETRIC_ENABLED = booleanPreferencesKey("biometric_enabled")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }

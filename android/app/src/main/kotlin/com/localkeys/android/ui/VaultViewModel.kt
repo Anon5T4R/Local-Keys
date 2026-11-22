@@ -1,5 +1,6 @@
 package com.localkeys.android.ui
 
+import android.app.Activity
 import android.app.Application
 import android.content.ContentResolver
 import android.content.Intent
@@ -7,6 +8,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import androidx.annotation.StringRes
+import androidx.credentials.providerevents.ProviderEventsManager
+import androidx.credentials.providerevents.exception.ImportCredentialsCancellationException
+import androidx.credentials.providerevents.exception.ImportCredentialsException
+import androidx.credentials.providerevents.exception.ImportCredentialsNoExportOptionException
+import androidx.credentials.providerevents.transfer.CredentialTypes
+import androidx.credentials.providerevents.transfer.ImportCredentialsRequest
+import androidx.credentials.providerevents.transfer.KnownExtensions
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.goterl.lazysodium.LazySodiumAndroid
@@ -22,6 +30,7 @@ import com.localkeys.android.data.import.BwDecrypt
 import com.localkeys.android.data.import.ImportFormat
 import com.localkeys.android.data.import.Importers
 import com.localkeys.android.data.export.VaultExporter
+import com.localkeys.android.data.passkey.CxfImport
 import com.localkeys.android.data.store.SettingsStore
 import com.localkeys.android.data.vault.AutofillSaveBridge
 import com.localkeys.android.data.vault.CredentialBridge
@@ -81,6 +90,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val screen: Screen = Screen.Unlock,
         val vault: Vault? = null,
         val vaultUri: String? = null,
+        /** Nome do arquivo do cofre (o que o SAF mostra), para a tela de desbloqueio e as configurações. */
+        val vaultName: String? = null,
         val biometricAvailable: Boolean = false,
         val busy: Boolean = false,
         val error: String? = null,
@@ -88,6 +99,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val pendingImport: PendingImport? = null,
         /** Arquivo mudou no disco fora do app → UI mostra o diálogo de conflito. */
         val externalChange: Boolean = false,
+        /** Tema escolhido nas configurações ("system", "light" ou "dark"). */
+        val themeMode: String = "system",
     )
 
     private val crypto = TkeysCrypto(LazySodiumAndroid(SodiumAndroid()))
@@ -125,6 +138,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
+            settings.themeMode.collect { mode -> _state.update { it.copy(themeMode = mode) } }
+        }
+        viewModelScope.launch {
             settings.wrappedKeyHex.collect { hex ->
                 wrappedKeyHex = hex
                 _state.update { it.copy(biometricAvailable = biometricOn && !hex.isNullOrEmpty()) }
@@ -153,6 +169,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 val bytes = resolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
                     ?: throw IOException(str(R.string.err_file_not_found))
                 cachedBlob = bytes
+                val name = runCatching {
+                    resolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                }.getOrNull() ?: Uri.parse(uri).lastPathSegment?.substringAfterLast('/')
+                _state.update { it.copy(vaultName = name) }
             } catch (e: Exception) {
                 cachedBlob = null
                 _state.update {
@@ -221,19 +242,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Salvar (recifrar e gravar no mesmo arquivo) ──────────────────────
-
-    fun save() {
-        if (_state.value.vaultUri == null) return
-        viewModelScope.launch(Dispatchers.Default) {
-            _state.update { it.copy(busy = true, error = null) }
-            try {
-                persistAndCommit(repository.vault, notice = str(R.string.msg_vault_saved))
-            } catch (e: Exception) {
-                failSave(e, R.string.op_save)
-            }
-        }
-    }
+    // ── Conflito com o disco (o arquivo mudou fora do app) ───────────────
 
     /**
      * Sobrescreve o arquivo com o vault em memória mesmo havendo mudança externa
@@ -477,72 +486,111 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Remove um item e grava no arquivo. */
-    fun deleteItem(id: String) {
-        if (_state.value.vaultUri == null) return
-        viewModelScope.launch(Dispatchers.Default) {
-            _state.update { it.copy(busy = true, error = null) }
-            try {
-                val updated = repository.deleteItem(id)
-                persistAndCommit(updated, notice = str(R.string.msg_item_deleted))
-            } catch (e: Exception) {
-                failSave(e, R.string.op_delete_item)
-            }
-        }
-    }
+    /** Manda um item para a lixeira (como no desktop: só marca `deletedAt`) e grava no arquivo. */
+    fun deleteItem(id: String) = persistOp(R.string.op_delete_item, R.string.msg_item_trashed) { repository.trashItem(id) }
+
+    /** Tira um item da lixeira. */
+    fun restoreItem(id: String) = persistOp(R.string.op_restore_item, R.string.msg_item_restored) { repository.restoreItem(id) }
+
+    /** Exclui de vez um item que está na lixeira. */
+    fun deleteItemForever(id: String) =
+        persistOp(R.string.op_delete_item, R.string.msg_item_deleted_forever) { repository.deleteItem(id) }
 
     /** Alterna o favorito de um item e grava no arquivo. */
-    fun toggleFavorite(id: String) {
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                val updated = repository.toggleFavorite(id)
-                persistAndCommit(updated, notice = null)
-            } catch (e: Exception) {
-                failSave(e, R.string.op_favorite)
-            }
+    fun toggleFavorite(id: String) = persistOp(R.string.op_favorite, notice = null) { repository.toggleFavorite(id) }
+
+    // ── Anexos (lixeira de anexos do desktop) ────────────────────────────
+
+    fun trashAttachment(itemId: String, attachmentId: String) =
+        persistOp(R.string.op_attachment, R.string.msg_attachment_trashed) { repository.trashAttachment(itemId, attachmentId) }
+
+    fun restoreAttachment(itemId: String, attachmentId: String) =
+        persistOp(R.string.op_attachment, R.string.msg_attachment_restored) { repository.restoreAttachment(itemId, attachmentId) }
+
+    fun deleteAttachmentForever(itemId: String, attachmentId: String) =
+        persistOp(R.string.op_attachment, R.string.msg_attachment_deleted) {
+            repository.deleteAttachmentForever(itemId, attachmentId)
         }
-    }
 
     // ── Pastas ───────────────────────────────────────────────────────────
+
     /** Cria uma pasta nova e grava no arquivo. */
-    fun addFolder(name: String) {
-        if (_state.value.vaultUri == null) return
-        viewModelScope.launch(Dispatchers.Default) {
-            _state.update { it.copy(busy = true, error = null) }
-            try {
-                val folder = Folder(UUID.randomUUID().toString(), name.trim())
-                val updated = repository.addFolder(folder)
-                persistAndCommit(updated, notice = str(R.string.msg_folder_created))
-            } catch (e: Exception) {
-                failSave(e, R.string.op_create_folder)
-            }
-        }
+    fun addFolder(name: String) = persistOp(R.string.op_create_folder, R.string.msg_folder_created) {
+        repository.addFolder(Folder(UUID.randomUUID().toString(), name.trim()))
     }
 
     /** Renomeia uma pasta e grava no arquivo. */
-    fun renameFolder(id: String, name: String) {
+    fun renameFolder(id: String, name: String) =
+        persistOp(R.string.op_rename_folder, R.string.msg_folder_renamed) { repository.renameFolder(id, name.trim()) }
+
+    /** Exclui uma pasta (os itens ficam sem pasta) e grava no arquivo. */
+    fun deleteFolder(id: String) =
+        persistOp(R.string.op_delete_folder, R.string.msg_folder_deleted) { repository.deleteFolder(id) }
+
+    /**
+     * Uma operação do repositório seguida da gravação conferida. [op] muda o cofre em memória; se a gravação
+     * falha, a mensagem vem com o contexto [context] (ou vira o diálogo de conflito).
+     */
+    private fun persistOp(@StringRes context: Int, @StringRes notice: Int?, op: () -> Vault) {
         if (_state.value.vaultUri == null) return
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             try {
-                val updated = repository.renameFolder(id, name.trim())
-                persistAndCommit(updated, notice = str(R.string.msg_folder_renamed))
+                persistAndCommit(op(), notice = notice?.let { str(it) })
             } catch (e: Exception) {
-                failSave(e, R.string.op_rename_folder)
+                failSave(e, context)
             }
         }
     }
 
-    /** Exclui uma pasta (os itens ficam sem pasta) e grava no arquivo. */
-    fun deleteFolder(id: String) {
-        if (_state.value.vaultUri == null) return
-        viewModelScope.launch(Dispatchers.Default) {
+    // ── Importar de outro gerenciador (Credential Exchange da FIDO) ──────
+
+    /**
+     * Pede ao sistema as credenciais de outro gerenciador (o do Google, por exemplo) pelo Credential Exchange.
+     * O Android mostra quem pode exportar; o que volta vem no formato CXF, vira itens de login e é gravado pelo
+     * mesmo caminho das passkeys novas ([persistNewItems]). Precisa do Android 14+ e do Google Play services.
+     */
+    fun importFromOtherManager(activity: Activity) {
+        if (_state.value.vaultUri == null || _state.value.busy) return
+        viewModelScope.launch {
             _state.update { it.copy(busy = true, error = null) }
             try {
-                val updated = repository.deleteFolder(id)
-                persistAndCommit(updated, notice = str(R.string.msg_folder_deleted))
+                val request = ImportCredentialsRequest(
+                    setOf(
+                        CredentialTypes.CREDENTIAL_TYPE_BASIC_AUTH,
+                        CredentialTypes.CREDENTIAL_TYPE_PUBLIC_KEY,
+                        CredentialTypes.CREDENTIAL_TYPE_TOTP,
+                        CredentialTypes.CREDENTIAL_TYPE_NOTE,
+                    ),
+                    setOf(KnownExtensions.KNOWN_EXTENSION_SHARED),
+                )
+                val response = ProviderEventsManager.create(activity).importCredentials(activity, request)
+                val parsed = withContext(Dispatchers.Default) { CxfImport.parse(response.response.responseJson) }
+                if (parsed.items.isEmpty()) {
+                    _state.update { it.copy(busy = false, notice = str(R.string.msg_import_empty)) }
+                    return@launch
+                }
+                val ok = persistNewItems(parsed.items)
+                _state.update {
+                    if (ok) {
+                        it.copy(busy = false, notice = str(R.string.msg_cxf_imported, parsed.passwords, parsed.passkeys))
+                    } else {
+                        it.copy(busy = false, error = str(R.string.msg_op_failed, str(R.string.op_import), str(R.string.err_write_failed)))
+                    }
+                }
+            } catch (_: ImportCredentialsCancellationException) {
+                _state.update { it.copy(busy = false) }
+            } catch (_: ImportCredentialsNoExportOptionException) {
+                _state.update { it.copy(busy = false, error = str(R.string.msg_cxf_no_provider)) }
+            } catch (e: ImportCredentialsException) {
+                val detail = e.errorMessage ?: e.message ?: e.type
+                _state.update { it.copy(busy = false, error = str(R.string.msg_op_failed, str(R.string.op_import), detail)) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                failSave(e, R.string.op_delete_folder)
+                _state.update {
+                    it.copy(busy = false, error = str(R.string.msg_op_failed, str(R.string.op_import), e.message ?: e.javaClass.simpleName))
+                }
             }
         }
     }
@@ -721,7 +769,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     kind = ItemKind.LOGIN,
                     name = domain?.takeIf { it.isNotBlank() }
                         ?: request.username.takeIf { it.isNotBlank() }
-                        ?: "Credencial do autofill",
+                        ?: str(R.string.autofill_default_name),
                     favorite = false,
                     folderId = null,
                     notes = "",
@@ -785,6 +833,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         repository.lock()
         syncAutofillCache(null)
         _state.update { it.copy(vault = null, screen = Screen.Unlock) }
+    }
+
+    /** Tema do app ("system", "light" ou "dark"), gravado nas preferências. */
+    fun setThemeMode(mode: String) {
+        viewModelScope.launch { settings.setThemeMode(mode) }
     }
 
     fun consumeNotice() {

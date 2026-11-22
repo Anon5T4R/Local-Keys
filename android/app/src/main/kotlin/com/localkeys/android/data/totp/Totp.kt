@@ -61,6 +61,28 @@ object Totp {
         secondsRemaining = PERIOD - (unixSeconds % PERIOD),
     )
 
+    /**
+     * Para a interface: aceita a chave base32 ou um `otpauth://totp/...?secret=...` (o que alguns sites e
+     * importações entregam) e devolve null em vez de lançar quando a chave não serve.
+     */
+    fun atOrNull(raw: String, unixSeconds: Long): TotpCode? {
+        val secret = secretOf(raw) ?: return null
+        return runCatching { at(secret, unixSeconds) }.getOrNull()
+    }
+
+    /** A chave base32 de [raw]: ele mesmo, ou o parâmetro `secret` de um `otpauth://`. Null se vazia. */
+    fun secretOf(raw: String): String? {
+        val t = raw.trim()
+        if (t.isEmpty()) return null
+        if (!t.startsWith("otpauth://", ignoreCase = true)) return t
+        val query = t.substringAfter('?', "")
+        return query.split('&')
+            .firstOrNull { it.substringBefore('=').equals("secret", ignoreCase = true) }
+            ?.substringAfter('=', "")
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+            ?.takeIf { it.isNotBlank() }
+    }
+
     /** Código atual + quanto falta para virar. */
     fun now(secretB32: String): TotpCode = at(secretB32, System.currentTimeMillis() / 1000)
 

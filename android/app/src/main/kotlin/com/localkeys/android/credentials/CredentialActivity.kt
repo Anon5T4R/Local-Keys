@@ -6,10 +6,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
@@ -36,7 +38,7 @@ import androidx.credentials.exceptions.publickeycredential.CreatePublicKeyCreden
 import androidx.credentials.exceptions.domerrors.InvalidStateError
 import androidx.credentials.exceptions.domerrors.NotSupportedError
 import androidx.credentials.provider.PendingIntentHandler
-import androidx.fragment.app.FragmentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.localkeys.android.R
 import com.localkeys.android.data.passkey.WebAuthn
@@ -49,7 +51,7 @@ import com.localkeys.android.data.vault.VaultAutofillCache
 import com.localkeys.android.ui.UnlockScreen
 import com.localkeys.android.ui.VaultViewModel
 import com.localkeys.android.ui.launchVaultBiometric
-import com.localkeys.android.ui.theme.LocalKeysTheme
+import com.localkeys.android.ui.theme.LocalKeysAppTheme
 import com.localkeys.android.ui.verifyUser
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -63,18 +65,19 @@ import java.util.UUID
  * tenha acabado de destrancar o cofre aqui.
  */
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-class CredentialActivity : FragmentActivity() {
+class CredentialActivity : AppCompatActivity() {
 
     private val viewModel: VaultViewModel by viewModels()
     private var handled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val alreadyOpen = VaultAutofillCache.unlocked
         setContent {
-            LocalKeysTheme {
+            val state by viewModel.state.collectAsState()
+            LocalKeysAppTheme(this, state.themeMode) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
-                    val state by viewModel.state.collectAsState()
                     val vault = VaultAutofillCache.unlocked ?: state.vault
                     if (vault == null) {
                         UnlockScreen(
@@ -84,7 +87,8 @@ class CredentialActivity : FragmentActivity() {
                             onUnlock = viewModel::unlock,
                             onBiometricUnlock = { launchVaultBiometric(viewModel, com.localkeys.android.ui.BiometricRequest.Unlock) },
                             onErrorShown = viewModel::clearError,
-                            modifier = Modifier.padding(padding),
+                            // As margens do sistema já entram pelo Scaffold: a tela não as aplica de novo.
+                            modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                         )
                     } else {
                         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {

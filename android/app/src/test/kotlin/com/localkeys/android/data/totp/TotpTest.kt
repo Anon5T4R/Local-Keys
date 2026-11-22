@@ -109,4 +109,15 @@ class TotpTest {
         val code = Totp.at("JBSWY3DPEHPK3PXP", 90) // múltiplo exato de 30
         assertEquals(30L, code.secondsRemaining)
     }
+
+    @Test
+    fun atOrNull_aceita_otpauth_e_nao_lanca_com_chave_ruim() {
+        val direto = Totp.atOrNull("JBSWY3DPEHPK3PXP", 59)
+        val uri = Totp.atOrNull("otpauth://totp/Site:joao?secret=JBSWY3DPEHPK3PXP&issuer=Site", 59)
+        org.junit.Assert.assertNotNull(direto)
+        assertEquals(direto, uri)
+        org.junit.Assert.assertNull(Totp.atOrNull("não é base32!", 59))
+        org.junit.Assert.assertNull(Totp.atOrNull("   ", 59))
+        org.junit.Assert.assertNull(Totp.atOrNull("otpauth://totp/x?issuer=y", 59))
+    }
 }

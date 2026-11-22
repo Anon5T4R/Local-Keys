@@ -110,8 +110,17 @@ class LocalKeysAutofillService : AutofillService() {
         callback.onSuccess()
     }
 
-    /** Notificação leve de feedback do autofill (canal próprio, baixa prioridade). */
+    /**
+     * Feedback leve do autofill. O app não pede a permissão de notificação (Android 13+) ao abrir: sem ela, as
+     * notificações ficam desligadas e o aviso sai como toast — curto, mas chega. Com as notificações ligadas
+     * (Android 12 ou antes, ou o usuário ligou nas configurações do sistema), vira notificação de baixa
+     * prioridade que abre o app.
+     */
     private fun notify(text: String) {
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = android.app.NotificationChannel(
                 NOTIF_CHANNEL,

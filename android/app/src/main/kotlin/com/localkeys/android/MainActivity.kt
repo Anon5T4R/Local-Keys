@@ -7,16 +7,18 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.ui.Modifier
-import androidx.fragment.app.FragmentActivity
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.localkeys.android.ui.HostCallbacks
 import com.localkeys.android.ui.VaultViewModel
 import com.localkeys.android.ui.launchVaultBiometric
-import com.localkeys.android.ui.theme.LocalKeysTheme
+import com.localkeys.android.ui.theme.LocalKeysAppTheme
 
-class MainActivity : FragmentActivity() {
+/** AppCompatActivity (é uma FragmentActivity, o BiometricPrompt continua igual) para o idioma por app valer
+ *  também antes do Android 13. */
+class MainActivity : AppCompatActivity() {
 
     private val viewModel: VaultViewModel by viewModels()
 
@@ -55,34 +57,39 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Troca o tema da splash pelo tema do app (sem isso a janela ficava com a barra de ação do tema da
+        // splash por cima da do Compose: as duas barras empilhadas da v0.3).
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // API 33+: a notificação de feedback do autofill precisa de permissão.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
+        // Sem pedir a permissão de notificação na abertura: a única notificação do app é o aviso do autofill
+        // ("destrave para salvar"), e ele cai para um toast quando as notificações estão desligadas
+        // (LocalKeysAutofillService.notify). Quem quiser a notificação liga nas configurações do Android.
+        val importOther: (() -> Unit)? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            { viewModel.importFromOtherManager(this) }
+        } else {
+            null
         }
         setContent {
-            LocalKeysTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    LocalKeysApp(
-                        viewModel = viewModel,
-                        onPickDocument = {
-                            openVaultLauncher.launch(arrayOf("application/octet-stream", "*/*"))
-                        },
-                        onCreateDocument = { password ->
-                            pendingCreatePassword = password
-                            createVaultLauncher.launch("localkeys.tkeys")
-                        },
-                        onPickImport = {
-                            importLauncher.launch(arrayOf("*/*"))
-                        },
+            val state by viewModel.state.collectAsState()
+            LocalKeysAppTheme(this, state.themeMode) {
+                LocalKeysApp(
+                    viewModel = viewModel,
+                    onPickDocument = {
+                        openVaultLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                    },
+                    onCreateDocument = { password ->
+                        pendingCreatePassword = password
+                        createVaultLauncher.launch("localkeys.tkeys")
+                    },
+                    callbacks = HostCallbacks(
+                        onPickImport = { importLauncher.launch(arrayOf("*/*")) },
                         onExport = ::startExport,
                         onRequestBiometric = { launchVaultBiometric(viewModel, it) },
-                        modifier = Modifier.padding(innerPadding),
-                    )
-                }
+                        onImportOther = importOther,
+                    ),
+                )
             }
         }
     }
-
 }
