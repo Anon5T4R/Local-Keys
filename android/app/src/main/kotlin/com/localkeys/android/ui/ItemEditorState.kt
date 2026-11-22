@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.localkeys.android.data.forms.CardFormat
+import com.localkeys.android.data.totp.OtpAuth
 import com.localkeys.android.data.vault.Attachment
 import com.localkeys.android.data.vault.Card
 import com.localkeys.android.data.vault.CustomField
@@ -19,11 +21,16 @@ import java.util.UUID
  * O item salvo parte de uma CÓPIA do original (`initial.copy`): o que o editor não mostra — passkeys, chaves
  * desconhecidas em `extra`, histórico de senhas, anexos na lixeira — atravessa intacto, como no desktop.
  */
-class ItemEditorState(private val initial: Item?, defaultFolderId: String? = null) {
+class ItemEditorState(
+    private val initial: Item?,
+    defaultFolderId: String? = null,
+    /** Item novo: o que foi escolhido no "+" (null = login, como antes). */
+    preset: NewItemPreset? = null,
+) {
     val isNew: Boolean = initial == null
     private val id: String = initial?.id ?: UUID.randomUUID().toString()
 
-    var kind by mutableStateOf(initial?.kind ?: ItemKind.LOGIN)
+    var kind by mutableStateOf(initial?.kind ?: preset?.kind ?: ItemKind.LOGIN)
     var name by mutableStateOf(initial?.name ?: "")
     var notes by mutableStateOf(initial?.notes ?: "")
     var favorite by mutableStateOf(initial?.favorite ?: false)
@@ -36,9 +43,18 @@ class ItemEditorState(private val initial: Item?, defaultFolderId: String? = nul
 
     var cardholder by mutableStateOf(initial?.card?.cardholder ?: "")
     var brand by mutableStateOf(initial?.card?.brand ?: "")
-    var number by mutableStateOf(initial?.card?.number ?: "")
+        private set
+
+    /** Só os dígitos (é o que vai para o cofre); os grupos de 4 são da tela. */
+    var number by mutableStateOf(CardFormat.digits(initial?.card?.number ?: ""))
+        private set
     var exp by mutableStateOf(initial?.card?.exp ?: "")
+        private set
     var code by mutableStateOf(initial?.card?.code ?: "")
+        private set
+
+    /** A bandeira atual foi preenchida pelo app (então o número pode trocá-la); digitada pela pessoa, fica. */
+    private var brandAuto: Boolean = brand.isBlank() || brand == CardFormat.brandOf(number)?.label
 
     var firstName by mutableStateOf(initial?.identity?.firstName ?: "")
     var lastName by mutableStateOf(initial?.identity?.lastName ?: "")
@@ -51,7 +67,67 @@ class ItemEditorState(private val initial: Item?, defaultFolderId: String? = nul
     /** Todos os anexos, inclusive os da lixeira (a tela só mostra os vivos). */
     val attachments = mutableStateListOf<Attachment>().apply { addAll(initial?.attachments.orEmpty()) }
 
+    init {
+        // Item livre: uma nota com um campo personalizado vazio já aberto (o desktop abre igual, é só uma nota).
+        if (initial == null && preset == NewItemPreset.BLANK) addField()
+    }
+
     private val baseline: Item = build(now = 0)
+
+    // ── Cartão ───────────────────────────────────────────────────────────
+
+    /** Número digitado (com ou sem espaços): guarda só os dígitos e acerta a bandeira se ela for automática. */
+    fun updateNumber(raw: String) {
+        number = CardFormat.digits(raw).take(CardFormat.MAX_DIGITS)
+        if (brandAuto || brand.isBlank()) {
+            brand = CardFormat.brandOf(number)?.label.orEmpty()
+            brandAuto = true
+        }
+    }
+
+    /** Bandeira digitada pela pessoa: vale a dela (apagar tudo devolve a detecção automática). */
+    fun updateBrand(raw: String) {
+        brand = raw
+        brandAuto = raw.isBlank()
+    }
+
+    fun updateExp(raw: String) {
+        exp = CardFormat.expiry(raw)
+    }
+
+    fun updateCode(raw: String) {
+        code = CardFormat.cvv(raw)
+    }
+
+    // ── TOTP ─────────────────────────────────────────────────────────────
+
+    /**
+     * Chave lida de um QR ou colada: guarda só a chave base32 (o que o desktop lê) e, se vierem na URI, põe o
+     * emissor no nome e a conta no usuário — só quando estão vazios; nunca sobrescreve.
+     */
+    fun applyTotp(parsed: OtpAuth.Parsed) {
+        totp = parsed.secret
+        if (name.isBlank()) (parsed.issuer ?: parsed.account)?.let { name = it }
+        if (kind == ItemKind.LOGIN && username.isBlank()) parsed.account?.let { username = it }
+    }
+
+    /**
+     * O que vai para `login.totp`. Mexido nesta edição e colado como `otpauth://…`: só a chave base32, que é o
+     * que o desktop lê. Intocado: fica exatamente como estava.
+     */
+    private fun storedTotp(): String {
+        val t = totp.trim()
+        if (t == initial?.login?.totp?.trim()) return t
+        val parsed = OtpAuth.parse(t)
+        return if (t.startsWith("otpauth://", ignoreCase = true) && parsed is OtpAuth.Result.Ok) parsed.value.secret else t
+    }
+
+    // ── Identidade ───────────────────────────────────────────────────────
+
+    /** Atalho de documento: um campo personalizado com o nome já posto e o valor livre. */
+    fun addNamedField(name: String) {
+        customFields += CustomField(UUID.randomUUID().toString(), name, "", hidden = false)
+    }
 
     val canSave: Boolean get() = name.isNotBlank()
 
@@ -104,7 +180,7 @@ class ItemEditorState(private val initial: Item?, defaultFolderId: String? = nul
                     username = username.trim(),
                     password = password,
                     uris = cleanUris,
-                    totp = totp.trim(),
+                    totp = storedTotp(),
                 )
             } else {
                 initial?.login
@@ -135,4 +211,13 @@ class ItemEditorState(private val initial: Item?, defaultFolderId: String? = nul
             attachments = attachments.toList().takeIf { it.isNotEmpty() || initial?.attachments != null },
         )
     }
+}
+
+/** O que o "+" da lista oferece. [BLANK] é uma nota com um campo personalizado vazio: sem formato pronto. */
+enum class NewItemPreset(val kind: ItemKind) {
+    LOGIN(ItemKind.LOGIN),
+    CARD(ItemKind.CARD),
+    IDENTITY(ItemKind.IDENTITY),
+    NOTE(ItemKind.NOTE),
+    BLANK(ItemKind.NOTE),
 }

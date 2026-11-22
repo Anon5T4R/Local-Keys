@@ -133,6 +133,7 @@ fun PasswordField(
     imeAction: ImeAction = ImeAction.Done,
     onImeAction: () -> Unit = {},
     extraActions: @Composable () -> Unit = {},
+    keyboardType: KeyboardType = KeyboardType.Password,
 ) {
     var visible by rememberSaveable { mutableStateOf(false) }
     OutlinedTextField(
@@ -144,7 +145,7 @@ fun PasswordField(
         isError = isError,
         supportingText = supportingText,
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = imeAction),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
         keyboardActions = KeyboardActions(onAny = { onImeAction() }),
         trailingIcon = {
             Row(verticalAlignment = Alignment.CenterVertically) {

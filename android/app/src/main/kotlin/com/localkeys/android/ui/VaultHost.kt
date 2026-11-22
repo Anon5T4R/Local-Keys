@@ -72,6 +72,7 @@ fun VaultHost(
     val totpClock = rememberTotpClock()
     val holder = rememberSaveableStateHolder()
     var exportOpen by rememberSaveable { mutableStateOf(false) }
+    var newItemOpen by rememberSaveable { mutableStateOf(false) }
 
     // Consumir o aviso muda a chave do LaunchedEffect e o cancelaria: a snackbar roda num escopo à parte.
     val snackScope = rememberCoroutineScope()
@@ -132,7 +133,7 @@ fun VaultHost(
                 snackbarHostState = snackbar,
                 menu = menu,
                 onOpen = { id -> stack = NavStack.openItem(stack, id, twoPane) },
-                onNew = { push(Route.Edit(null)) },
+                onNew = { newItemOpen = true },
                 onToggleFavorite = viewModel::toggleFavorite,
                 onLock = viewModel::lock,
                 banner = if (updateState.showBanner) {
@@ -174,6 +175,7 @@ fun VaultHost(
                 val initial = route.id?.let { id -> vault.items.firstOrNull { it.id == id } }
                 ItemEditorScreen(
                     initial = initial,
+                    preset = route.preset,
                     folders = vault.folders,
                     defaultFolderId = (filters.folder as? FolderFilter.In)?.id,
                     busy = state.busy,
@@ -277,6 +279,15 @@ fun VaultHost(
             error = state.error,
             onConfirm = viewModel::onImportPassword,
             onDismiss = viewModel::dismissImport,
+        )
+    }
+    if (newItemOpen) {
+        NewItemSheet(
+            onPick = { preset ->
+                newItemOpen = false
+                push(Route.Edit(null, preset))
+            },
+            onDismiss = { newItemOpen = false },
         )
     }
     if (exportOpen) {

@@ -426,4 +426,43 @@
     <string name="settings_vault_switch_hint">Toque para trocar (tranca o cofre atual)</string>
     <string name="settings_vault_open_other">Abrir outro cofre…</string>
     <string name="settings_vault_open_other_body">Escolha um arquivo .tkeys; o cofre atual é trancado antes.</string>
+
+    <!-- Novo item pelo "+" -->
+    <string name="new_item_title">Novo item</string>
+    <string name="new_item_blank">Item livre</string>
+    <string name="new_item_login_hint">Usuário, senha, sites e 2FA</string>
+    <string name="new_item_card_hint">Número, validade e código de segurança</string>
+    <string name="new_item_identity_hint">Nome, contato e documentos</string>
+    <string name="new_item_note_hint">Texto livre</string>
+    <string name="new_item_blank_hint">Sem formato pronto: você cria os campos</string>
+    <string name="editor_kind_fixed">Tipo: %1$s</string>
+
+    <!-- TOTP por QR ou colado -->
+    <string name="totp_scan">Ler QR</string>
+    <string name="totp_paste">Colar</string>
+    <string name="totp_scan_prompt">Aponte a câmera para o QR do 2FA</string>
+    <string name="totp_camera_denied">Sem acesso à câmera não dá para ler o QR. Você ainda pode colar ou digitar a chave.</string>
+    <string name="totp_clipboard_empty">A área de transferência está vazia.</string>
+    <string name="totp_not_totp">Este QR não é de código por tempo (TOTP).</string>
+    <string name="totp_no_secret">O link não traz a chave secreta.</string>
+    <string name="totp_invalid_key">Chave inválida: precisa ser base32 (letras A–Z e números 2–7).</string>
+    <string name="totp_preview">Código atual: %1$s</string>
+    <string name="totp_unsupported">Chave salva, mas este QR pede %1$s. O Local Keys gera códigos de 6 dígitos a cada 30 s (SHA-1), então os códigos podem não bater.</string>
+    <string name="totp_digits">%1$d dígitos</string>
+    <string name="totp_period">%1$d s</string>
+
+    <!-- Cartão -->
+    <string name="card_luhn_warning">Este número não passa na conferência do cartão (Luhn). Confira se digitou certo; dá para salvar assim mesmo.</string>
+    <string name="card_brand_hint">Detectada pelo número; digite para trocar.</string>
+    <string name="field_exp_mask">Validade (MM/AA)</string>
+
+    <!-- Identidade: atalhos de documento -->
+    <string name="doc_shortcuts_label">Adicionar documento</string>
+    <string name="doc_cpf">CPF</string>
+    <string name="doc_rg">RG</string>
+    <string name="doc_cnh">CNH</string>
+    <string name="doc_birth">Data de nascimento</string>
+    <string name="doc_passport">Passaporte</string>
+    <string name="doc_other">Documento (outro)</string>
+    <string name="cpf_warning">Os dígitos verificadores do CPF não conferem. Confira se digitou certo; dá para salvar assim mesmo.</string>
 </resources>

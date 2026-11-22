@@ -427,4 +427,43 @@
     <string name="settings_vault_switch_hint">Tap to switch (locks the current vault)</string>
     <string name="settings_vault_open_other">Open another vault…</string>
     <string name="settings_vault_open_other_body">Pick a .tkeys file; the current vault is locked first.</string>
+
+    <!-- Novo item pelo "+" -->
+    <string name="new_item_title">New item</string>
+    <string name="new_item_blank">Blank item</string>
+    <string name="new_item_login_hint">Username, password, websites and 2FA</string>
+    <string name="new_item_card_hint">Number, expiry and security code</string>
+    <string name="new_item_identity_hint">Name, contact details and documents</string>
+    <string name="new_item_note_hint">Free text</string>
+    <string name="new_item_blank_hint">No ready-made format: you add the fields</string>
+    <string name="editor_kind_fixed">Type: %1$s</string>
+
+    <!-- TOTP por QR ou colado -->
+    <string name="totp_scan">Scan QR</string>
+    <string name="totp_paste">Paste</string>
+    <string name="totp_scan_prompt">Point the camera at the 2FA QR code</string>
+    <string name="totp_camera_denied">Without camera access the QR can\'t be read. You can still paste or type the key.</string>
+    <string name="totp_clipboard_empty">The clipboard is empty.</string>
+    <string name="totp_not_totp">This QR is not for time-based codes (TOTP).</string>
+    <string name="totp_no_secret">The link has no secret key.</string>
+    <string name="totp_invalid_key">Invalid key: it must be base32 (letters A–Z and digits 2–7).</string>
+    <string name="totp_preview">Current code: %1$s</string>
+    <string name="totp_unsupported">Key saved, but this QR asks for %1$s. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.</string>
+    <string name="totp_digits">%1$d digits</string>
+    <string name="totp_period">%1$d s</string>
+
+    <!-- Cartão -->
+    <string name="card_luhn_warning">This number fails the card check (Luhn). Check for a typo; you can still save.</string>
+    <string name="card_brand_hint">Detected from the number; type to change it.</string>
+    <string name="field_exp_mask">Expiry (MM/YY)</string>
+
+    <!-- Identidade: atalhos de documento -->
+    <string name="doc_shortcuts_label">Add a document</string>
+    <string name="doc_cpf">CPF</string>
+    <string name="doc_rg">RG</string>
+    <string name="doc_cnh">CNH</string>
+    <string name="doc_birth">Date of birth</string>
+    <string name="doc_passport">Passport</string>
+    <string name="doc_other">Document (other)</string>
+    <string name="cpf_warning">The CPF check digits don\'t match. Check for a typo; you can still save.</string>
 </resources>

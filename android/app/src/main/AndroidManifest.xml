@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Desbloqueio rápido: o BiometricPrompt exige esta permissão (API 28+). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
@@ -11,6 +12,12 @@
     <!-- Atualizador opcional (desligado por padrão): a única rede do app é ler as releases do Local Keys no GitHub
          e baixar o APK, e só com a verificação automática ligada ou no "verificar agora". -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- "Ler QR" do 2FA no editor: pedida só no toque; negada, colar ou digitar a chave continua funcionando.
+         Câmera não é obrigatória para instalar. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <!-- Entregar o APK baixado ao instalador do sistema (o usuário ainda libera "instalar apps desconhecidos"). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -90,6 +97,12 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.LocalKeys.Base" />
+
+        <!-- Leitura do QR do 2FA (zxing-android-embedded): de pé ou deitado, como o celular estiver. -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="fullSensor"
+            tools:replace="screenOrientation" />
 
         <!-- Resultado da instalação da atualização (PackageInstaller). Só o PendingIntent do próprio app chega aqui. -->
         <receiver
