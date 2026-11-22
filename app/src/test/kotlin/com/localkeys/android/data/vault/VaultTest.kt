@@ -100,6 +100,48 @@ class VaultTest {
         assertFalse(json.has("attachments"))
     }
 
+    /**
+     * Escrita conservadora, como no desktop: um campo que este app não conhece
+     * (de uma versão mais nova do desktop) atravessa uma edição e um save, em
+     * todos os níveis, e um item de tipo desconhecido volta para o arquivo como veio.
+     */
+    @Test
+    fun campos_e_itens_desconhecidos_atravessam_um_save() {
+        val json = """{"version":1,"futuro":{"a":1},"folders":[{"id":"f1","name":"P","cor":"azul"}],"items":[""" +
+            """{"id":"i1","kind":"login","name":"g","favorite":false,"folderId":"f1","notes":"","createdAt":1,"updatedAt":1,"deletedAt":null,""" +
+            """"passkeys":[{"rp":"x"}],"login":{"username":"u","password":"p","uris":[],"totp":"","autofill":"off"},""" +
+            """"customFields":[{"id":"c","name":"n","value":"v","hidden":false,"tipo":"url"}],""" +
+            """"attachments":[{"id":"a","name":"n.txt","size":1,"mime":"text/plain","dataB64":"QQ==","hash":"h"}]},""" +
+            """{"id":"i2","kind":"passkey","name":"novo tipo","x":[1,2]}]}"""
+        val vault = Vault.parse(json)
+        assertEquals("o tipo desconhecido não entra na lista", 1, vault.items.size)
+        val edited = vault.copy(items = vault.items.map { it.copy(name = "gmail", login = it.login!!.copy(password = "nova")) })
+        val out = JSONObject(edited.toJson())
+
+        assertEquals(1, out.getJSONObject("futuro").getInt("a"))
+        assertEquals("azul", out.getJSONArray("folders").getJSONObject(0).getString("cor"))
+        val items = out.getJSONArray("items")
+        assertEquals(2, items.length())
+        val item = items.getJSONObject(0)
+        assertEquals("gmail", item.getString("name"))
+        assertEquals("x", item.getJSONArray("passkeys").getJSONObject(0).getString("rp"))
+        assertEquals("nova", item.getJSONObject("login").getString("password"))
+        assertEquals("off", item.getJSONObject("login").getString("autofill"))
+        assertEquals("url", item.getJSONArray("customFields").getJSONObject(0).getString("tipo"))
+        assertEquals("h", item.getJSONArray("attachments").getJSONObject(0).getString("hash"))
+        val other = items.getJSONObject(1)
+        assertEquals("passkey", other.getString("kind"))
+        assertEquals(2, other.getJSONArray("x").length())
+    }
+
+    /** Uma parte apagada no app sai do arquivo, mesmo que o JSON original a tivesse. */
+    @Test
+    fun parte_apagada_sai_do_arquivo() {
+        val item = Vault.parse(SAMPLE_JSON).items[0]
+        val json = item.copy(login = null).toJson()
+        assertFalse(json.has("login"))
+    }
+
     @Test
     fun empty_vault() {
         val empty = Vault.empty()
