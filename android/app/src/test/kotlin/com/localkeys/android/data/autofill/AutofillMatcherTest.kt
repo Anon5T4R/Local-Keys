@@ -63,7 +63,7 @@ class AutofillMatcherTest {
     }
 
     @Test
-    fun sem_casa_devolve_sugestoes_com_teto() {
+    fun sem_casa_nao_oferece_nada() {
         val v = vault(
             login("a@x.com", "https://a.com"),
             login("b@x.com", "https://b.com"),
@@ -73,7 +73,20 @@ class AutofillMatcherTest {
             login("f@x.com", "https://f.com"),
         )
         val result = AutofillMatcher.loginsFor(v, packageName = null, webDomain = "https://nada.com")
-        assertEquals(AutofillMatcher.MAX_FALLBACK, result.size)
+        // Segurança: um site ou app que não casa com nenhum login não vê senha nenhuma.
+        assertEquals(emptyList<Login>(), result)
+    }
+
+    @Test
+    fun pacote_casa_por_igualdade_e_lixeira_fica_fora() {
+        val base = vault(
+            login("certo@x.com", "com.banco.app"),
+            login("parecido@x.com", "com.banco.appx"),
+            login("lixo@x.com", "com.banco.app"),
+        )
+        val v = base.copy(items = base.items.mapIndexed { i, it -> if (i == 2) it.copy(deletedAt = 5L) else it })
+        val result = AutofillMatcher.loginsFor(v, packageName = "com.banco.app", webDomain = null)
+        assertEquals(listOf("certo@x.com"), result.map { it.username })
     }
 
     @Test

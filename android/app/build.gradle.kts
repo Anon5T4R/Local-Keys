@@ -135,6 +135,12 @@ dependencies {
     // auditada. Usado só como classe (nunca registrado como provider do SO).
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 
+    // ── Credential Manager: o Local Keys como provedor de senhas e passkeys (Android 14+) ──
+    implementation("androidx.credentials:credentials:1.6.0")
+    // Credential Exchange (FIDO CXF): importar senhas e passkeys de outro gerenciador (o do Google).
+    implementation("androidx.credentials.providerevents:providerevents:1.0.0-beta01")
+    implementation("androidx.credentials.providerevents:providerevents-play-services:1.0.0-beta01")
+
     // ── SAF (abrir/criar o vault .tkeys no armazenamento do usuário) ─────
     implementation("androidx.documentfile:documentfile:1.0.1")
 

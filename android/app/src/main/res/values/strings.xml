@@ -202,4 +202,18 @@
 
     <!-- Detalhe do item: código TOTP -->
     <string name="field_totp_code">Código TOTP</string>
+
+    <!-- Provedor de credenciais (Credential Manager) -->
+    <string name="cred_unlock">Desbloquear o Local Keys</string>
+    <string name="cred_create_account">Local Keys</string>
+    <string name="cred_create_description">Guardar no seu cofre do Local Keys</string>
+    <string name="cred_settings_subtitle">Senhas e passkeys no seu cofre local</string>
+    <string name="cred_verify_use">Confirme para entrar com a passkey</string>
+    <string name="cred_verify_create">Confirme para criar a passkey</string>
+    <string name="cred_not_found">Essa credencial não está mais no cofre.</string>
+    <string name="cred_save_failed">Não foi possível gravar no cofre.</string>
+    <string name="cred_no_site">O pedido não informou o site.</string>
+    <string name="cred_wrong_site">O site do pedido não confere com o da passkey.</string>
+    <string name="cred_alg_unsupported">O site não aceita o tipo de chave do Local Keys (ES256).</string>
+    <string name="cred_already_exists">Já existe uma passkey sua para esse site no cofre.</string>
 </resources>

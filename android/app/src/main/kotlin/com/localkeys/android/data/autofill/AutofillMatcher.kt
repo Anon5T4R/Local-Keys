@@ -13,8 +13,6 @@ object AutofillMatcher {
     /** Limite de datasets sugeridos por pedido (evita lista infinita). */
     const val MAX_DATASETS = 8
 
-    /** Nº máximo de logins "sugestões" quando nada casou exato. */
-    const val MAX_FALLBACK = 4
 
     /**
      * Normaliza um domínio/site para comparação: remove esquema, credenciais,
@@ -52,14 +50,13 @@ object AutofillMatcher {
     }
 
     /**
-     * Logins candidatos para o pedido de autofill, na ordem de preferência:
-     * casou pelo domínio (ou pacote) primeiro; se nada casar, devolve as
-     * primeiras como sugestões (usuário escolhe no picker).
+     * Logins para o pedido de autofill: os que casam com o domínio do site ou com o pacote do app (igualdade,
+     * não "contém"), fora da lixeira. Se nada casar, nada é oferecido.
      */
     fun loginsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Login> {
         val v = vault ?: return emptyList()
         val logins = v.items
-            .filter { it.kind == ItemKind.LOGIN && it.login != null }
+            .filter { it.kind == ItemKind.LOGIN && it.login != null && it.deletedAt == null }
             .mapNotNull { it.login }
             .distinctBy { it.username to it.password }
         if (logins.isEmpty()) return emptyList()
@@ -71,16 +68,18 @@ object AutofillMatcher {
             emptyList()
         }
         val byPackage = if (domain == null && packageName != null) {
-            logins.filter { login -> login.uris.any { hostOfUri(it).contains(packageName.lowercase()) } }
+            logins.filter { login ->
+                login.uris.any {
+                    val uri = it.trim().lowercase()
+                    uri == packageName.lowercase() || uri == "androidapp://${packageName.lowercase()}"
+                }
+            }
         } else {
             emptyList()
         }
 
-        val exact = (matched + byPackage).distinctBy { it.username to it.password }
-        return if (exact.isNotEmpty()) {
-            exact.take(MAX_DATASETS)
-        } else {
-            logins.take(MAX_FALLBACK)
-        }
+        // Só o que casa com o site ou com o app. Sem "sugestões" de outras contas: um app malicioso não pode
+        // ver na lista as senhas que não são dele.
+        return (matched + byPackage).distinctBy { it.username to it.password }.take(MAX_DATASETS)
     }
 }

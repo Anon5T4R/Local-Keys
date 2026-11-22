@@ -24,6 +24,7 @@ import com.localkeys.android.data.import.Importers
 import com.localkeys.android.data.export.VaultExporter
 import com.localkeys.android.data.store.SettingsStore
 import com.localkeys.android.data.vault.AutofillSaveBridge
+import com.localkeys.android.data.vault.CredentialBridge
 import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
@@ -657,9 +658,41 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (vault == null) {
             VaultAutofillCache.clear()
             AutofillSaveBridge.unregister()
+            CredentialBridge.unregister()
         } else {
             VaultAutofillCache.set(vault)
             AutofillSaveBridge.register(::persistAutofillLogin)
+            CredentialBridge.register(::persistNewItems)
+        }
+    }
+
+    /**
+     * Itens novos vindos do provedor de credenciais ou da importação (Credential Exchange): acrescenta e grava,
+     * e só devolve true com o arquivo gravado e conferido. Se o arquivo mudou por fora (outra tela do app ou
+     * outro aparelho), relê e tenta de novo uma vez — nada é sobrescrito.
+     */
+    private suspend fun persistNewItems(items: List<Item>): Boolean = withContext(Dispatchers.Default) {
+        suspend fun once() {
+            val updated = repository.appendItems(items)
+            persistAndCommit(updated, notice = null)
+        }
+        try {
+            once()
+            true
+        } catch (_: ExternalChangeException) {
+            try {
+                val uri = _state.value.vaultUri ?: return@withContext false
+                val bytes = readDocumentBytes(getApplication<Application>().contentResolver, Uri.parse(uri))
+                    ?: return@withContext false
+                repository.reload(bytes)
+                cachedBlob = bytes
+                once()
+                true
+            } catch (_: Exception) {
+                false
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
