@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=LocalKeys
+Name=Local Keys
 GenericName=Password Manager
 Keywords=keys;passwords;password;manager;security;vault;totp;local;
 Exec=local-keys %F

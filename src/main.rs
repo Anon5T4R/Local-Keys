@@ -55,6 +55,12 @@ use tray_icon::{TrayIcon, TrayIconBuilder};
 const APP_ID: &str = "local-keys";
 #[cfg(windows)]
 const KEYRING_SERVICE: &str = "LocalKeys";
+
+/// Título da janela: o `winctl` acha a janela por ele para escondê-la e trazê-la de volta pela bandeja.
+const WINDOW_TITLE: &str = "Local Keys";
+
+/// Alvo dos anexos escolhidos no formulário de item: não é um id de item (os ids são UUIDs).
+const FORM_ATTACH: &str = "\u{0}form";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Comando vindo da bandeja (thread própria → handlers do tray-icon).
@@ -121,7 +127,11 @@ fn main() -> eframe::Result<()> {
     // "Abrir com" / duplo clique num `.tkeys`: o Explorer e o `%F` do .desktop mandam o caminho no argv.
     let initial_vault = vault_from_args(std::env::args_os().skip(1));
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("LocalKeys").with_inner_size([480.0, 660.0]).with_icon(load_window_icon()),
+        viewport: egui::ViewportBuilder::default()
+            .with_title(WINDOW_TITLE)
+            .with_inner_size([480.0, 660.0])
+            .with_min_inner_size([340.0, 640.0])
+            .with_icon(load_window_icon()),
         ..Default::default()
     };
     eframe::run_native(
@@ -541,7 +551,7 @@ fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
     let menu = Menu::new();
     let _ = menu.append(&show);
     let _ = menu.append(&quit_item);
-    let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("LocalKeys").with_icon(tray_icon().expect("ícone rgba")).build();
+    let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Local Keys").with_icon(tray_icon().expect("ícone rgba")).build();
 
     let tray = match tray {
         Ok(t) => {
@@ -651,6 +661,9 @@ struct KeysApp {
     folder_filter: Option<String>,
     // formulário de adição/edição
     form_open: bool,
+    /// Anexos escolhidos no formulário, gravados junto com o item ao salvar (o item novo ainda
+    /// não tem id quando o arquivo é escolhido).
+    form_attachments: Vec<AttachmentRead>,
     form_edit_id: Option<String>,
     add_name: String,
     add_user: String,
@@ -760,6 +773,7 @@ impl KeysApp {
             add_url: String::new(),
             add_notes: String::new(),
             add_folder_id: None,
+            form_attachments: Vec::new(),
             reveal_form: false,
             reveal_import: false,
             delete_ask: None,
@@ -836,6 +850,7 @@ impl KeysApp {
         self.form_edit_id = None;
         self.add_url.clear();
         self.add_notes.clear();
+        self.form_attachments.clear();
         self.reveal_form = false;
         self.delete_ask = None;
         self.trash_open = false;
@@ -1084,6 +1099,14 @@ impl KeysApp {
             Some(id) => Some(id),
             None => novo_item_id(&next, &antes),
         };
+        if let Some(id) = alvo.as_deref() {
+            for a in &self.form_attachments {
+                if !vault::add_attachment(&mut next, id, &a.name, a.mime, &a.data_b64) {
+                    self.err = Some("não foi possível anexar ao item".into());
+                    return;
+                }
+            }
+        }
         if let Some(id) = alvo {
             // `set_item_folder` grava `updatedAt` — só tocar se de fato mudou
             // (no item novo, sempre aplica).
@@ -1101,6 +1124,7 @@ impl KeysApp {
             self.add_url.clear();
             self.add_notes.clear();
             self.add_folder_id = None;
+            self.form_attachments.clear();
             self.form_open = false;
             self.form_edit_id = None;
         }
@@ -1118,6 +1142,7 @@ impl KeysApp {
         self.add_url.clear();
         self.add_notes.clear();
         self.add_folder_id = self.folder_filter.clone();
+        self.form_attachments.clear();
         self.reveal_form = false;
         self.form_open = true;
     }
@@ -1149,6 +1174,7 @@ impl KeysApp {
         self.add_url.clear();
         self.add_notes.clear();
         self.add_folder_id = None;
+        self.form_attachments.clear();
         self.reveal_form = false;
     }
 
@@ -1291,6 +1317,10 @@ impl KeysApp {
     /// digitados no campo. O primeiro abre o job; o resto espera na fila
     /// (`attach_queue`), consumida a cada resultado.
     fn attachments_chosen(&mut self, item_id: &str, mut sources: Vec<String>, ctx: &egui::Context) {
+        if sources.is_empty() && item_id == FORM_ATTACH {
+            // O formulário não tem campo de caminho: cancelar o seletor só não anexa nada.
+            return;
+        }
         if sources.is_empty() {
             sources = split_attachment_paths(&self.attach_path);
         }
@@ -1537,6 +1567,10 @@ impl KeysApp {
     }
 
     fn apply_attachment(&mut self, read: AttachmentRead) {
+        if read.item_id == FORM_ATTACH {
+            self.form_attachments.push(read);
+            return;
+        }
         let AttachmentRead { item_id, name, mime, size, data_b64 } = read;
         let Some(mut next) = self.raw.clone() else {
             return;
@@ -1588,6 +1622,7 @@ impl KeysApp {
         }
         let title = if self.form_edit_id.is_some() { tr("Edit") } else { tr("Add") };
         let mut cancel = false;
+        let mut add_file = false;
         let resp = egui::Modal::new(egui::Id::unique("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             dialog_width(ui, 400.0);
@@ -1647,6 +1682,27 @@ impl KeysApp {
                     .response
                     .labelled_by(label.id);
                 ui.end_row();
+
+                // Anexos já na criação: os arquivos ficam na lista e entram no item ao salvar.
+                ui.label(tr("Attachments"));
+                ui.vertical(|ui| {
+                    let mut remove = None;
+                    for (i, a) in self.form_attachments.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{} — {}", a.name, human_size(a.size)));
+                            if craft_icons::ui::button(ui, Icon::Delete, tr("Delete attachment")).clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove {
+                        self.form_attachments.remove(i);
+                    }
+                    if pill(ui, tr("Add attachment"), false).clicked() {
+                        add_file = true;
+                    }
+                });
+                ui.end_row();
             });
             // Força ao vivo (zxcvbn) — só quando há senha.
             if !self.add_pass.is_empty() {
@@ -1678,6 +1734,9 @@ impl KeysApp {
                 });
             });
         });
+        if add_file {
+            self.add_attachment_from(FORM_ATTACH, ctx);
+        }
         if cancel || resp.should_close() {
             self.close_form();
         }
@@ -2450,7 +2509,7 @@ impl KeysApp {
 
         egui::containers::Panel::top("topo").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("LocalKeys");
+                ui.strong("Local Keys");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.shell_buttons(ui));
             });
         });

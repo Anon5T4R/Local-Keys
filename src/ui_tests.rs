@@ -209,7 +209,7 @@ fn exit_in_the_palette_raises_the_quit_flag() {
     assert!(harness.state().quit.load(std::sync::atomic::Ordering::Relaxed));
 }
 
-/// Os três botões da barra continuam inteiros (sem cobrir "LocalKeys") na largura estreita.
+/// Os três botões da barra continuam inteiros (sem cobrir "Local Keys") na largura estreita.
 #[test]
 fn the_top_bar_fits_a_narrow_window() {
     let mut harness = harness_sized(app("narrow", Prefs::new("pt-br", ThemeMode::Light)), 340.0);
@@ -306,8 +306,14 @@ fn rare_vault_actions_live_in_the_more_menu() {
 #[test]
 fn every_dialog_fits_the_narrow_window() {
     type Open = fn(&mut KeysApp);
-    let dialogs: [(&str, Open); 8] = [
+    let dialogs: [(&str, Open); 9] = [
         ("add", |app| app.open_add_form()),
+        ("add-with-attachments", |app| {
+            app.open_add_form();
+            for name in ["contrato-assinado-2026.pdf", "chave-de-recuperacao.txt"] {
+                app.form_attachments.push(pending(name));
+            }
+        }),
         ("generator", |app| app.gen_open = true),
         ("change", |app| app.change_open = true),
         ("import", |app| app.import_open = true),
@@ -335,6 +341,33 @@ fn every_dialog_fits_the_narrow_window() {
             }
         }
     }
+}
+
+/// Um anexo já lido do disco, à espera no formulário.
+fn pending(name: &str) -> crate::jobs::AttachmentRead {
+    crate::jobs::AttachmentRead { item_id: crate::FORM_ATTACH.into(), name: name.into(), mime: "text/plain", size: 1, data_b64: "QQ==".into() }
+}
+
+/// O anexo escolhido no formulário entra no item já na criação (antes, só dava para anexar depois de salvar).
+#[test]
+fn a_new_item_is_saved_with_the_attachments_chosen_in_the_form() {
+    let mut app = unlocked("form-attach", Prefs::new("pt-br", ThemeMode::Dark));
+    let dir = scratch("form-attach");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.open_add_form();
+    app.add_name = "com anexo".into();
+    app.form_attachments.push(pending("nota.txt"));
+    app.save_form();
+    assert!(!app.form_open, "o formulário fecha ao salvar: {:?}", app.err);
+    assert!(app.form_attachments.is_empty(), "a lista do formulário é esvaziada");
+    let raw = app.raw.as_ref().expect("cofre aberto");
+    let item = raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == "com anexo").expect("o item novo");
+    let atts = item["attachments"].as_array().expect("anexos");
+    assert_eq!(atts.len(), 1);
+    assert_eq!(atts[0]["name"], "nota.txt");
+    assert_eq!(atts[0]["dataB64"], "QQ==");
+    assert!(std::path::Path::new(&app.path).exists(), "o cofre foi gravado em disco");
 }
 
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.
