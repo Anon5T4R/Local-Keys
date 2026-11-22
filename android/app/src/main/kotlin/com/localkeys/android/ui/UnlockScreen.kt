@@ -35,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -63,6 +64,15 @@ fun UnlockScreen(
     modifier: Modifier = Modifier,
 ) {
     var password by rememberSaveable { mutableStateOf("") }
+    // Com a biometria ligada, o pedido de digital/rosto já sobe ao abrir a tela (uma vez por abertura; cancelar
+    // deixa a senha-mestra à mão e o botão de biometria continua lá).
+    var autoPrompted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.vaultUri, state.biometricAvailable) {
+        if (!autoPrompted && state.vaultUri != null && state.biometricAvailable && !state.busy) {
+            autoPrompted = true
+            onBiometricUnlock()
+        }
+    }
 
     StartLayout(modifier) {
         BrandHeader()
