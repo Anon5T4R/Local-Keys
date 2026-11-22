@@ -4,7 +4,10 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import android.Manifest
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,7 +25,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SmokeTest {
 
-    @get:Rule
+    // O app pede a permissão de notificação ao abrir (Android 13+): o diálogo do sistema cobria a tela e o
+    // teste nunca achava o texto. Concedida aqui, a tela sobe direto. A ordem importa: antes da activity.
+    @get:Rule(order = 0)
+    val notifications: GrantPermissionRule =
+        if (Build.VERSION.SDK_INT >= 33) GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS) else GrantPermissionRule.grant()
+
+    @get:Rule(order = 1)
     val rule = createAndroidComposeRule<MainActivity>()
 
     @Test

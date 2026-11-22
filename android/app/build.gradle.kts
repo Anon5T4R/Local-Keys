@@ -158,6 +158,8 @@ dependencies {
     // Rodam o APK de verdade num emulador Android e pegam crash de startup
     // (ex.: o Application inexistente do manifest que matou a v0.1.0 na hora).
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    // GrantPermissionRule: o smoke concede a permissão de notificação, senão o diálogo do sistema cobre o app.
+    androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     // ── Debug / preview ──────────────────────────────────────────────────

@@ -19,6 +19,11 @@ Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-c
 - `crates/core` — `localkeys-core`, o núcleo sem UI: formato `.tkeys` (`crypto.rs`), cofre em JSON bruto com
   escrita conservadora (`vault.rs`), importadores, exportação, TOTP e gerador. O Keys Android vai usá-lo por UniFFI
   (`docs/planos/android.md` do dev-notes); nada de UI ou i18n entra aqui.
+- `android/` — o Keys Android (Kotlin + Compose; histórico do antigo `LocalKeysAndroid` trazido por `git subtree`).
+  É do Claude (`AGENTS.md` do dev-notes). CI em `.github/workflows/android-ci.yml`; release pela tag
+  **`android-vX.Y.Z`** (`android-release.yml`, APK assinado com os secrets `KEYSTORE_B64` e `KEYSTORE_PROPERTIES_B64`,
+  publicado com `make_latest: false` para o atualizador do desktop não confundir com a release dele). Build local:
+  `android/local.properties` com `sdk.dir=C:/Android` (fora do git).
 - `src/` — o app (`src/pickers.rs`: seletor nativo async via rfd + pollster,
   portal XDG no Linux; também `src/i18n.rs`, `src/prefs.rs`, `src/theme.rs`, `src/shell.rs` e
   `i18n/locales/<code>/*.tsv`)
