@@ -47,7 +47,10 @@ pub struct Filters {
 impl Filters {
     /// Quantos filtros estão ligados — o número do botão "Filtrar (n)".
     pub fn active_count(&self) -> usize {
-        usize::from(self.kind != KindFilter::All) + usize::from(self.only.totp) + usize::from(self.only.attachments) + usize::from(self.only.favorites)
+        usize::from(self.kind != KindFilter::All)
+            + usize::from(self.only.totp)
+            + usize::from(self.only.attachments)
+            + usize::from(self.only.favorites)
     }
 
     /// Nada ligado (o botão volta a ser só "Filtrar").
@@ -98,12 +101,7 @@ mod tests {
     fn sem_filtros_tudo_passa() {
         let f = Filters::default();
         assert!(f.is_clear());
-        for (kind, ok) in [
-            (ItemKind::Login, true),
-            (ItemKind::Note, true),
-            (ItemKind::Card, true),
-            (ItemKind::Identity, true),
-        ] {
+        for (kind, ok) in [(ItemKind::Login, true), (ItemKind::Note, true), (ItemKind::Card, true), (ItemKind::Identity, true)] {
             assert_eq!(matches(&f, &item(kind, false, false, false)), ok);
         }
     }
