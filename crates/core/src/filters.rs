@@ -62,6 +62,43 @@ impl Filters {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    /// Os filtros ligados, na ordem do popup — cada um vira um chip removível ao lado do botão.
+    pub fn active_chips(&self) -> Vec<Chip> {
+        let mut chips = Vec::with_capacity(self.active_count());
+        if self.kind != KindFilter::All {
+            chips.push(Chip::Kind(self.kind));
+        }
+        if self.only.totp {
+            chips.push(Chip::Totp);
+        }
+        if self.only.attachments {
+            chips.push(Chip::Attachments);
+        }
+        if self.only.favorites {
+            chips.push(Chip::Favorites);
+        }
+        chips
+    }
+
+    /// O × de um chip: desliga só aquele filtro; os outros continuam como estão.
+    pub fn remove(&mut self, chip: Chip) {
+        match chip {
+            Chip::Kind(_) => self.kind = KindFilter::All,
+            Chip::Totp => self.only.totp = false,
+            Chip::Attachments => self.only.attachments = false,
+            Chip::Favorites => self.only.favorites = false,
+        }
+    }
+}
+
+/// Um filtro ligado, na ordem em que aparece no popup — a UI o desenha como chip com ×.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Chip {
+    Kind(KindFilter),
+    Totp,
+    Attachments,
+    Favorites,
 }
 
 /// O item passa nos filtros? Tipo (se escolhido) E cada "só" ligado — o `VaultFilters.visible` do
@@ -155,5 +192,19 @@ mod tests {
         f.clear();
         assert!(f.is_clear());
         assert_eq!(f.active_count(), 0);
+    }
+
+    #[test]
+    fn chips_na_ordem_do_popup_e_remover_um_so() {
+        let mut f = Filters { kind: KindFilter::Cards, only: Only { totp: true, attachments: true, favorites: true } };
+        assert_eq!(f.active_chips(), vec![Chip::Kind(KindFilter::Cards), Chip::Totp, Chip::Attachments, Chip::Favorites]);
+        assert_eq!(f.active_chips().len(), f.active_count(), "um chip por filtro ligado");
+        f.remove(Chip::Kind(KindFilter::Cards));
+        assert_eq!(f.kind, KindFilter::All);
+        assert!(f.only.totp && f.only.attachments && f.only.favorites, "os outros filtros ficam");
+        assert_eq!(f.active_count(), 3, "a contagem do botão cai");
+        f.remove(Chip::Totp);
+        assert_eq!(f.active_chips(), vec![Chip::Attachments, Chip::Favorites]);
+        assert!(Filters::default().active_chips().is_empty(), "sem filtro, sem chip");
     }
 }
