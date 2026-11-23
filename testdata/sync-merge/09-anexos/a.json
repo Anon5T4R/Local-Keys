@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "folders": [],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "i1",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i1",
+        "uris": [],
+        "totp": ""
+      }
+    },
+    {
+      "id": "i2",
+      "kind": "login",
+      "name": "i2",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1500,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i2",
+        "uris": [],
+        "totp": ""
+      },
+      "attachments": [
+        {
+          "id": "x2",
+          "name": "x2.pdf",
+          "size": 3,
+          "mime": "application/pdf",
+          "dataB64": "QUJD",
+          "deletedAt": 3000
+        }
+      ]
+    }
+  ]
+}

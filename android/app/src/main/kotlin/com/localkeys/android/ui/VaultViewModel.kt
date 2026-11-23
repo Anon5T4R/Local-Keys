@@ -35,6 +35,10 @@ import com.localkeys.android.data.store.DocumentIo
 import com.localkeys.android.data.store.DocumentWriteException
 import com.localkeys.android.data.store.DocumentWriter
 import com.localkeys.android.data.store.RecentVault
+import com.localkeys.android.data.store.RecentVaults
+import com.localkeys.android.data.sync.JsonEq
+import com.localkeys.android.data.sync.VaultMerge
+import org.json.JSONObject
 import com.localkeys.android.data.store.SettingsStore
 import com.localkeys.android.data.store.describeCause
 import com.localkeys.android.data.vault.AutofillPrefs
@@ -127,6 +131,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val recentVaults: List<RecentVault> = emptyList(),
         /** Copiar o TOTP depois de preencher um login pelo autofill. */
         val copyTotpAfterAutofill: Boolean = true,
+        /** Sincronizar com outra cópia: esperando a senha dela ou a confirmação do resumo. */
+        val syncPending: SyncPending? = null,
     )
 
     private val crypto = TkeysCrypto(LazySodiumAndroid(SodiumAndroid()))
@@ -912,6 +918,198 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 // autofill segue normal e o usuário salva manualmente depois.
             }
         }
+    }
+
+    // ── Sincronização: levar o cofre para outra pasta / juntar com outra cópia ──
+
+    /**
+     * Destino escolhido no SAF para levar o cofre (pasta do OneDrive, Drive, rclone, Syncthing...): grava o cofre
+     * cifrado lá, relê e confere que abre com a chave atual, e só então passa a usar o arquivo novo (recentes,
+     * permissão e chave da biometria vão junto). O arquivo antigo fica como cópia de segurança. Qualquer falha:
+     * continua no cofre antigo e mostra a causa.
+     */
+    fun onMoveTargetChosen(target: Uri) {
+        val oldUri = _state.value.vaultUri ?: return
+        if (target.toString() == oldUri) {
+            _state.update { it.copy(error = str(R.string.sync_move_same_file)) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val file = repository.save()
+                repository.verifySaved(file)
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        resolver.takePersistableUriPermission(
+                            target,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        )
+                    }
+                }
+                val back = withContext(Dispatchers.IO) { writeDocument(resolver, target, file) }
+                    ?: throw IOException(str(R.string.err_file_not_found))
+                // Relido do destino: abre com a chave atual e é exatamente o cofre aberto.
+                repository.verifySaved(back)
+
+                val newUri = target.toString()
+                val newName = displayName(resolver, target)
+                val oldName = _state.value.vaultName ?: RecentVaults.fallbackName(oldUri)
+                biometricKeys[oldUri]?.let { hex ->
+                    settings.setBiometricKey(newUri, hex)
+                    settings.setBiometricKey(oldUri, null)
+                }
+                // O arquivo antigo vira só cópia de segurança: sai da lista para não ser aberto por engano.
+                settings.forgetRecentVault(oldUri)
+                settings.touchRecentVault(newUri, newName)
+                cachedBlob = back
+                _state.update { it.copy(vaultUri = newUri, vaultName = newName, busy = false) }
+                settings.setVaultUri(newUri)
+                _state.update {
+                    it.copy(notice = str(R.string.sync_move_done, newName ?: newUri, describeLocation(oldName, oldUri)))
+                }
+            } catch (e: Exception) {
+                val detail = (e as? TkeysError)?.let(::tkeysErrorMessage) ?: e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                _state.update { it.copy(busy = false, error = str(R.string.sync_move_failed, detail)) }
+            }
+        }
+    }
+
+    /** O caminho do arquivo quando o provedor mostra ("Download/localkeys.tkeys"); senão só o nome. */
+    private fun describeLocation(name: String, uri: String): String {
+        val docId = runCatching { java.net.URLDecoder.decode(uri, "UTF-8") }.getOrDefault(uri).substringAfterLast("/document/", "")
+        // "primary:Download/x.tkeys" / "raw:/storage/.../x.tkeys" → o caminho; "msf:12" (sem caminho) → o nome.
+        return if (docId.contains('/')) docId.substringAfter(':') else name
+    }
+
+    private fun displayName(resolver: ContentResolver, uri: Uri): String? = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }.getOrNull()
+
+    /** Uma outra cópia em andamento: escolhida, aberta (ou esperando a senha) e já juntada. */
+    data class SyncPending(
+        val otherName: String,
+        val needsPassword: Boolean,
+        val summary: VaultMerge.Summary? = null,
+        val passwordError: String? = null,
+    )
+
+    private var syncOtherUri: Uri? = null
+    private var syncOtherBytes: ByteArray? = null
+    private var syncOther: VaultRepository.OtherCopy? = null
+    private var syncMerged: Vault? = null
+
+    /** Outra cópia escolhida no SAF: tenta abrir com a chave atual; se não der, pede a senha dela. */
+    fun onSyncOtherChosen(uri: Uri) {
+        if (uri.toString() == _state.value.vaultUri) {
+            _state.update { it.copy(error = str(R.string.sync_same_file)) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IOException(str(R.string.err_file_not_found))
+                val name = displayName(resolver, uri) ?: RecentVaults.fallbackName(uri.toString())
+                syncOtherUri = uri
+                syncOtherBytes = bytes
+                val other = withContext(Dispatchers.Default) { repository.openOtherWithSessionKey(bytes) }
+                if (other == null) {
+                    _state.update { it.copy(busy = false, syncPending = SyncPending(name, needsPassword = true)) }
+                } else {
+                    prepareSync(name, other)
+                }
+            } catch (e: Exception) {
+                clearSync()
+                val detail = (e as? TkeysError)?.let(::tkeysErrorMessage) ?: e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                _state.update { it.copy(busy = false, syncPending = null, error = str(R.string.sync_open_failed, detail)) }
+            }
+        }
+    }
+
+    /** Senha da outra cópia (quando a chave atual não abriu). Errada: o diálogo continua aberto. */
+    fun onSyncPassword(password: String) {
+        val bytes = syncOtherBytes ?: return
+        val pending = _state.value.syncPending ?: return
+        if (password.isBlank()) return
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, syncPending = pending.copy(passwordError = null)) }
+            try {
+                prepareSync(pending.otherName, repository.openOtherWithPassword(bytes, password))
+            } catch (e: TkeysError) {
+                _state.update { it.copy(busy = false, syncPending = pending.copy(passwordError = tkeysErrorMessage(e))) }
+            }
+        }
+    }
+
+    private fun prepareSync(name: String, other: VaultRepository.OtherCopy) {
+        val result = VaultMerge.merge(repository.vault, other.vault)
+        syncOther = other
+        syncMerged = result.vault
+        _state.update { it.copy(busy = false, syncPending = SyncPending(name, needsPassword = false, summary = result.summary)) }
+    }
+
+    /**
+     * Confirmou o resumo: grava o resultado no cofre atual (com a conferência de sempre) e na outra cópia
+     * (relida e conferida com a chave dela). Se a outra cópia falhar, o atual fica com a junção e o aviso diz.
+     */
+    fun confirmSync() {
+        val merged = syncMerged ?: return
+        val other = syncOther ?: return
+        val otherUri = syncOtherUri ?: return
+        val name = _state.value.syncPending?.otherName.orEmpty()
+        _state.update { it.copy(syncPending = null) }
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, error = null) }
+            val mergedJson = JSONObject(merged.toJson())
+            try {
+                if (!JsonEq.same(mergedJson, JSONObject(repository.vault.toJson()))) {
+                    repository.replace(merged)
+                    persistAndCommit(merged, notice = null)
+                }
+            } catch (e: Exception) {
+                clearSync()
+                failSave(e, R.string.op_sync)
+                return@launch
+            }
+            val otherProblem = if (JsonEq.same(mergedJson, JSONObject(other.vault.toJson()))) {
+                null
+            } else {
+                try {
+                    val blob = repository.sealFor(other, merged)
+                    val back = withContext(Dispatchers.IO) {
+                        writeDocument(getApplication<Application>().contentResolver, otherUri, blob)
+                    }
+                    if (back == null || !repository.verifyFor(other, back, merged)) str(R.string.err_write_unrecoverable) else null
+                } catch (e: Exception) {
+                    e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                }
+            }
+            clearSync()
+            _state.update {
+                if (otherProblem == null) {
+                    it.copy(busy = false, notice = str(R.string.sync_done, name))
+                } else {
+                    it.copy(busy = false, error = str(R.string.sync_other_failed, name, otherProblem))
+                }
+            }
+        }
+    }
+
+    /** Cancelou (ou fechou o diálogo): nada é gravado. */
+    fun cancelSync() {
+        clearSync()
+        _state.update { it.copy(syncPending = null) }
+    }
+
+    private fun clearSync() {
+        syncOtherUri = null
+        syncOtherBytes = null
+        syncOther = null
+        syncMerged = null
     }
 
     // ── Exportar ─────────────────────────────────────────────────────────

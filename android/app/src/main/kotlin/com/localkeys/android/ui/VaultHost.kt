@@ -49,6 +49,10 @@ data class HostCallbacks(
     val onImportOther: (() -> Unit)?,
     /** Seletor do sistema para abrir outro cofre (troca de cofre nas configurações). */
     val onOpenVault: () -> Unit,
+    /** Criar o arquivo de destino para levar o cofre (nome sugerido = o do cofre atual). */
+    val onMoveVault: (String) -> Unit,
+    /** Escolher a outra cópia para sincronizar. */
+    val onSyncOther: () -> Unit,
 )
 
 /**
@@ -221,6 +225,8 @@ fun VaultHost(
                     onOpenOther = callbacks.onOpenVault,
                     onForget = viewModel::forgetVault,
                 ),
+                onMoveVault = { callbacks.onMoveVault(state.vaultName ?: "localkeys.tkeys") },
+                onSyncOther = callbacks.onSyncOther,
                 themeMode = state.themeMode,
                 onThemeMode = viewModel::setThemeMode,
                 busy = state.busy,
@@ -279,6 +285,15 @@ fun VaultHost(
             error = state.error,
             onConfirm = viewModel::onImportPassword,
             onDismiss = viewModel::dismissImport,
+        )
+    }
+    state.syncPending?.let { pending ->
+        SyncDialog(
+            pending = pending,
+            busy = state.busy,
+            onPassword = viewModel::onSyncPassword,
+            onConfirm = viewModel::confirmSync,
+            onCancel = viewModel::cancelSync,
         )
     }
     if (newItemOpen) {

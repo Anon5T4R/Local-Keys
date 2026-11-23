@@ -465,4 +465,37 @@
     <string name="doc_passport">Passaporte</string>
     <string name="doc_other">Documento (outro)</string>
     <string name="cpf_warning">Os dígitos verificadores do CPF não conferem. Confira se digitou certo; dá para salvar assim mesmo.</string>
+
+    <!-- Sincronização -->
+    <string name="sync_section">Sincronização</string>
+    <string name="sync_move">Levar cofre para pasta sincronizada</string>
+    <string name="sync_move_body">Escolha uma pasta do OneDrive, Drive, rclone, Syncthing…; o cofre vai para lá e os outros aparelhos passam a vê-lo. O arquivo antigo fica como cópia de segurança.</string>
+    <string name="sync_other">Sincronizar com outra cópia</string>
+    <string name="sync_other_body">Escolha outra cópia deste cofre (.tkeys). As duas viram uma só e o resultado é gravado nos dois arquivos.</string>
+    <string name="sync_move_same_file">Esse já é o arquivo em uso.</string>
+    <string name="sync_move_done">Cofre levado: o app agora usa o novo %1$s. O arquivo antigo fica onde estava, como cópia de segurança (%2$s); ele saiu da lista de cofres.</string>
+    <string name="sync_move_failed">Não foi possível levar o cofre; ele continua onde estava. %1$s</string>
+    <string name="sync_same_file">Esse é o cofre que já está aberto. Escolha a outra cópia.</string>
+    <string name="sync_open_failed">Não foi possível abrir a outra cópia: %1$s</string>
+    <string name="sync_password_title">Senha da outra cópia</string>
+    <string name="sync_password_message">%1$s não abre com a senha deste cofre. Digite a senha-mestra dele.</string>
+    <string name="sync_open">Abrir</string>
+    <string name="sync_summary_title">Sincronizar com %1$s?</string>
+    <string name="sync_summary_same_title">%1$s já está em dia</string>
+    <string name="sync_summary_nothing">As duas cópias já têm os mesmos itens. Nada a gravar.</string>
+    <string name="sync_summary_here">Este cofre recebe</string>
+    <string name="sync_summary_there">A outra cópia recebe</string>
+    <string name="sync_count_added">Itens novos</string>
+    <string name="sync_count_updated">Itens atualizados</string>
+    <string name="sync_count_trashed">Para a lixeira</string>
+    <string name="sync_count_restored">Tirados da lixeira</string>
+    <string name="sync_count_folders">Pastas novas</string>
+    <string name="sync_count_conflicts">Conflitos (ficou a versão deste aparelho)</string>
+    <string name="sync_count_to_other">Itens novos ou mais recentes</string>
+    <string name="sync_summary_no_backup">Sem cópia de segurança automática: o Android só deixa o app criar arquivos numa pasta à qual ele tem acesso total. O arquivo atual da outra cópia é substituído pelo cofre juntado.</string>
+    <string name="sync_confirm">Sincronizar</string>
+    <string name="sync_ok">OK</string>
+    <string name="sync_done">Sincronizado: este cofre e %1$s agora são iguais.</string>
+    <string name="sync_other_failed">Este cofre foi atualizado, mas %1$s não: %2$s</string>
+    <string name="op_sync">Sincronizar</string>
 </resources>

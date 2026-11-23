@@ -466,4 +466,37 @@
     <string name="doc_passport">Passport</string>
     <string name="doc_other">Document (other)</string>
     <string name="cpf_warning">The CPF check digits don\'t match. Check for a typo; you can still save.</string>
+
+    <!-- Sincronização -->
+    <string name="sync_section">Sync</string>
+    <string name="sync_move">Move vault to a synced folder</string>
+    <string name="sync_move_body">Pick a folder from OneDrive, Drive, rclone, Syncthing…; the vault moves there so your other devices see it. The old file stays as a backup.</string>
+    <string name="sync_other">Sync with another copy</string>
+    <string name="sync_other_body">Pick another copy of this vault (.tkeys). Both are merged into one and the result is written to both files.</string>
+    <string name="sync_move_same_file">That is the file already in use.</string>
+    <string name="sync_move_done">Vault moved: the app now uses the new %1$s. The old file stays where it was, as a backup (%2$s); it left the vault list.</string>
+    <string name="sync_move_failed">Could not move the vault; it stays where it was. %1$s</string>
+    <string name="sync_same_file">That is the vault already open. Pick the other copy.</string>
+    <string name="sync_open_failed">Could not open the other copy: %1$s</string>
+    <string name="sync_password_title">Password of the other copy</string>
+    <string name="sync_password_message">%1$s does not open with the password of this vault. Type its master password.</string>
+    <string name="sync_open">Open</string>
+    <string name="sync_summary_title">Sync with %1$s?</string>
+    <string name="sync_summary_same_title">%1$s is already in sync</string>
+    <string name="sync_summary_nothing">Both copies already have the same items. Nothing to write.</string>
+    <string name="sync_summary_here">This vault receives</string>
+    <string name="sync_summary_there">The other copy receives</string>
+    <string name="sync_count_added">New items</string>
+    <string name="sync_count_updated">Updated items</string>
+    <string name="sync_count_trashed">Moved to trash</string>
+    <string name="sync_count_restored">Restored from trash</string>
+    <string name="sync_count_folders">New folders</string>
+    <string name="sync_count_conflicts">Conflicts (this device\'s version kept)</string>
+    <string name="sync_count_to_other">New or newer items</string>
+    <string name="sync_summary_no_backup">No automatic backup copy: Android only lets an app create files in a folder it was given full access to. The other copy\'s current file is overwritten with the merged vault.</string>
+    <string name="sync_confirm">Sync</string>
+    <string name="sync_ok">OK</string>
+    <string name="sync_done">Synced: this vault and %1$s are now identical.</string>
+    <string name="sync_other_failed">This vault was updated, but %1$s was not: %2$s</string>
+    <string name="op_sync">Sync</string>
 </resources>

@@ -109,6 +109,54 @@ class VaultRepository(private val crypto: TkeysCrypto) {
         return vault
     }
 
+    // ── Outra cópia do cofre (sincronizar) ───────────────────────────────
+
+    /** Uma outra cópia aberta: o conteúdo e a chave dela (para gravar o resultado de volta com o sal dela). */
+    class OtherCopy(val vault: Vault, val session: SessionKey)
+
+    /**
+     * Tenta abrir outra cópia com a chave da sessão atual (mesmo cofre copiado = mesmo sal = mesma chave).
+     * Null se a chave não serve (cópia com outra senha, ou criada à parte com a mesma senha: sal diferente).
+     */
+    fun openOtherWithSessionKey(file: ByteArray): OtherCopy? {
+        val s = session ?: throw IllegalStateException("vault não está destrancado")
+        val opened = try {
+            crypto.openVaultWithKey(s.keyBytes(), file)
+        } catch (e: TkeysError.Decrypt) {
+            return null
+        }
+        return OtherCopy(parseOrCorrupted(opened.plaintext), opened.session)
+    }
+
+    /** Abre outra cópia com a senha dela (roda o Argon2id). Lança [TkeysError] se não abrir. */
+    fun openOtherWithPassword(file: ByteArray, password: String): OtherCopy {
+        val opened = crypto.openVault(password, file)
+        return OtherCopy(parseOrCorrupted(opened.plaintext), opened.session)
+    }
+
+    /** Cifra [vault] para a outra cópia (chave e sal dela). */
+    fun sealFor(other: OtherCopy, vault: Vault): ByteArray = other.session.seal(vault.toJson().toByteArray())
+
+    /** O que foi relido da outra cópia reabre com a chave dela e é exatamente [vault]? */
+    fun verifyFor(other: OtherCopy, blob: ByteArray, vault: Vault): Boolean = try {
+        crypto.openWithKey(other.session.keyBytes(), blob).contentEquals(vault.toJson().toByteArray())
+    } catch (e: TkeysError) {
+        false
+    }
+
+    /** Troca o vault em memória pelo resultado da junção (a gravação é do chamador, como nos outros). */
+    fun replace(vault: Vault): Vault {
+        if (current == null) throw IllegalStateException("vault não está destrancado")
+        current = vault
+        return vault
+    }
+
+    private fun parseOrCorrupted(plaintext: ByteArray): Vault = try {
+        Vault.parse(String(plaintext))
+    } catch (e: Exception) {
+        throw TkeysError.Corrupted
+    }
+
     /**
      * Anexa itens importados ao vault atual (em memória) e devolve o vault novo.
      * A gravação no arquivo é responsabilidade do chamador (`save`).

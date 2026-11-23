@@ -23,8 +23,8 @@ android {
         applicationId = "com.localkeys.android"
         minSdk = 28
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.6.0"
+        versionCode = 14
+        versionName = "0.7.0"
 
         vectorDrawables { useSupportLibrary = true }
         // Smoke test no emulador (CI): abrir o app de verdade e ver a UI subir.

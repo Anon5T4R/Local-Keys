@@ -40,6 +40,8 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Pin
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.SyncAlt
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.FilledTonalButton
@@ -85,6 +87,10 @@ fun SettingsScreen(
     vaultUri: String?,
     recentVaults: List<RecentVault>,
     vaultActions: VaultSwitchActions,
+    /** Levar o cofre para uma pasta sincronizada (SAF criar documento). */
+    onMoveVault: () -> Unit,
+    /** Sincronizar com outra cópia (SAF abrir). */
+    onSyncOther: () -> Unit,
     themeMode: String,
     onThemeMode: (String) -> Unit,
     busy: Boolean,
@@ -130,6 +136,10 @@ fun SettingsScreen(
                 .padding(bottom = 24.dp),
         ) {
             VaultSection(vaultName, vaultUri, recentVaults, busy, vaultActions)
+
+            SectionTitle(stringResource(R.string.sync_section))
+            SettingsAction(Icons.Outlined.DriveFileMove, stringResource(R.string.sync_move), stringResource(R.string.sync_move_body), !busy, onMoveVault)
+            SettingsAction(Icons.Outlined.Sync, stringResource(R.string.sync_other), stringResource(R.string.sync_other_body), !busy, onSyncOther)
 
             AppearanceSection(themeMode, onThemeMode)
 

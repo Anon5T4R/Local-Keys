@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Trabalho"
+    },
+    {
+      "id": "f3",
+      "name": "Só aqui"
+    },
+    {
+      "id": "f2",
+      "name": "Casa"
+    }
+  ],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "i1",
+      "favorite": false,
+      "folderId": "f1",
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i1",
+        "uris": [],
+        "totp": ""
+      }
+    },
+    {
+      "id": "i2",
+      "kind": "login",
+      "name": "i2",
+      "favorite": false,
+      "folderId": "f2",
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i2",
+        "uris": [],
+        "totp": ""
+      }
+    }
+  ]
+}
