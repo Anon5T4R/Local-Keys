@@ -1,0 +1,27 @@
+name: Núcleo Rust do Android
+description: >
+  Prepara o que o Gradle precisa para compilar crates/ffi (o localkeys-core por UniFFI): Rust estável com os
+  targets Android, o cargo-ndk e um cache do build. O NDK vem na imagem do runner (ANDROID_NDK_HOME).
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+    # O cargo-ndk monta o linker e as variáveis do NDK para cada ABI.
+    - name: Instalar o cargo-ndk
+      shell: bash
+      run: cargo install cargo-ndk --locked --version 4.1.2
+
+    # O Gradle compila em android/app/build/cargo (CARGO_TARGET_DIR): o cache guarda só as dependências.
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          android/app/build/cargo
+        key: android-native-${{ runner.os }}-${{ hashFiles('crates/ffi/Cargo.lock', 'crates/core/Cargo.toml') }}
+        restore-keys: android-native-${{ runner.os }}-

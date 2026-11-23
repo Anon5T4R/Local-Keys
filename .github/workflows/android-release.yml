@@ -21,6 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Rust + cargo-ndk: o Gradle compila o núcleo (crates/ffi) para cada ABI antes do APK.
+      - uses: ./.github/actions/android-native
+
       - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:

@@ -5,9 +5,9 @@ on:
     # Só a main: push de tag (v*) não dispara o CI — o release.yml já cuida do
     # release. Antes, toda tag rodava o CI de novo (duplicava o job).
     branches: ["main"]
-    paths: ["android/**", "crates/core/**", ".github/workflows/android-*.yml"]
+    paths: ["android/**", "crates/core/**", "crates/ffi/**", ".github/workflows/android-*.yml", ".github/actions/android-native/**"]
   pull_request:
-    paths: ["android/**", "crates/core/**", ".github/workflows/android-*.yml"]
+    paths: ["android/**", "crates/core/**", "crates/ffi/**", ".github/workflows/android-*.yml", ".github/actions/android-native/**"]
   workflow_dispatch:
 
 # O app Android mora em android/ (o núcleo Rust que ele vai usar, em crates/core).
@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # Rust + cargo-ndk: o Gradle compila o núcleo (crates/ffi) para cada ABI antes do APK.
+      - uses: ./.github/actions/android-native
 
       - name: Setup JDK 17
         uses: actions/setup-java@v5
@@ -57,6 +60,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # Rust + cargo-ndk: o Gradle compila o núcleo (crates/ffi) para cada ABI antes do APK.
+      - uses: ./.github/actions/android-native
 
       - name: Setup JDK 17
         uses: actions/setup-java@v5
