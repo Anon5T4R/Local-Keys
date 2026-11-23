@@ -1,8 +1,8 @@
 package com.localkeys.android.data.crypto
 
 /**
- * Codec hex puro (sem dependência de Android/JDK específico) — usado para
- * trocar bytes com a API String-encoded do lazysodium.
+ * Codec hex puro (sem dependência de Android/JDK específico) — guarda a chave embrulhada do desbloqueio
+ * biométrico como texto nas preferências.
  */
 object Hex {
     private const val HEX = "0123456789ABCDEF"
