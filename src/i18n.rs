@@ -124,8 +124,16 @@ mod tests {
     fn untranslated_on_purpose(text: &str) -> bool {
         matches!(
             text,
-            "TOTP" | "URL" | "s" | "Error" | "Passphrase" | "CSV (Chrome/Edge/LastPass/1Password)" | "KeePass (.kdbx)" | "Local Keys"
-                | "Login" | "E-mail"
+            "TOTP"
+                | "URL"
+                | "s"
+                | "Error"
+                | "Passphrase"
+                | "CSV (Chrome/Edge/LastPass/1Password)"
+                | "KeePass (.kdbx)"
+                | "Local Keys"
+                | "Login"
+                | "E-mail"
         )
     }
 
