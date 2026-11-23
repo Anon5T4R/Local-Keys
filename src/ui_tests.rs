@@ -10,7 +10,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 
 use crate::prefs::Prefs;
 
-use crate::KeysApp;
+use crate::{FormCustomField, KeysApp, NewKind};
 
 /// Pasta temporária própria do teste (o config.json de teste vai para lá).
 fn scratch(name: &str) -> PathBuf {
@@ -36,6 +36,58 @@ fn unlocked(name: &str, prefs: Prefs) -> KeysApp {
     app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
     app.adopt(crate::crypto::test_session(), raw);
     app
+}
+
+/// Um cofre destrancado com um item de CADA tipo (login com TOTP, cartão, identidade, nota), para os
+/// testes dos resumos da lista e da edição por tipo.
+fn unlocked_kinds(name: &str, prefs: Prefs) -> KeysApp {
+    let mut app = app(name, prefs);
+    let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
+    crate::vault::add_login(
+        &mut raw,
+        crate::vault::LoginForm { name: "Gmail", username: "joao", password: "x", totp: "JBSWY3DPEHPK3PXP", url: "", notes: "" },
+    );
+    crate::vault::add_card(
+        &mut raw,
+        crate::vault::CardForm {
+            name: "Nubank",
+            cardholder: "João da Silva",
+            brand: "Elo",
+            number: "6362 9700-0045 7013",
+            exp: "01/2027",
+            code: "123",
+            notes: "",
+        },
+    );
+    crate::vault::add_identity(
+        &mut raw,
+        crate::vault::IdentityForm {
+            name: "Documentos",
+            first_name: "João",
+            last_name: "Silva",
+            email: "joao.silva@exemplo.com",
+            phone: "+55 11 90000-0000",
+            address: "Rua A, 123",
+            notes: "",
+        },
+    );
+    crate::vault::add_note(&mut raw, crate::vault::NoteForm { name: "Lista do mercado", notes: "\n   \ncomprar pão\nlevar o note" });
+    app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
+    app.adopt(crate::crypto::test_session(), raw);
+    app
+}
+
+/// O id do item pelo nome (os helpers de cofre criam com id gerado).
+fn item_id(app: &KeysApp, name: &str) -> String {
+    app.raw
+        .as_ref()
+        .and_then(|r| r.get("items"))
+        .and_then(|i| i.as_array())
+        .and_then(|arr| arr.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name)))
+        .and_then(|it| it.get("id"))
+        .and_then(|v| v.as_str())
+        .expect("item existe")
+        .to_string()
 }
 
 // O kittest falha se algum texto da tela cair numa fonte sem o glyph (a "caixinha"): é o guarda dos emojis.
@@ -300,20 +352,14 @@ fn rare_vault_actions_live_in_the_more_menu() {
     assert!(harness.state().change_open);
 }
 
-/// Todo diálogo do cofre cabe na janela do teste (340×640, menor que a inicial de 480×660): nenhum
-/// controle passa da borda em nenhum dos dois eixos. Hoje nenhum passa de 640 de altura, então nenhum
-/// precisa de rolagem.
+/// Todo diálogo do cofre SEM área de rolagem cabe na janela do teste (340×640): nenhum controle passa
+/// da borda em nenhum dos dois eixos. Os formulários de item (que rolam) ficam no teste irmão
+/// [`every_form_dialog_keeps_its_chrome_in_the_narrow_window`].
 #[test]
 fn every_dialog_fits_the_narrow_window() {
     type Open = fn(&mut KeysApp);
-    let dialogs: [(&str, Open); 9] = [
-        ("add", |app| app.open_add_form()),
-        ("add-with-attachments", |app| {
-            app.open_add_form();
-            for name in ["contrato-assinado-2026.pdf", "chave-de-recuperacao.txt"] {
-                app.form_attachments.push(pending(name));
-            }
-        }),
+    let dialogs: [(&str, Open); 8] = [
+        ("new-kind", |app| app.new_kind_open = true),
         ("generator", |app| app.gen_open = true),
         ("change", |app| app.change_open = true),
         ("import", |app| app.import_open = true),
@@ -343,6 +389,64 @@ fn every_dialog_fits_the_narrow_window() {
     }
 }
 
+/// Os formulários de item (login, cartão, identidade, nota, item livre) têm área central com rolagem:
+/// o conteúdo que passa da dobra existe no LAYOUT além da borda da janela (o ScrollArea pinta só o
+/// viewport), então aqui valem duas regras: largura para todos os nós, e altura para o que fica FORA
+/// da rolagem — o título, o crachá do tipo e os botões Salvar/Cancelar, que precisam estar sempre à vista.
+#[test]
+fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
+    type Open = fn(&mut KeysApp);
+    let forms: [(&str, Open); 7] = [
+        ("add", |app| app.open_add_form(NewKind::Login)),
+        ("add-with-attachments", |app| {
+            app.open_add_form(NewKind::Login);
+            for name in ["contrato-assinado-2026.pdf", "chave-de-recuperacao.txt"] {
+                app.form_attachments.push(pending(name));
+            }
+        }),
+        ("card", |app| app.open_add_form(NewKind::Card)),
+        ("card-custom", |app| {
+            app.open_add_form(NewKind::Card);
+            app.add_number = "6362970000457013".into();
+            app.add_exp = "01/2027".into();
+            app.form_custom.push(FormCustomField {
+                id: String::new(),
+                name: "PIN do cartão".into(),
+                value: "1234".into(),
+                hidden: true,
+                revealed: false,
+            });
+        }),
+        ("identity", |app| app.open_add_form(NewKind::Identity)),
+        ("note", |app| app.open_add_form(NewKind::Note)),
+        ("free-item", |app| app.open_add_form(NewKind::FreeItem)),
+    ];
+    const WIDTH: f64 = 340.0;
+    const HEIGHT: f64 = 640.0;
+    for (name, open) in forms {
+        let mut app = unlocked("forms", Prefs::new("pt-br", ThemeMode::Dark));
+        open(&mut app);
+        let mut harness = harness_sized(app, WIDTH as f32);
+        harness.run_steps(3);
+        shot(&mut harness, &format!("form-{name}-340"));
+        for node in harness.root().children_recursive() {
+            let Some(rect) = node.accesskit_node().bounding_box() else { continue };
+            if rect.width() > 0.0 {
+                assert!(rect.x0 >= 0.0 && rect.x1 <= WIDTH, "{name}: nó fora da largura: {rect:?}");
+            }
+        }
+        // O que fica fora da rolagem (título, Salvar, Cancelar) cabe na altura — o conteúdo além da
+        // dobra é que rola (só existe além da borda no layout, invisível). Valem TODOS os nós com
+        // esses rótulos (o "Adicionar" da barra de fundo entra junto, e também precisa caber).
+        for label in ["Adicionar", "Salvar", "Cancelar"] {
+            for node in harness.get_all_by_label(label) {
+                let rect = node.rect();
+                assert!(rect.min.y >= 0.0 && rect.max.y <= HEIGHT as f32, "{name}: {label} fora da janela: {rect:?}");
+            }
+        }
+    }
+}
+
 /// Um anexo já lido do disco, à espera no formulário.
 fn pending(name: &str) -> crate::jobs::AttachmentRead {
     crate::jobs::AttachmentRead { item_id: crate::FORM_ATTACH.into(), name: name.into(), mime: "text/plain", size: 1, data_b64: "QQ==".into() }
@@ -355,7 +459,7 @@ fn a_new_item_is_saved_with_the_attachments_chosen_in_the_form() {
     let dir = scratch("form-attach");
     std::fs::create_dir_all(&dir).expect("pasta do teste");
     app.path = dir.join("cofre.tkeys").display().to_string();
-    app.open_add_form();
+    app.open_add_form(NewKind::Login);
     app.add_name = "com anexo".into();
     app.form_attachments.push(pending("nota.txt"));
     app.save_form();
@@ -368,6 +472,185 @@ fn a_new_item_is_saved_with_the_attachments_chosen_in_the_form() {
     assert_eq!(atts[0]["name"], "nota.txt");
     assert_eq!(atts[0]["dataB64"], "QQ==");
     assert!(std::path::Path::new(&app.path).exists(), "o cofre foi gravado em disco");
+}
+
+/// O "+" pergunta o tipo ANTES de abrir o formulário: Login, Cartão, Identidade, Nota e Item livre.
+/// Escolher Cartão abre o form do tipo (sem os campos de login).
+#[test]
+fn the_add_button_asks_the_type_before_the_form() {
+    let mut harness = harness(unlocked("new-kind", Prefs::new("en", ThemeMode::Dark)));
+    harness.get_by_label("Add").click();
+    harness.run_steps(2);
+    assert!(harness.state().new_kind_open);
+    assert!(!harness.state().form_open, "o form só abre depois da escolha");
+    harness.get_by_label("New item");
+    for label in ["Login", "Card", "Identity", "Note", "Free item"] {
+        harness.get_by_label_contains(label);
+    }
+    // escolher Cartão abre o formulário do tipo
+    harness.get_by_label_contains("Card").click();
+    harness.run_steps(2);
+    assert!(!harness.state().new_kind_open);
+    assert!(harness.state().form_open);
+    assert_eq!(harness.state().form_kind, crate::vault::ItemKind::Card);
+    // o crachá fixo do tipo e os campos do cartão (titular, bandeira, número, validade, código)
+    harness.get_by_label_contains("Type: Card");
+    harness.get_by_label("Cardholder");
+    harness.get_by_label("Brand");
+    harness.get_by_label("Number");
+    harness.get_by_label("Expiry (MM/YY)");
+    harness.get_by_label("Security code");
+}
+
+/// Criar de cada tipo grava o shape certo no cofre (o mesmo que o Android lê): cartão com número só em
+/// dígitos e validade MM/AA, identidade nos cinco campos, nota sem login — e o item livre é uma nota com
+/// um campo personalizado.
+#[test]
+fn creating_each_kind_stores_the_right_shape() {
+    let mut app = unlocked("kinds", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("kinds");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+
+    app.open_add_form(NewKind::Card);
+    app.add_name = "Itaú".into();
+    app.add_cardholder = "João".into();
+    app.add_brand = "Mastercard".into();
+    app.add_number = "5555 5555 5555 4444".into();
+    app.add_exp = "0330".into();
+    app.add_code = "12a4".into();
+    app.save_form();
+    assert!(!app.form_open, "salvou o cartão: {:?}", app.err);
+
+    app.open_add_form(NewKind::Identity);
+    app.add_name = "Passaporte".into();
+    app.add_first = "Ana".into();
+    app.add_last = "Souza".into();
+    app.add_email = "ana@exemplo.com".into();
+    app.add_phone = "11 91234-5678".into();
+    app.add_address = "Rua B, 45".into();
+    app.save_form();
+
+    app.open_add_form(NewKind::Note);
+    app.add_name = "Recados".into();
+    app.add_notes = "levar o note".into();
+    app.save_form();
+
+    // item livre: nota que abre com um campo personalizado vazio
+    app.open_add_form(NewKind::FreeItem);
+    assert_eq!(app.form_custom.len(), 1, "o campo vazio já vem aberto");
+    app.add_name = "Chaves do apartamento".into();
+    app.form_custom[0].name = "portão".into();
+    app.form_custom[0].value = "9090".into();
+    app.form_custom[0].hidden = true;
+    app.save_form();
+
+    let raw = app.raw.as_ref().expect("cofre");
+    let acha = |nome: &str| raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == nome).expect(nome);
+    let card = acha("Itaú");
+    assert_eq!(card["kind"], "card");
+    assert_eq!(card["card"]["number"], "5555555555554444", "número: só dígitos");
+    assert_eq!(card["card"]["exp"], "03/30", "validade vira MM/AA");
+    assert_eq!(card["card"]["code"], "124", "código: só dígitos");
+    assert!(card.get("login").is_none(), "cartão não carrega login");
+    let ident = acha("Passaporte");
+    assert_eq!(ident["kind"], "identity");
+    assert_eq!(ident["identity"]["firstName"], "Ana");
+    assert_eq!(ident["identity"]["address"], "Rua B, 45");
+    let note = acha("Recados");
+    assert_eq!(note["kind"], "note");
+    assert_eq!(note["notes"], "levar o note");
+    let free = acha("Chaves do apartamento");
+    assert_eq!(free["kind"], "note", "item livre é uma nota");
+    assert_eq!(free["customFields"][0]["name"], "portão");
+    assert_eq!(free["customFields"][0]["hidden"], true);
+    assert!(std::path::Path::new(&app.path).exists(), "o cofre foi gravado em disco");
+}
+
+/// Na edição o tipo aparece FIXO no topo (ícone e nome), sem troca — salvar não muda a classe do item.
+#[test]
+fn editing_shows_the_type_fixed_and_keeps_it() {
+    let mut app = unlocked_kinds("edit-kind", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("edit-kind");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let id = item_id(&app, "Nubank");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().open_edit_form(&id);
+    harness.run_steps(2);
+    harness.get_by_label_contains("Type: Card");
+    assert!(harness.query_by_label("New item").is_none(), "sem seletor de tipo na edição");
+    // os campos do próprio tipo carregam
+    assert_eq!(harness.state().add_number, "6362970000457013");
+    // trocar o título e salvar mantém o tipo (não vira login). O clique precisa de um quadro de
+    // acomodação depois da mudança de estado direta (o modal re-assenta o layout).
+    harness.state_mut().add_name = "Nubank UR".into();
+    harness.run_steps(2);
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    assert!(!harness.state().form_open, "salvou: {:?}", harness.state().err);
+    let raw = harness.state().raw.as_ref().expect("cofre");
+    let it = raw["items"].as_array().expect("itens").iter().find(|i| i["id"] == id.as_str()).expect("item");
+    assert_eq!(it["kind"], "card");
+    assert_eq!(it["name"], "Nubank UR");
+    assert_eq!(it["card"]["number"], "6362970000457013");
+}
+
+/// Campo personalizado com a chave "Oculto": o valor sai mascarado (👁 revela) e salvar grava `hidden: true`.
+#[test]
+fn a_hidden_custom_field_masks_reveals_and_copies() {
+    let mut app = unlocked("custom-hidden", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("custom-hidden");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.open_add_form(NewKind::FreeItem);
+    app.add_name = "Recado".into();
+    let f = app.form_custom.first_mut().expect("item livre abre com um campo");
+    f.name = "pin".into();
+    f.value = "1234".into();
+    f.hidden = true;
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    // oculto: o valor sai mascarado, com 👁 para revelar e cópia ao lado
+    assert_eq!(harness.get_by_label("Value").accesskit_node().role(), Role::PasswordInput);
+    harness.get_by_label("Copy");
+    harness.get_by_label("👁").click();
+    harness.run_steps(2);
+    assert_eq!(harness.get_by_label("Value").accesskit_node().role(), Role::TextInput, "revelado");
+    harness.get_by_label("Hidden");
+    // salvar grava o campo como oculto no cofre
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    assert!(!harness.state().form_open, "salvou: {:?}", harness.state().err);
+    let raw = harness.state().raw.as_ref().expect("cofre");
+    let it = raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == "Recado").expect("item");
+    assert_eq!(it["kind"], "note");
+    let campos = it["customFields"].as_array().expect("campos");
+    assert_eq!(campos.len(), 1);
+    assert_eq!(campos[0]["name"], "pin");
+    assert_eq!(campos[0]["value"], "1234");
+    assert_eq!(campos[0]["hidden"], true);
+}
+
+/// A linha da lista mostra o resumo do tipo: usuário, bandeira e `•••• 1234`, nome completo, começo da
+/// nota — e o filtro TOTP continua servindo com itens de qualquer tipo na tela.
+#[test]
+fn the_list_shows_the_right_summary_per_kind() {
+    let mut harness = harness(unlocked_kinds("summaries", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    harness.get_by_label_contains("joao");
+    harness.get_by_label_contains("Elo  •••• 7013");
+    harness.get_by_label_contains("João Silva");
+    harness.get_by_label_contains("comprar pão");
+    // o ícone do tipo acompanha o nome na linha
+    harness.get_by_label_contains("💳 Nubank");
+    // o filtro TOTP esconde o que não tem segredo (cartão, identidade, nota) e mantém o login
+    harness.get_by_label("TOTP ⟳").click();
+    harness.run_steps(2);
+    assert_eq!(harness.query_all_by_label_contains("••••").count(), 0, "cartão escondido");
+    assert_eq!(harness.query_all_by_label_contains("comprar pão").count(), 0, "nota escondida");
+    harness.get_by_label_contains("joao");
 }
 
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.

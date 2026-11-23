@@ -28,7 +28,7 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, crypto, export, generator, import, kdbx, totp, vault};
+use localkeys_core::{bwdecrypt, card, crypto, export, generator, import, kdbx, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -205,6 +205,68 @@ fn split_attachment_paths(text: &str) -> Vec<String> {
 enum ExportKind {
     Json,
     Csv,
+}
+
+/// O que o "+" oferece antes de abrir o formulário (o `NewItemSheet` do Android). **Item livre** é uma
+/// nota que já abre com um campo personalizado vazio — sem formato pronto.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NewKind {
+    Login,
+    Card,
+    Identity,
+    Note,
+    FreeItem,
+}
+
+impl NewKind {
+    /// O tipo que vai no cofre (item livre é uma nota).
+    fn kind(self) -> vault::ItemKind {
+        match self {
+            Self::Login => vault::ItemKind::Login,
+            Self::Card => vault::ItemKind::Card,
+            Self::Identity => vault::ItemKind::Identity,
+            Self::Note | Self::FreeItem => vault::ItemKind::Note,
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        if self == Self::FreeItem { "📄" } else { kind_icon(self.kind()) }
+    }
+
+    fn label(self) -> &'static str {
+        if self == Self::FreeItem { tr("Free item") } else { kind_label(self.kind()) }
+    }
+}
+
+/// Ícone de cada tipo (lista, seletor e crachá do form usam o mesmo) — os glifos existem nas fontes
+/// embutidas (Noto Emoji), o guarda de glyphs dos testes confirma.
+fn kind_icon(kind: vault::ItemKind) -> &'static str {
+    match kind {
+        vault::ItemKind::Login => "🔑",
+        vault::ItemKind::Note => "📝",
+        vault::ItemKind::Card => "💳",
+        vault::ItemKind::Identity => "👤",
+    }
+}
+
+/// Nome de cada tipo no idioma da interface.
+fn kind_label(kind: vault::ItemKind) -> &'static str {
+    match kind {
+        vault::ItemKind::Login => tr("Login"),
+        vault::ItemKind::Note => tr("Note"),
+        vault::ItemKind::Card => tr("Card"),
+        vault::ItemKind::Identity => tr("Identity"),
+    }
+}
+
+/// Um campo personalizado no formulário: `id` vazio = campo novo (o `set_custom_fields` gera o id ao
+/// gravar). `revealed` é estado só da UI (o 👁 do campo Oculto).
+struct FormCustomField {
+    id: String,
+    name: String,
+    value: String,
+    hidden: bool,
+    revealed: bool,
 }
 
 impl ExportKind {
@@ -654,6 +716,11 @@ struct KeysApp {
     folder_filter: Option<String>,
     // formulário de adição/edição
     form_open: bool,
+    /// O tipo do item no formulário — escolhido no seletor do "+" (novo) ou do próprio item (edição);
+    /// não troca dentro do form.
+    form_kind: vault::ItemKind,
+    /// Seletor de tipo do "+" (Login, Cartão, Identidade, Nota, Item livre) antes de abrir o form.
+    new_kind_open: bool,
     /// Anexos escolhidos no formulário, gravados junto com o item ao salvar (o item novo ainda
     /// não tem id quando o arquivo é escolhido).
     form_attachments: Vec<AttachmentRead>,
@@ -665,6 +732,20 @@ struct KeysApp {
     /// Primeira URI do item (o form edita só ela, como o oficial).
     add_url: String,
     add_notes: String,
+    /// Campos do cartão no form (número/validade/código normalizados ao vivo, como são gravados).
+    add_cardholder: String,
+    add_brand: String,
+    add_number: String,
+    add_exp: String,
+    add_code: String,
+    /// Campos da identidade no form.
+    add_first: String,
+    add_last: String,
+    add_email: String,
+    add_phone: String,
+    add_address: String,
+    /// Campos personalizados do form (todos os tipos têm).
+    form_custom: Vec<FormCustomField>,
     /// Pasta escolhida no form (None = sem pasta; `set_item_folder` aplica).
     add_folder_id: Option<String>,
     /// 👁 do campo de senha do form (volta a ocultar ao fechar).
@@ -758,6 +839,8 @@ impl KeysApp {
             filter_attachments: false,
             folder_filter: None,
             form_open: false,
+            form_kind: vault::ItemKind::Login,
+            new_kind_open: false,
             form_edit_id: None,
             add_name: String::new(),
             add_user: String::new(),
@@ -765,6 +848,17 @@ impl KeysApp {
             add_totp: String::new(),
             add_url: String::new(),
             add_notes: String::new(),
+            add_cardholder: String::new(),
+            add_brand: String::new(),
+            add_number: String::new(),
+            add_exp: String::new(),
+            add_code: String::new(),
+            add_first: String::new(),
+            add_last: String::new(),
+            add_email: String::new(),
+            add_phone: String::new(),
+            add_address: String::new(),
+            form_custom: Vec::new(),
             add_folder_id: None,
             form_attachments: Vec::new(),
             reveal_form: false,
@@ -841,8 +935,20 @@ impl KeysApp {
         self.add_pass.clear();
         self.form_open = false;
         self.form_edit_id = None;
+        self.new_kind_open = false;
         self.add_url.clear();
         self.add_notes.clear();
+        self.add_cardholder.clear();
+        self.add_brand.clear();
+        self.add_number.clear();
+        self.add_exp.clear();
+        self.add_code.clear();
+        self.add_first.clear();
+        self.add_last.clear();
+        self.add_email.clear();
+        self.add_phone.clear();
+        self.add_address.clear();
+        self.form_custom.clear();
         self.form_attachments.clear();
         self.reveal_form = false;
         self.delete_ask = None;
@@ -1056,29 +1162,93 @@ impl KeysApp {
         }
     }
 
-    /// Salva o item do formulário (novo ou edição) e persiste.
+    /// Salva o item do formulário (novo ou edição), de qualquer tipo, e persiste.
     fn save_form(&mut self) {
         let name = self.add_name.trim().to_string();
         if name.is_empty() {
             return;
         }
-        // Owned antes: o `LoginForm` empresta estes buffers e o `persist`
-        // precisa de `&mut self`.
+        // Owned antes: os campos do `form_modal` emprestam estes buffers e o
+        // `persist` precisa de `&mut self`.
         let username = self.add_user.clone();
         let password = self.add_pass.clone();
         let totp = self.add_totp.trim().to_string();
         let url = self.add_url.trim().to_string();
         let notes = self.add_notes.clone();
+        let cardholder = self.add_cardholder.clone();
+        let brand = self.add_brand.clone();
+        let number = self.add_number.clone();
+        let exp = self.add_exp.clone();
+        let code = self.add_code.clone();
+        let (first, last, email, phone, address) =
+            (self.add_first.clone(), self.add_last.clone(), self.add_email.clone(), self.add_phone.clone(), self.add_address.clone());
+        let custom: Vec<vault::CustomFieldView> = self
+            .form_custom
+            .iter()
+            .map(|f| vault::CustomFieldView { id: f.id.clone(), name: f.name.clone(), value: f.value.clone(), hidden: f.hidden })
+            .collect();
         let Some(mut next) = self.raw.clone() else {
             return;
         };
-        // "antes" do add — com ele achamos o id gerado pelo `add_login` depois.
+        // "antes" do add — com ele achamos o id gerado pelo `add_*` depois.
         let antes = item_ids(&next);
-        let form = vault::LoginForm { name: &name, username: &username, password: &password, totp: &totp, url: &url, notes: &notes };
-        let ok = match self.form_edit_id.clone() {
-            Some(id) => vault::edit_login(&mut next, &id, form),
-            None => {
-                vault::add_login(&mut next, form);
+        let edit_id = self.form_edit_id.clone();
+        let ok = match (self.form_kind, edit_id.as_deref()) {
+            (vault::ItemKind::Login, Some(id)) => vault::edit_login(
+                &mut next,
+                id,
+                vault::LoginForm { name: &name, username: &username, password: &password, totp: &totp, url: &url, notes: &notes },
+            ),
+            (vault::ItemKind::Login, None) => {
+                vault::add_login(
+                    &mut next,
+                    vault::LoginForm { name: &name, username: &username, password: &password, totp: &totp, url: &url, notes: &notes },
+                );
+                true
+            }
+            (vault::ItemKind::Card, Some(id)) => vault::edit_card(
+                &mut next,
+                id,
+                vault::CardForm { name: &name, cardholder: &cardholder, brand: &brand, number: &number, exp: &exp, code: &code, notes: &notes },
+            ),
+            (vault::ItemKind::Card, None) => {
+                vault::add_card(
+                    &mut next,
+                    vault::CardForm { name: &name, cardholder: &cardholder, brand: &brand, number: &number, exp: &exp, code: &code, notes: &notes },
+                );
+                true
+            }
+            (vault::ItemKind::Identity, Some(id)) => vault::edit_identity(
+                &mut next,
+                id,
+                vault::IdentityForm {
+                    name: &name,
+                    first_name: &first,
+                    last_name: &last,
+                    email: &email,
+                    phone: &phone,
+                    address: &address,
+                    notes: &notes,
+                },
+            ),
+            (vault::ItemKind::Identity, None) => {
+                vault::add_identity(
+                    &mut next,
+                    vault::IdentityForm {
+                        name: &name,
+                        first_name: &first,
+                        last_name: &last,
+                        email: &email,
+                        phone: &phone,
+                        address: &address,
+                        notes: &notes,
+                    },
+                );
+                true
+            }
+            (vault::ItemKind::Note, Some(id)) => vault::edit_note(&mut next, id, vault::NoteForm { name: &name, notes: &notes }),
+            (vault::ItemKind::Note, None) => {
+                vault::add_note(&mut next, vault::NoteForm { name: &name, notes: &notes });
                 true
             }
         };
@@ -1086,7 +1256,7 @@ impl KeysApp {
             self.err = Some("item não encontrado".into());
             return;
         }
-        // onda 24 — pasta do item: aplicar DEPOIS do add/edit (o `add_login`
+        // onda 24 — pasta do item: aplicar DEPOIS do add/edit (o `add_*`
         // gera o id interno, então o item novo é o diff de ids).
         let alvo = match self.form_edit_id.clone() {
             Some(id) => Some(id),
@@ -1099,6 +1269,11 @@ impl KeysApp {
                     return;
                 }
             }
+            // Campos personalizados (todos os tipos): a lista do form substitui a do item.
+            if !vault::set_custom_fields(&mut next, id, &custom) {
+                self.err = Some("item não encontrado".into());
+                return;
+            }
         }
         if let Some(id) = alvo {
             // `set_item_folder` grava `updatedAt` — só tocar se de fato mudou
@@ -1110,68 +1285,94 @@ impl KeysApp {
             }
         }
         if self.persist(next) {
-            self.add_name.clear();
-            self.add_user.clear();
-            self.add_pass.clear();
-            self.add_totp.clear();
-            self.add_url.clear();
-            self.add_notes.clear();
-            self.add_folder_id = None;
-            self.form_attachments.clear();
+            self.close_form_buffers();
             self.form_open = false;
             self.form_edit_id = None;
         }
     }
 
-    /// Abre o form em modo "novo item" (o "+" do cabeçalho). Se há pasta
-    /// selecionada nos chips, o item já nasce nela (como o oficial faz no
-    /// filtro atual).
-    fn open_add_form(&mut self) {
-        self.form_edit_id = None;
+    /// Zera os buffers do formulário (sucesso, cancelamento ou trancar).
+    fn close_form_buffers(&mut self) {
         self.add_name.clear();
         self.add_user.clear();
         self.add_pass.clear();
         self.add_totp.clear();
         self.add_url.clear();
         self.add_notes.clear();
-        self.add_folder_id = self.folder_filter.clone();
+        self.add_cardholder.clear();
+        self.add_brand.clear();
+        self.add_number.clear();
+        self.add_exp.clear();
+        self.add_code.clear();
+        self.add_first.clear();
+        self.add_last.clear();
+        self.add_email.clear();
+        self.add_phone.clear();
+        self.add_address.clear();
+        self.add_folder_id = None;
         self.form_attachments.clear();
+        self.form_custom.clear();
         self.reveal_form = false;
+    }
+
+    /// Abre o form em modo "novo item" já com o tipo escolhido no seletor do "+". Se há pasta
+    /// selecionada nos chips, o item já nasce nela (como o oficial faz no filtro atual). O **item
+    /// livre** é uma nota que abre com um campo personalizado vazio.
+    fn open_add_form(&mut self, pick: NewKind) {
+        self.form_edit_id = None;
+        self.form_kind = pick.kind();
+        self.close_form_buffers();
+        if pick == NewKind::FreeItem {
+            self.form_custom.push(FormCustomField { id: String::new(), name: String::new(), value: String::new(), hidden: false, revealed: false });
+        }
+        self.add_folder_id = self.folder_filter.clone();
         self.form_open = true;
     }
 
-    /// Abre o form carregando o item (inclui `uris[0]`, as notas e a pasta).
+    /// Abre o form carregando o item do tipo que ele tem — o tipo aparece FIXO no topo, sem troca.
     fn open_edit_form(&mut self, id: &str) {
         let Some(full) = self.raw.as_ref().and_then(|r| vault::item_full(r, id)) else {
             return;
         };
+        self.form_kind = full.kind;
+        self.form_edit_id = Some(id.to_string());
+        self.close_form_buffers();
+        self.add_folder_id = self.items.iter().find(|i| i.id == id).and_then(|i| i.folder_id.clone());
+        self.add_name = self.items.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_default();
+        self.add_notes = full.notes;
         // Item sem login (nota/cartão/identidade): os campos do login abrem vazios.
         let vazio = vault::LoginFull { username: String::new(), password: String::new(), totp: String::new(), url: String::new() };
         let login = full.login.as_ref().unwrap_or(&vazio);
-        self.form_edit_id = Some(id.to_string());
-        self.add_folder_id = self.items.iter().find(|i| i.id == id).and_then(|i| i.folder_id.clone());
-        self.add_name = self.items.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_default();
         self.add_user = login.username.clone();
         self.add_pass = login.password.clone();
         self.add_totp = login.totp.clone();
         self.add_url = login.url.clone();
-        self.add_notes = full.notes.clone();
-        self.reveal_form = false;
+        if let Some(c) = full.card {
+            self.add_cardholder = c.cardholder;
+            self.add_brand = c.brand;
+            self.add_number = c.number;
+            self.add_exp = c.exp;
+            self.add_code = c.code;
+        }
+        if let Some(i) = full.identity {
+            self.add_first = i.first_name;
+            self.add_last = i.last_name;
+            self.add_email = i.email;
+            self.add_phone = i.phone;
+            self.add_address = i.address;
+        }
+        self.form_custom = full
+            .custom_fields
+            .into_iter()
+            .map(|f| FormCustomField { id: f.id, name: f.name, value: f.value, hidden: f.hidden, revealed: false })
+            .collect();
         self.form_open = true;
     }
 
     fn close_form(&mut self) {
         self.form_open = false;
         self.form_edit_id = None;
-        self.add_name.clear();
-        self.add_user.clear();
-        self.add_pass.clear();
-        self.add_totp.clear();
-        self.add_url.clear();
-        self.add_notes.clear();
-        self.add_folder_id = None;
-        self.form_attachments.clear();
-        self.reveal_form = false;
+        self.close_form_buffers();
     }
 
     /// Exclusão lógica (lixeira do oficial).
@@ -1599,6 +1800,9 @@ impl KeysApp {
 struct Row {
     id: String,
     name: String,
+    kind: vault::ItemKind,
+    /// Resumo da linha por tipo (usuário, bandeira e final, nome da pessoa, começo da nota).
+    summary: Option<String>,
     username: Option<String>,
     totp: Option<String>,
     favorite: bool,
@@ -1611,111 +1815,236 @@ struct Row {
 impl KeysApp {
     // ── onda 23: diálogos ───────────────────────────────────────────────
 
-    /// Form de adição/edição: nome, usuário, senha (com 👁), URL, TOTP e notas.
+    /// Form de adição/edição por tipo: campos do tipo, notas, pasta, anexos e campos personalizados. O
+    /// tipo aparece FIXO no topo (ícone e nome) — a escolha acontece no seletor do "+", antes daqui, ou
+    /// veio do próprio item na edição; dentro do form não dá para trocar.
     fn form_modal(&mut self, ctx: &egui::Context) {
         if !self.form_open {
             return;
         }
+        let kind = self.form_kind;
         let title = if self.form_edit_id.is_some() { tr("Edit") } else { tr("Add") };
         let mut cancel = false;
         let mut add_file = false;
+        let mut add_field = false;
+        let mut remove_field: Option<usize> = None;
+        let mut copy_value: Option<(String, String)> = None;
         let resp = egui::Modal::new(egui::Id::unique("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             dialog_width(ui, 400.0);
             ui.heading(title);
-            ui.add_space(10.0);
-            // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
-            let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
-            egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                let label = ui.label(tr("Name"));
-                ui.add(line(&mut self.add_name).desired_width(field)).labelled_by(label.id);
-                ui.end_row();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(format!("{} {}", kind_icon(kind), tr_fmt("Type: {kind}", &[("kind", kind_label(kind))]))).small().weak());
+            ui.add_space(8.0);
+            // Com os campos por tipo + campos personalizados o diálogo passa da altura mínima da
+            // janela: a área central rola (os botões ficam fora dela, sempre visíveis).
+            egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
+                let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
+                egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                    let label = ui.label(tr("Title"));
+                    ui.add(line(&mut self.add_name).desired_width(field)).labelled_by(label.id);
+                    ui.end_row();
 
-                let label = ui.label(tr("Username"));
-                ui.add(line(&mut self.add_user).desired_width(field)).labelled_by(label.id);
-                ui.end_row();
+                    match kind {
+                        vault::ItemKind::Login => {
+                            let label = ui.label(tr("Username"));
+                            ui.add(line(&mut self.add_user).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
 
-                let label = ui.label(tr("Password"));
-                ui.horizontal(|ui| {
-                    ui.add(line(&mut self.add_pass).password(!self.reveal_form).desired_width(field - 28.0)).labelled_by(label.id);
-                    // 👁 reveal: o campo volta a ocultar ao fechar.
-                    if ghost(ui, if self.reveal_form { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
-                        self.reveal_form = !self.reveal_form;
-                    }
-                });
-                ui.end_row();
+                            let label = ui.label(tr("Password"));
+                            ui.horizontal(|ui| {
+                                ui.add(line(&mut self.add_pass).password(!self.reveal_form).desired_width(field - 28.0)).labelled_by(label.id);
+                                // 👁 reveal: o campo volta a ocultar ao fechar.
+                                if ghost(ui, if self.reveal_form { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
+                                    self.reveal_form = !self.reveal_form;
+                                }
+                            });
+                            ui.end_row();
 
-                let label = ui.label(tr("URL"));
-                ui.add(line(&mut self.add_url).hint_text("https://…").desired_width(field)).labelled_by(label.id);
-                ui.end_row();
+                            let label = ui.label(tr("URL"));
+                            ui.add(line(&mut self.add_url).hint_text("https://…").desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
 
-                let label = ui.label(tr("TOTP"));
-                ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(field)).labelled_by(label.id);
-                ui.end_row();
-
-                let label = ui.label(tr("Notes"));
-                ui.add(block(&mut self.add_notes).desired_width(field).desired_rows(3)).labelled_by(label.id);
-                ui.end_row();
-
-                // onda 24 — pasta do item: "Sem pasta" + existentes.
-                // Pastas owned antes da closure (nenhum borrow de raw).
-                let label = ui.label(tr("Folder"));
-                let pastas = self.raw.as_ref().map(vault::folders).unwrap_or_default();
-                let pasta_sel = pastas
-                    .iter()
-                    .find(|p| Some(&p.id) == self.add_folder_id.as_ref())
-                    .map(|p| p.name.clone())
-                    .unwrap_or_else(|| tr("No folder").to_string());
-                egui::ComboBox::from_id_salt("form-pasta")
-                    .width(field)
-                    .selected_text(pasta_sel)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.add_folder_id, None, tr("No folder"));
-                        for p in &pastas {
-                            ui.selectable_value(&mut self.add_folder_id, Some(p.id.clone()), &p.name);
+                            let label = ui.label(tr("TOTP"));
+                            ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
                         }
-                    })
-                    .response
-                    .labelled_by(label.id);
-                ui.end_row();
+                        vault::ItemKind::Card => {
+                            let label = ui.label(tr("Cardholder"));
+                            ui.add(line(&mut self.add_cardholder).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
 
-                // Anexos já na criação: os arquivos ficam na lista e entram no item ao salvar.
-                ui.label(tr("Attachments"));
-                ui.vertical(|ui| {
-                    let mut remove = None;
-                    for (i, a) in self.form_attachments.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{} — {}", a.name, human_size(a.size)));
-                            if craft_icons::ui::button(ui, Icon::Delete, tr("Delete attachment")).clicked() {
-                                remove = Some(i);
+                            let label = ui.label(tr("Brand"));
+                            ui.add(line(&mut self.add_brand).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
+
+                            // Número/validade/código: o campo ecoa o que vai ser gravado (só dígitos,
+                            // MM/AA — as regras do cofre, `card.rs`).
+                            let label = ui.label(tr("Number"));
+                            let edit = ui.add(line(&mut self.add_number).desired_width(field)).labelled_by(label.id);
+                            if edit.changed() {
+                                self.add_number = card::number(&self.add_number);
                             }
-                        });
+                            ui.end_row();
+
+                            let label = ui.label(tr("Expiry (MM/YY)"));
+                            let edit = ui.add(line(&mut self.add_exp).desired_width(field)).labelled_by(label.id);
+                            if edit.changed() {
+                                self.add_exp = card::expiry(&self.add_exp);
+                            }
+                            ui.end_row();
+
+                            let label = ui.label(tr("Security code"));
+                            let edit = ui.add(line(&mut self.add_code).desired_width(field)).labelled_by(label.id);
+                            if edit.changed() {
+                                self.add_code = card::cvv(&self.add_code);
+                            }
+                            ui.end_row();
+                        }
+                        vault::ItemKind::Identity => {
+                            let label = ui.label(tr("First name"));
+                            ui.add(line(&mut self.add_first).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
+
+                            let label = ui.label(tr("Last name"));
+                            ui.add(line(&mut self.add_last).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
+
+                            let label = ui.label(tr("E-mail"));
+                            ui.add(line(&mut self.add_email).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
+
+                            let label = ui.label(tr("Phone"));
+                            ui.add(line(&mut self.add_phone).desired_width(field)).labelled_by(label.id);
+                            ui.end_row();
+
+                            let label = ui.label(tr("Address"));
+                            ui.add(block(&mut self.add_address).desired_width(field).desired_rows(2)).labelled_by(label.id);
+                            ui.end_row();
+                        }
+                        vault::ItemKind::Note => {}
                     }
-                    if let Some(i) = remove {
-                        self.form_attachments.remove(i);
-                    }
-                    if pill(ui, tr("Add attachment"), false).clicked() {
-                        add_file = true;
-                    }
+
+                    // Nota: o texto É o item (label e altura próprios); nos outros tipos é complemento.
+                    let notes_label = if kind == vault::ItemKind::Note { tr("Note") } else { tr("Notes") };
+                    let notes_rows = if kind == vault::ItemKind::Note { 6 } else { 3 };
+                    let label = ui.label(notes_label);
+                    ui.add(block(&mut self.add_notes).desired_width(field).desired_rows(notes_rows)).labelled_by(label.id);
+                    ui.end_row();
+
+                    // onda 24 — pasta do item: "Sem pasta" + existentes.
+                    // Pastas owned antes da closure (nenhum borrow de raw).
+                    let label = ui.label(tr("Folder"));
+                    let pastas = self.raw.as_ref().map(vault::folders).unwrap_or_default();
+                    let pasta_sel = pastas
+                        .iter()
+                        .find(|p| Some(&p.id) == self.add_folder_id.as_ref())
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| tr("No folder").to_string());
+                    egui::ComboBox::from_id_salt("form-pasta")
+                        .width(field)
+                        .selected_text(pasta_sel)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.add_folder_id, None, tr("No folder"));
+                            for p in &pastas {
+                                ui.selectable_value(&mut self.add_folder_id, Some(p.id.clone()), &p.name);
+                            }
+                        })
+                        .response
+                        .labelled_by(label.id);
+                    ui.end_row();
+
+                    // Anexos já na criação: os arquivos ficam na lista e entram no item ao salvar.
+                    ui.label(tr("Attachments"));
+                    ui.vertical(|ui| {
+                        let mut remove = None;
+                        for (i, a) in self.form_attachments.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{} — {}", a.name, human_size(a.size)));
+                                if craft_icons::ui::button(ui, Icon::Delete, tr("Delete attachment")).clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(i) = remove {
+                            self.form_attachments.remove(i);
+                        }
+                        if pill(ui, tr("Add attachment"), false).clicked() {
+                            add_file = true;
+                        }
+                    });
+                    ui.end_row();
                 });
-                ui.end_row();
-            });
-            // Força ao vivo (zxcvbn) — só quando há senha.
-            if !self.add_pass.is_empty() {
-                let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
+                // Força ao vivo (zxcvbn) — só no login (o único tipo com senha) e quando há uma.
+                if kind == vault::ItemKind::Login && !self.add_pass.is_empty() {
+                    let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
+                    ui.add_space(8.0);
+                    ui.add(
+                        egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
+                            .desired_width(280.0)
+                            .fill(strength_color(strength.score))
+                            .text(strength_label(strength.score)),
+                    )
+                    .on_hover_text(tr_fmt("zxcvbn: 10^{guesses} guesses", &[("guesses", &format!("{:.1}", strength.guesses_log10))]));
+                }
+
+                // ── campos personalizados (todos os tipos) ─────────────────────
                 ui.add_space(8.0);
-                ui.add(
-                    egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
-                        .desired_width(280.0)
-                        .fill(strength_color(strength.score))
-                        .text(strength_label(strength.score)),
-                )
-                .on_hover_text(tr_fmt("zxcvbn: 10^{guesses} guesses", &[("guesses", &format!("{:.1}", strength.guesses_log10))]));
-            }
+                ui.separator();
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(tr("Custom fields")).small().weak());
+                ui.add_space(4.0);
+                let skin = Skin::of(ui);
+                for (i, f) in self.form_custom.iter_mut().enumerate() {
+                    egui::Frame::NONE
+                        .fill(skin.field)
+                        .stroke(egui::Stroke::new(1.0_f32, skin.border))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            let label = ui.label(tr("Name"));
+                            ui.add(line(&mut f.name).desired_width(field)).labelled_by(label.id);
+                            ui.add_space(4.0);
+                            let label = ui.label(tr("Value"));
+                            ui.horizontal(|ui| {
+                                // Oculto: o valor sai mascarado, com 👁 para revelar e cópia direta.
+                                ui.add(line(&mut f.value).password(f.hidden && !f.revealed).desired_width(if f.hidden {
+                                    field - 84.0
+                                } else {
+                                    field
+                                }))
+                                .labelled_by(label.id);
+                                if f.hidden {
+                                    if ghost(ui, if f.revealed { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
+                                        f.revealed = !f.revealed;
+                                    }
+                                    if ghost(ui, tr("Copy")).on_hover_text(tr("Copy")).clicked() {
+                                        copy_value = Some((f.name.clone(), f.value.clone()));
+                                    }
+                                }
+                            });
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut f.hidden, tr("Hidden"));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if craft_icons::ui::button(ui, Icon::Delete, tr("Remove field")).clicked() {
+                                        remove_field = Some(i);
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(6.0);
+                }
+                if pill(ui, tr("Add field"), false).clicked() {
+                    add_field = true;
+                }
+            });
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                // Atalho pro gerador (abre por cima deste modal).
-                if pill(ui, tr("Generate"), false).clicked() {
+                // Atalho pro gerador (abre por cima deste modal) — só no login, que tem senha.
+                if kind == vault::ItemKind::Login && pill(ui, tr("Generate"), false).clicked() {
                     self.gen_open = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1733,8 +2062,46 @@ impl KeysApp {
         if add_file {
             self.add_attachment_from(FORM_ATTACH, ctx);
         }
+        if let Some(i) = remove_field {
+            self.form_custom.remove(i);
+        }
+        if add_field {
+            self.form_custom.push(FormCustomField { id: String::new(), name: String::new(), value: String::new(), hidden: false, revealed: false });
+        }
+        if let Some((nome, valor)) = copy_value
+            && clipboard::copy_secret(valor).is_ok()
+        {
+            self.copied(&nome);
+        }
         if cancel || resp.should_close() {
             self.close_form();
+        }
+    }
+
+    /// Seletor de tipo do "+": Login, Cartão, Identidade, Nota e Item livre (uma nota que abre com um
+    /// campo personalizado vazio). O formulário abre já com o tipo — lá ele é fixo.
+    fn new_kind_modal(&mut self, ctx: &egui::Context) {
+        if !self.new_kind_open {
+            return;
+        }
+        let mut pick: Option<NewKind> = None;
+        let resp = egui::Modal::new(egui::Id::unique("novo-tipo")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            dialog_width(ui, 300.0);
+            ui.heading(tr("New item"));
+            ui.add_space(10.0);
+            for pick_kind in [NewKind::Login, NewKind::Card, NewKind::Identity, NewKind::Note, NewKind::FreeItem] {
+                if ui.button(format!("{}  {}", pick_kind.icon(), pick_kind.label())).clicked() {
+                    pick = Some(pick_kind);
+                }
+                ui.add_space(2.0);
+            }
+        });
+        if let Some(pick) = pick {
+            self.new_kind_open = false;
+            self.open_add_form(pick);
+        } else if resp.should_close() {
+            self.new_kind_open = false;
         }
     }
 
@@ -2519,7 +2886,8 @@ impl KeysApp {
         });
 
         // ── diálogos (egui::Modal: bloqueia o fundo; Esc/clique fora fecham) ──
-        // A ordem é a de empilhamento: o form abre o gerador por cima.
+        // A ordem é a de empilhamento: o seletor de tipo abre o form, o form abre o gerador.
+        self.new_kind_modal(ctx);
         self.form_modal(ctx);
         self.delete_modal(ctx);
         self.import_modal(ctx);
@@ -2660,6 +3028,8 @@ impl KeysApp {
             .map(|i| Row {
                 id: i.id.clone(),
                 name: i.name.clone(),
+                kind: i.kind,
+                summary: i.summary.clone(),
                 username: i.username.clone(),
                 totp: i.totp.clone(),
                 favorite: i.favorite,
@@ -2677,7 +3047,7 @@ impl KeysApp {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if pill(ui, tr("Add"), true).clicked() {
-                    self.open_add_form();
+                    self.new_kind_open = true;
                 }
                 if pill(ui, tr("Lock"), false).clicked() {
                     self.lock();
@@ -2788,9 +3158,9 @@ impl KeysApp {
                             self.toggle_favorite(&row.id);
                         }
                         ui.vertical(|ui| {
-                            ui.strong(&row.name);
-                            if let Some(u) = &row.username {
-                                ui.label(egui::RichText::new(u).small().weak());
+                            ui.strong(format!("{} {}", kind_icon(row.kind), row.name));
+                            if let Some(s) = &row.summary {
+                                ui.label(egui::RichText::new(s).small().weak());
                             }
                             // TOTP ao vivo: código + contagem (o repaint de
                             // 500ms já está ligado quando há algum).
@@ -2815,9 +3185,11 @@ impl KeysApp {
                                 }
                             }
                             // Ações do item: ghost buttons (transparentes até
-                            // o hover), como no local-pdf.
+                            // o hover), como no local-pdf. Copiar usuário/senha
+                            // só existe em login (os outros tipos não têm).
                             ui.horizontal_wrapped(|ui| {
-                                if row.username.is_some()
+                                if row.kind == vault::ItemKind::Login
+                                    && row.username.is_some()
                                     && ghost(ui, tr("Username")).on_hover_text(tr("Copy")).clicked()
                                     && let Some((user, _, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
                                 {
@@ -2826,7 +3198,8 @@ impl KeysApp {
                                         self.copied(&row.name);
                                     }
                                 }
-                                if ghost(ui, tr("Password")).on_hover_text(tr("Copy")).clicked()
+                                if row.kind == vault::ItemKind::Login
+                                    && ghost(ui, tr("Password")).on_hover_text(tr("Copy")).clicked()
                                     && let Some((_, pass, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
                                     && clipboard::copy_secret(pass).is_ok()
                                 {

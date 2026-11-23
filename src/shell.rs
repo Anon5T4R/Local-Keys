@@ -194,7 +194,7 @@ impl KeysApp {
     pub(crate) fn run_command(&mut self, ctx: &egui::Context, id: &str) {
         match id {
             "vault.unlock" => self.unlock(ctx),
-            "vault.add" => self.open_add_form(),
+            "vault.add" => self.new_kind_open = true,
             "vault.lock" => self.lock(),
             "vault.import" => {
                 self.import_open = true;
