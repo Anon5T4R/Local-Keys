@@ -366,7 +366,7 @@ fn rare_vault_actions_live_in_the_more_menu() {
 #[test]
 fn every_dialog_fits_the_narrow_window() {
     type Open = fn(&mut KeysApp);
-    let dialogs: [(&str, Open); 8] = [
+    let dialogs: [(&str, Open); 9] = [
         ("new-kind", |app| app.new_kind_open = true),
         ("generator", |app| app.gen_open = true),
         ("change", |app| app.change_open = true),
@@ -375,6 +375,14 @@ fn every_dialog_fits_the_narrow_window() {
         ("folders", |app| app.folders_open = true),
         ("new-folder", |app| app.folder_new_open = true),
         ("trash", |app| app.trash_open = true),
+        ("sync", |app| {
+            app.sync_plan = Some(crate::SyncPlan {
+                other_path: r"C:\Users\joao\OneDrive\cofre.tkeys".into(),
+                merged: app.raw.clone().expect("cofre"),
+                summary: crate::merge::MergeSummary { added: 1, to_other: 1, ..Default::default() },
+            });
+            app.sync_open = true;
+        }),
     ];
     const WIDTH: f64 = 340.0;
     const HEIGHT: f64 = 640.0;
@@ -1213,6 +1221,153 @@ fn smart_shots() {
             let mut harness = harness_sized(app, width);
             harness.run_steps(2);
             shot(&mut harness, &format!("smart-identity-form-{name}-{label}"));
+        }
+    }
+}
+
+/// Grava um cofre cifrado com a sessão de teste (o arquivo da "outra cópia").
+fn tkeys_com(session: &crate::crypto::SessionKey, raw: &serde_json::Value, path: &std::path::Path) {
+    let bytes = serde_json::to_vec(raw).expect("serializa");
+    let sealed = session.seal(&bytes).expect("sela");
+    std::fs::write(path, sealed).expect("grava o .tkeys");
+}
+
+/// Lê e decifra um `.tkeys` da sessão de teste (para conferir os dois arquivos depois da sincronização).
+fn abrir_tkeys(session: &crate::crypto::SessionKey, path: &std::path::Path) -> serde_json::Value {
+    let file = std::fs::read(path).expect("lê o .tkeys");
+    let (plain, _) = crate::crypto::open_with_key(&session.key_bytes(), &file).expect("abre");
+    serde_json::from_slice(&plain).expect("cofre válido")
+}
+
+/// O resumo da sincronização aparece ANTES de gravar, e "Gravar nas duas cópias" deixa os dois
+/// arquivos com o mesmo conteúdo (lidos de novo do disco, decifrados e comparados por conteúdo).
+#[test]
+fn the_sync_summary_shows_before_writing_and_updates_both_files() {
+    let mut app = unlocked("sync", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("sync");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("a.tkeys").display().to_string();
+    let raw_atual = app.raw.clone().expect("cofre");
+    app.persist(raw_atual.clone()).then_some(()).expect("grava o cofre atual");
+
+    // A outra cópia: sem um item daqui (que vai para ela) e com um item novo (que vem para cá).
+    let mut other = raw_atual.clone();
+    other["items"].as_array_mut().expect("itens").pop();
+    let mut com_novo = other.clone();
+    com_novo["items"].as_array_mut().expect("itens").push(serde_json::json!({
+        "id": "novo-da-outra", "kind": "login", "name": "Novo da outra", "favorite": false,
+        "folderId": null, "notes": "", "createdAt": 1, "updatedAt": 1, "deletedAt": null,
+        "login": {"username": "u", "password": "p", "uris": [], "totp": ""}
+    }));
+    let other_path = dir.join("other.tkeys");
+    // A outra cópia é cifrada com a MESMA sessão do cofre aberto (cópias do mesmo cofre, mesma senha).
+    tkeys_com(app.session.as_ref().expect("sessão"), &com_novo, &other_path);
+
+    // O resumo aparece ANTES de gravar: nada mudou nos arquivos ainda.
+    app.sync_with_other(&other_path.display().to_string());
+    assert!(app.sync_open, "modal do resumo");
+    let antes = std::fs::read(&other_path).expect("outra cópia ainda no disco");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let linha = node_text(&harness.get_by_label_contains("added from the other copy"));
+    assert!(linha.contains("1 items added"), "resumo antes de gravar: {linha}");
+    harness.get_by_label_contains("go to the other copy");
+
+    // Gravar: os DOIS arquivos ficam iguais e o cofre adota o item novo.
+    harness.get_by_label("Save to both copies").click();
+    harness.run_steps(2);
+    assert!(!harness.state().sync_open);
+    assert!(harness.state().toast.as_ref().is_some_and(|(m, _)| m.contains("identical")), "toast de sincronizado");
+    let a = abrir_tkeys(harness.state().session.as_ref().expect("sessão"), &dir.join("a.tkeys"));
+    let b = abrir_tkeys(harness.state().session.as_ref().expect("sessão"), &other_path);
+    assert!(crate::merge::json_same(&a, &b), "as duas cópias ficaram iguais");
+    assert!(a["items"].as_array().is_some_and(|arr| arr.iter().any(|i| i["name"] == "Novo da outra")));
+    assert_ne!(std::fs::read(&other_path).expect("regravada"), antes, "a outra cópia mudou no disco");
+    assert!(crate::copia_abre(harness.state().session.as_ref().expect("sessão"), &other_path));
+}
+
+/// "Salvar cópia em pasta sincronizada": a cópia é conferida (abre), passa a ser o cofre em uso e a
+/// antiga fica no disco como backup.
+#[test]
+fn carrying_the_vault_checks_the_copy_and_switches_to_it() {
+    let mut app = unlocked("carry", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("carry");
+    let synced = dir.join("OneDrive");
+    std::fs::create_dir_all(&synced).expect("pasta sincronizada");
+    let original = dir.join("orig.tkeys");
+    app.path = original.display().to_string();
+    let raw = app.raw.clone().expect("cofre");
+    app.persist(raw).then_some(()).expect("grava o cofre atual");
+
+    let destino = synced.join("cofre.tkeys");
+    app.carry_vault_to(&destino);
+    assert_eq!(app.path, destino.display().to_string(), "passa a usar a cópia");
+    assert!(destino.exists(), "a cópia existe");
+    assert!(crate::copia_abre(app.session.as_ref().expect("sessão"), &destino), "a cópia abre com a mesma senha");
+    assert!(original.exists(), "a antiga fica como backup");
+    assert!(app.toast.as_ref().is_some_and(|(m, _)| m.contains("vault now")));
+}
+
+/// Bordas da sincronização: arquivo que não abre (senha errada/corrompido), o próprio cofre em uso e
+/// uma cópia já idêntica (nada a fazer).
+#[test]
+fn sync_edges_wrong_password_same_file_and_identical_copy() {
+    let mut app = unlocked("sync-edge", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("sync-edge");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("a.tkeys").display().to_string();
+    let raw = app.raw.clone().expect("cofre");
+    app.persist(raw.clone()).then_some(()).expect("grava");
+
+    // Bytes que não são um cofre: erro claro, sem modal.
+    let lixo = dir.join("lixo.tkeys");
+    std::fs::write(&lixo, b"isto nao e um cofre").expect("grava lixo");
+    app.sync_with_other(&lixo.display().to_string());
+    assert!(!app.sync_open);
+    assert!(app.err.as_deref().is_some_and(|e| e.contains("does not open")), "{:?}", app.err);
+
+    // O próprio arquivo em uso é barrado.
+    app.err = None;
+    let em_uso = app.path.trim().to_string();
+    app.sync_with_other(&em_uso);
+    assert!(app.err.as_deref().is_some_and(|e| e.contains("vault in use")), "{:?}", app.err);
+
+    // Cópia idêntica: o resumo diz que não há nada a fazer (e só oferece fechar).
+    let copia = dir.join("copia.tkeys");
+    tkeys_com(app.session.as_ref().expect("sessão"), &raw, &copia);
+    app.err = None;
+    app.sync_with_other(&copia.display().to_string());
+    assert!(app.sync_open);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label_contains("already identical");
+    assert!(harness.query_by_label("Save to both copies").is_none(), "sem gravar quando nada muda");
+}
+
+/// As capturas da fase D: o resumo da sincronização antes de gravar, claro e escuro, 340 e 1100.
+#[test]
+fn sync_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let mut app = unlocked("shots-sync", Prefs::new("en", appearance));
+            app.sync_plan = Some(crate::SyncPlan {
+                other_path: r"C:\Users\joao\OneDrive\cofre.tkeys".into(),
+                merged: app.raw.clone().expect("cofre"),
+                summary: crate::merge::MergeSummary {
+                    added: 2,
+                    updated: 1,
+                    trashed: 1,
+                    restored: 1,
+                    conflicts: 1,
+                    folders_added: 1,
+                    to_other: 3,
+                    folders_to_other: 1,
+                },
+            });
+            app.sync_open = true;
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("sync-summary-{name}-{label}"));
         }
     }
 }

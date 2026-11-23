@@ -29,7 +29,7 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, card, cpf, crypto, export, generator, import, kdbx, otpauth, totp, vault};
+use localkeys_core::{bwdecrypt, card, cpf, crypto, export, generator, import, kdbx, merge, otpauth, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -309,6 +309,14 @@ fn cursor_do_fim(ctx: &egui::Context, id: egui::Id, cru_len: usize, novo_len: us
     }
 }
 
+/// Lê o `.tkeys` do caminho e confere que abre com a chave da sessão e parseia como cofre — o "conferir
+/// que a cópia abre" do pedido 022 fase D.
+fn copia_abre(session: &crypto::SessionKey, path: &std::path::Path) -> bool {
+    std::fs::read(path).is_ok_and(|file| {
+        crypto::open_with_key(&session.key_bytes(), &file).is_ok_and(|(plain, _)| serde_json::from_slice::<serde_json::Value>(&plain).is_ok())
+    })
+}
+
 /// Um campo personalizado no formulário: `id` vazio = campo novo (o `set_custom_fields` gera o id ao
 /// gravar). `revealed` é estado só da UI (o 👁 do campo Oculto).
 struct FormCustomField {
@@ -317,6 +325,17 @@ struct FormCustomField {
     value: String,
     hidden: bool,
     revealed: bool,
+}
+
+/// A sincronização calculada, esperando a confirmação (o resumo aparece ANTES de gravar).
+#[derive(Clone)]
+struct SyncPlan {
+    /// O caminho da outra cópia (para gravar nela também).
+    other_path: String,
+    /// O cofre juntado (`merge::merge` do core).
+    merged: serde_json::Value,
+    /// O resumo que a tela mostra.
+    summary: merge::MergeSummary,
 }
 
 impl ExportKind {
@@ -877,6 +896,11 @@ struct KeysApp {
     quit: Arc<AtomicBool>,
     /// Janela de Configurações (idioma, tema, Sobre) — a engrenagem e a paleta abrem (`shell.rs`).
     settings_open: bool,
+    /// Sincronização com outra cópia (pedido 022, fase D): o plano calculado esperando o "Gravar" do
+    /// modal de resumo — o resumo aparece ANTES de gravar qualquer coisa.
+    sync_plan: Option<SyncPlan>,
+    /// O modal de resumo da sincronização está aberto.
+    sync_open: bool,
     /// Paleta de comandos da suíte (lupa e Ctrl+K).
     palette: craft_palette::Palette,
     /// Onde o config.json é gravado (os testes apontam para uma pasta temporária).
@@ -968,6 +992,8 @@ impl KeysApp {
             _tray: None,
             quit: Arc::new(AtomicBool::new(false)),
             settings_open: false,
+            sync_plan: None,
+            sync_open: false,
             palette: craft_palette::Palette::default(),
             config_file: config_dir(APP_ID).join("config.json"),
         }
@@ -1053,6 +1079,8 @@ impl KeysApp {
         self.folder_new.clear();
         self.folder_edit_id = None;
         self.folder_edit_name.clear();
+        self.sync_plan = None;
+        self.sync_open = false;
         self.toast = None;
     }
 
@@ -1489,6 +1517,115 @@ impl KeysApp {
             Err(qr::QrError::NotAnImage) => self.notice(tr("could not read the image file").to_string()),
             Err(qr::QrError::TooBig) => self.notice(tr("the image is too large (over 4096×4096)").to_string()),
         }
+    }
+
+    // ── sincronização (pedido 022, fase D) — sempre manual, nada automático ──
+
+    /// "Salvar cópia em pasta sincronizada…": grava uma cópia CIFRADA do cofre em `destino` (OneDrive,
+    /// Drive, rclone, Syncthing… — a pasta que a pessoa escolher), CONFIRMA que a cópia abre com a
+    /// mesma senha e passa a usar o arquivo novo; o antigo fica no disco como backup.
+    fn carry_vault_to(&mut self, destino: &std::path::Path) {
+        let Some(session) = self.session.as_ref() else { return };
+        let Ok(bytes) = serde_json::to_vec(self.raw.as_ref().expect("cofre aberto")) else {
+            self.err = Some("cofre não serializa".into());
+            return;
+        };
+        let sealed = match session.seal(&bytes) {
+            Ok(sealed) => sealed,
+            Err(e) => {
+                self.err = Some(format!("{}: {e}", tr("could not write the copy")));
+                return;
+            }
+        };
+        if let Err(e) = vault::atomic_write(destino, &sealed) {
+            self.err = Some(format!("{}: {e}", tr("could not write the copy")));
+            return;
+        }
+        // Confere que a cópia abre ANTES de trocar o caminho — quem usa pasta de rede agradece.
+        if !copia_abre(session, destino) {
+            self.err = Some(tr("could not write the copy").to_string());
+            return;
+        }
+        self.path = destino.display().to_string();
+        remember_last_path(&self.path);
+        self.err = None;
+        self.notice(tr("copy checked — this file is the vault now").to_string());
+    }
+
+    /// "Sincronizar com outra cópia…": abre a outra cópia COM A SENHA deste cofre, junta item a item
+    /// (`merge::merge` do core, as regras do `docs/sync-merge.md`) e mostra o resumo ANTES de gravar.
+    fn sync_with_other(&mut self, caminho: &str) {
+        let Some(session) = self.session.as_ref() else { return };
+        if caminho == self.path.trim() {
+            self.err = Some(tr("the other copy is the vault in use").to_string());
+            return;
+        }
+        let file = match std::fs::read(caminho) {
+            Ok(file) => file,
+            Err(_) => {
+                self.err = Some(tr("could not read the other copy").to_string());
+                return;
+            }
+        };
+        let plain = match crypto::open_with_key(&session.key_bytes(), &file) {
+            Ok((plain, _)) => plain,
+            // senha diferente, arquivo corrompido ou não é um .tkeys
+            Err(_) => {
+                self.err = Some(tr("the other copy does not open with this vault's password").to_string());
+                return;
+            }
+        };
+        let other: serde_json::Value = match serde_json::from_slice(&plain) {
+            Ok(v) => v,
+            Err(_) => {
+                self.err = Some(tr("the other copy is not a valid vault").to_string());
+                return;
+            }
+        };
+        let result = merge::merge(self.raw.as_ref().expect("cofre aberto"), &other);
+        self.sync_plan = Some(SyncPlan { other_path: caminho.to_string(), merged: result.vault, summary: result.summary });
+        self.err = None;
+        self.sync_open = true;
+    }
+
+    /// Grava o resultado da sincronização NAS DUAS cópias (o mesmo conteúdo, selado uma vez) e confere
+    /// que as duas abrem. A OUTRA cópia é gravada primeiro: se ela falhar (sem permissão, bloqueada),
+    /// nada mudou; se o cofre atual falhar depois, a outra já mudou — nada é adotado e o erro diz o
+    /// que aconteceu (repetir a sincronização converge as duas de novo).
+    fn sync_apply(&mut self) {
+        let Some(plan) = self.sync_plan.clone() else { return };
+        let Some(session) = self.session.as_ref() else { return };
+        let Ok(bytes) = serde_json::to_vec(&plan.merged) else {
+            self.err = Some("cofre não serializa".into());
+            return;
+        };
+        let sealed = match session.seal(&bytes) {
+            Ok(sealed) => sealed,
+            Err(e) => {
+                self.err = Some(format!("{}: {e}", tr("could not write the copy")));
+                return;
+            }
+        };
+        if let Err(e) = vault::atomic_write(std::path::Path::new(&plan.other_path), &sealed) {
+            self.err = Some(format!("{}: {e}", tr("could not write to the other copy")));
+            return;
+        }
+        if let Err(e) = vault::atomic_write(std::path::Path::new(self.path.trim()), &sealed) {
+            self.err = Some(format!("{}: {e}", tr("could not write the copy")));
+            return;
+        }
+        // Confere que os dois arquivos abrem antes de adotar o resultado.
+        let atual = std::path::Path::new(self.path.trim()).to_path_buf();
+        if !copia_abre(session, &atual) || !copia_abre(session, std::path::Path::new(&plan.other_path)) {
+            self.err = Some(tr("could not write the copy").to_string());
+            return;
+        }
+        self.err = None;
+        self.items = vault::items_view(&plan.merged);
+        self.raw = Some(plan.merged);
+        self.sync_plan = None;
+        self.sync_open = false;
+        self.notice(tr("synced: both copies identical").to_string());
     }
 
     /// Abre o form em modo "novo item" já com o tipo escolhido no seletor do "+". Se há pasta
@@ -3058,6 +3195,108 @@ impl KeysApp {
         }
     }
 
+    /// Seletor nativo "salvar como" para a cópia sincronizada (nome do cofre atual já sugerido).
+    fn pick_sync_copy_target(&mut self, ctx: &egui::Context) {
+        let nome =
+            std::path::Path::new(self.path.trim()).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "cofre.tkeys".into());
+        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name(nome);
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::Save(dialog),
+            Box::new(|app, paths| {
+                if let Some(p) = paths.first() {
+                    app.carry_vault_to(p);
+                }
+            }),
+        );
+    }
+
+    /// Seletor nativo da outra cópia para a sincronização.
+    fn pick_sync_other(&mut self, ctx: &egui::Context) {
+        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::File(dialog),
+            Box::new(|app, paths| {
+                if let Some(p) = paths.first() {
+                    app.sync_with_other(&p.display().to_string());
+                }
+            }),
+        );
+    }
+
+    /// Resumo da sincronização ANTES de gravar (adicionados, atualizados, lixeira, restaurados,
+    /// empates, pastas — e o que vai para a outra cópia). Nada é gravado sem o botão.
+    fn sync_modal(&mut self, ctx: &egui::Context) {
+        if !self.sync_open {
+            return;
+        }
+        let Some(plan) = self.sync_plan.clone() else {
+            self.sync_open = false;
+            return;
+        };
+        let s = plan.summary;
+        let mut grava = false;
+        let mut fecha = false;
+        let resp = egui::Modal::new(egui::Id::unique("sync")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            dialog_width(ui, 400.0);
+            ui.heading(tr("Sync with another copy"));
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(egui::RichText::new(&plan.other_path).small().weak()).truncate());
+            ui.add_space(8.0);
+            if s.nothing_changes() {
+                ui.label(egui::RichText::new(tr("Nothing to sync: the copies are already identical.")).weak());
+            } else {
+                // Do ponto de vista do cofre atual…
+                for (n, texto) in [
+                    (s.added, "{n} items added from the other copy"),
+                    (s.updated, "{n} items updated (the other copy was newer)"),
+                    (s.trashed, "{n} items moved to the trash by the other copy"),
+                    (s.restored, "{n} items restored from the trash"),
+                    (s.conflicts, "{n} ties: this vault keeps its item"),
+                    (s.folders_added, "{n} folders added"),
+                ] {
+                    if n > 0 {
+                        ui.label(tr_fmt(texto, &[("n", &n.to_string())]));
+                    }
+                }
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+                // …e o que a outra cópia ganha.
+                for (n, texto) in [(s.to_other, "{n} items go to the other copy"), (s.folders_to_other, "{n} folders go to the other copy")] {
+                    if n > 0 {
+                        ui.label(egui::RichText::new(tr_fmt(texto, &[("n", &n.to_string())])).weak());
+                    }
+                }
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(tr("After saving, both copies are identical.")).small().weak());
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if s.nothing_changes() {
+                    if pill(ui, tr("Close"), true).clicked() {
+                        fecha = true;
+                    }
+                } else {
+                    if pill(ui, tr("Save to both copies"), true).clicked() {
+                        grava = true;
+                    }
+                    if pill(ui, tr("Cancel"), false).clicked() {
+                        fecha = true;
+                    }
+                }
+            });
+        });
+        if grava {
+            self.sync_apply();
+        } else if fecha || resp.should_close() {
+            self.sync_open = false;
+            self.sync_plan = None;
+        }
+    }
+
     /// Export em claro (JSON/CSV) — aviso forte antes de gravar.
     fn export_modal(&mut self, ctx: &egui::Context) {
         if !self.export_open {
@@ -3227,6 +3466,7 @@ impl KeysApp {
         self.new_folder_modal(ctx);
         self.trash_modal(ctx);
         self.export_modal(ctx);
+        self.sync_modal(ctx);
 
         self.settings_modal(ctx);
         self.palette_ui(ctx);
@@ -3394,6 +3634,14 @@ impl KeysApp {
                     ui.separator();
                     if ui.button(format!("{}…", tr("Change master password"))).clicked() {
                         self.change_open = true;
+                    }
+                    ui.separator();
+                    // fase D — sincronização, sempre manual
+                    if ui.button(format!("{}…", tr("Save a copy to a synced folder"))).clicked() {
+                        self.pick_sync_copy_target(ui.ctx());
+                    }
+                    if ui.button(format!("{}…", tr("Sync with another copy"))).clicked() {
+                        self.pick_sync_other(ui.ctx());
                     }
                 });
                 response.on_hover_text(tr("More actions"));

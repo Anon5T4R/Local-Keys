@@ -192,8 +192,7 @@
 	Passport	Passaporte
 	Document (other)	Documento (outro)
 	The CPF check digits don't match. Check for a typo; you can still save.	Os dígitos verificadores do CPF não conferem. Confira se digitou certo; dá para salvar assim mesmo.
-	Save a copy to a synced folder…	Salvar cópia em pasta sincronizada…
-	Sync with another copy…	Sincronizar com outra cópia…
+	Save a copy to a synced folder	Salvar cópia em pasta sincronizada
 	Sync with another copy	Sincronizar com outra cópia
 	{n} items added from the other copy	{n} itens adicionados da outra cópia
 	{n} items updated (the other copy was newer)	{n} itens atualizados (a outra cópia era mais nova)
