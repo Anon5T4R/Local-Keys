@@ -7,6 +7,7 @@
 
 pub mod bwdecrypt;
 pub mod card;
+pub mod cpf;
 pub mod crypto;
 pub mod export;
 pub mod generator;
