@@ -29,14 +29,14 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, card, cpf, crypto, export, generator, import, kdbx, merge, otpauth, totp, vault};
+use localkeys_core::{bwdecrypt, card, cpf, crypto, export, filters, generator, import, kdbx, merge, otpauth, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 
 use craft_icons::Icon;
 use eframe::egui;
-use i18n::{tr, tr_fmt};
+use i18n::{tr, tr_fmt, tr_n, trc};
 use jobs::{AttachmentRead, Created, Job, JobError, JobResult, Renewed, Unlocked};
 use prefs::{Prefs, config_dir};
 use zeroize::Zeroizing;
@@ -257,6 +257,18 @@ fn kind_label(kind: vault::ItemKind) -> &'static str {
         vault::ItemKind::Note => tr("Note"),
         vault::ItemKind::Card => tr("Card"),
         vault::ItemKind::Identity => tr("Identity"),
+    }
+}
+
+/// O rótulo de um tipo no popup Filtrar e no chip (plural, como o Android; "All" é "Todos" no
+/// contexto `filter`, que não é o "Todas" das pastas).
+fn filter_kind_label(kind: filters::KindFilter) -> &'static str {
+    match kind {
+        filters::KindFilter::All => trc("filter", "All"),
+        filters::KindFilter::Logins => tr("Logins"),
+        filters::KindFilter::Notes => tr("Notes"),
+        filters::KindFilter::Cards => tr("Cards"),
+        filters::KindFilter::Identities => tr("Identities"),
     }
 }
 
@@ -782,11 +794,9 @@ struct KeysApp {
     raw: Option<serde_json::Value>,
     items: Vec<vault::ItemView>,
     search: String,
-    /// Filtro "só códigos que mudam" (TOTP/oauth otp): mostra só itens com
-    /// segredo TOTP. Estado de sessão — não persiste, como a busca.
-    filter_totp: bool,
-    /// Filtro "só com anexos" (📎) — estado de sessão, como o de TOTP.
-    filter_attachments: bool,
+    /// Filtros do popup ao lado da busca (tipo + "mostrar só"), combinados com E — a lógica pura mora
+    /// no `filters.rs` do core, espelho do `VaultFilters.kt` do Android. Estado de sessão, como a busca.
+    filters: filters::Filters,
     /// Pasta selecionada nos chips da toolbar (None = todas).
     folder_filter: Option<String>,
     // formulário de adição/edição
@@ -929,8 +939,7 @@ impl KeysApp {
             raw: None,
             items: Vec::new(),
             search: String::new(),
-            filter_totp: false,
-            filter_attachments: false,
+            filters: filters::Filters::default(),
             folder_filter: None,
             form_open: false,
             form_kind: vault::ItemKind::Login,
@@ -1087,6 +1096,8 @@ impl KeysApp {
         self.folder_edit_name.clear();
         self.sync_plan = None;
         self.sync_open = false;
+        // O cofre seguinte abre sem filtro nenhum ligado (como a pasta, zerada no `adopt`).
+        self.filters.clear();
         self.toast = None;
     }
 
@@ -2151,8 +2162,6 @@ struct Row {
     favorite: bool,
     /// Pasta do item (filtro por chips — "todas" é `None`).
     folder_id: Option<String>,
-    /// Tem anexos (filtro 📎).
-    has_attachments: bool,
 }
 
 impl KeysApp {
@@ -2718,10 +2727,16 @@ impl KeysApp {
             dialog_width(ui, 300.0);
             ui.heading(tr("Import"));
             ui.add_space(8.0);
-            ui.label(format!("{imported} {}", tr("items imported")));
+            ui.label(tr_n(imported as u64, "{n} item imported", "{n} items imported"));
             if skipped > 0 {
                 ui.label(
-                    egui::RichText::new(format!("{skipped} {}", tr("card/identity skipped — Local Keys keeps logins and notes"))).small().weak(),
+                    egui::RichText::new(tr_n(
+                        skipped as u64,
+                        "{n} card/identity skipped — Local Keys keeps logins and notes",
+                        "{n} cards/identities skipped — Local Keys keeps logins and notes",
+                    ))
+                    .small()
+                    .weak(),
                 );
             }
             ui.add_space(12.0);
@@ -3273,25 +3288,30 @@ impl KeysApp {
                 ui.label(egui::RichText::new(tr("Nothing to sync: the copies are already identical.")).weak());
             } else {
                 // Do ponto de vista do cofre atual…
-                for (n, texto) in [
-                    (s.added, "{n} items added from the other copy"),
-                    (s.updated, "{n} items updated (the other copy was newer)"),
-                    (s.trashed, "{n} items moved to the trash by the other copy"),
-                    (s.restored, "{n} items restored from the trash"),
-                    (s.conflicts, "{n} ties: this vault keeps its item"),
-                    (s.folders_added, "{n} folders added"),
-                ] {
+                let linhas = [
+                    (s.added, tr_n(s.added, "{n} item added from the other copy", "{n} items added from the other copy")),
+                    (s.updated, tr_n(s.updated, "{n} item updated (the other copy was newer)", "{n} items updated (the other copy was newer)")),
+                    (s.trashed, tr_n(s.trashed, "{n} item moved to the trash by the other copy", "{n} items moved to the trash by the other copy")),
+                    (s.restored, tr_n(s.restored, "{n} item restored from the trash", "{n} items restored from the trash")),
+                    (s.conflicts, tr_n(s.conflicts, "{n} tie: this vault keeps its item", "{n} ties: this vault keeps its item")),
+                    (s.folders_added, tr_n(s.folders_added, "{n} folder added", "{n} folders added")),
+                ];
+                for (n, texto) in linhas {
                     if n > 0 {
-                        ui.label(tr_fmt(texto, &[("n", &n.to_string())]));
+                        ui.label(texto);
                     }
                 }
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(6.0);
                 // …e o que a outra cópia ganha.
-                for (n, texto) in [(s.to_other, "{n} items go to the other copy"), (s.folders_to_other, "{n} folders go to the other copy")] {
+                let outras = [
+                    (s.to_other, tr_n(s.to_other, "{n} item goes to the other copy", "{n} items go to the other copy")),
+                    (s.folders_to_other, tr_n(s.folders_to_other, "{n} folder goes to the other copy", "{n} folders go to the other copy")),
+                ];
+                for (n, texto) in outras {
                     if n > 0 {
-                        ui.label(egui::RichText::new(tr_fmt(texto, &[("n", &n.to_string())])).weak());
+                        ui.label(egui::RichText::new(texto).weak());
                     }
                 }
                 ui.add_space(6.0);
@@ -3617,6 +3637,7 @@ impl KeysApp {
         let mut rows: Vec<Row> = self
             .items
             .iter()
+            .filter(|i| filters::matches(&self.filters, i))
             .map(|i| Row {
                 id: i.id.clone(),
                 name: i.name.clone(),
@@ -3626,7 +3647,6 @@ impl KeysApp {
                 totp: i.totp.clone(),
                 favorite: i.favorite,
                 folder_id: i.folder_id.clone(),
-                has_attachments: i.has_attachments,
             })
             .collect();
         // Ordenação SÓ de renderização (não regrava nada): favoritos primeiro
@@ -3709,19 +3729,63 @@ impl KeysApp {
         });
 
         ui.add_space(4.0);
+        // "Filtrar (n)" com os chips dos filtros ligados ao lado; a busca fica na linha de baixo para os
+        // chips quebrarem linha na janela estreita sem empurrá-la para fora.
+        ui.horizontal_wrapped(|ui| {
+            let ligados = self.filters.active_count();
+            let rotulo = if ligados > 0 { tr_fmt("Filter ({n})", &[("n", &ligados.to_string())]) } else { tr("Filter").to_string() };
+            let ink = if ligados > 0 { skin.accent } else { skin.muted };
+            let botao = ghost_ink(ui, &rotulo, ink);
+            let mut rascunho = self.filters;
+            let _ = egui::Popup::from_toggle_button_response(&botao)
+                .gap(4.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .frame(modal_frame(ui.ctx()))
+                .show(|ui| {
+                    ui.set_min_width(200.0);
+                    ui.label(egui::RichText::new(tr("Type")).small().weak());
+                    for kind in [
+                        filters::KindFilter::All,
+                        filters::KindFilter::Logins,
+                        filters::KindFilter::Notes,
+                        filters::KindFilter::Cards,
+                        filters::KindFilter::Identities,
+                    ] {
+                        ui.radio_value(&mut rascunho.kind, kind, filter_kind_label(kind));
+                    }
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(tr("Show only")).small().weak());
+                    ui.checkbox(&mut rascunho.only.totp, tr("With TOTP"));
+                    ui.checkbox(&mut rascunho.only.attachments, tr("With attachments"));
+                    ui.checkbox(&mut rascunho.only.favorites, tr("Favorites"));
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    if ui.add_enabled(!rascunho.is_clear(), egui::Button::new(tr("Clear"))).clicked() {
+                        rascunho.clear();
+                    }
+                });
+            self.filters = rascunho;
+            // Cada filtro ligado é um chip com ×: o clique desliga SÓ aquele, sem abrir o popup.
+            let mut desligar = None;
+            for chip in self.filters.active_chips() {
+                let nome = match chip {
+                    filters::Chip::Kind(kind) => filter_kind_label(kind),
+                    filters::Chip::Totp => tr("With TOTP"),
+                    filters::Chip::Attachments => tr("With attachments"),
+                    filters::Chip::Favorites => tr("Favorites"),
+                };
+                if ghost_ink(ui, &format!("{nome} ×"), skin.muted).clicked() {
+                    desligar = Some(chip);
+                }
+            }
+            if let Some(chip) = desligar {
+                self.filters.remove(chip);
+            }
+        });
         ui.horizontal(|ui| {
-            // Filtro "só códigos que mudam" (TOTP): toggle ao lado da busca.
-            let filtro = format!("{} ⟳", tr("TOTP"));
-            let ink = if self.filter_totp { skin.accent } else { skin.muted };
-            if ghost_ink(ui, &filtro, ink).clicked() {
-                self.filter_totp = !self.filter_totp;
-            }
-            // Filtro "só com anexos" (📎), ao lado do de TOTP.
-            let filtro_anx = format!("📎 {}", tr("Attachments"));
-            let ink = if self.filter_attachments { skin.accent } else { skin.muted };
-            if ghost_ink(ui, &filtro_anx, ink).clicked() {
-                self.filter_attachments = !self.filter_attachments;
-            }
             ui.add(line(&mut self.search).hint_text(tr("Search…")).desired_width(ui.available_width() - 24.0));
             // Botão "X" pra limpar a busca sem precisar de backspace.
             if !self.search.is_empty() && craft_icons::ui::close_button(ui, tr("Clear")).clicked() {
@@ -3738,14 +3802,23 @@ impl KeysApp {
         let view: Vec<&Row> = rows
             .iter()
             .filter(|r| needle.is_empty() || r.name.to_lowercase().contains(&needle))
-            .filter(|r| !self.filter_totp || r.totp.is_some())
-            .filter(|r| !self.filter_attachments || r.has_attachments)
             // Pasta: `None` no filtro = todas; igualdade por id.
             .filter(|r| self.folder_filter.is_none() || r.folder_id.as_deref() == self.folder_filter.as_deref())
             .collect();
 
         if view.is_empty() {
-            ui.label(egui::RichText::new(tr("empty — copy something")).weak());
+            if self.items.is_empty() {
+                ui.label(egui::RichText::new(tr("empty — copy something")).weak());
+            } else {
+                // Há itens no cofre, mas os filtros/busca/pasta escondem todos: diz o porquê e oferece o
+                // "Limpar" (some quando nada está escondendo — aí é só a pasta vazia, com os chips acima).
+                ui.label(egui::RichText::new(tr("No items match these filters")).weak());
+                if (!self.filters.is_clear() || !self.search.is_empty() || self.folder_filter.is_some()) && ghost(ui, tr("Clear")).clicked() {
+                    self.filters.clear();
+                    self.search.clear();
+                    self.folder_filter = None;
+                }
+            }
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for row in view {
@@ -3827,7 +3900,8 @@ impl KeysApp {
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), rows.len())).small().weak());
+                // O rodapé conta o cofre inteiro (não o que o popup/busca deixou na tela).
+                ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), self.items.len())).small().weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {});
             });
         });
@@ -3850,6 +3924,16 @@ mod tests {
         // sem cofre: nada (a tela abre no último usado)
         assert_eq!(vault_from_args(Vec::<String>::new()), None);
         assert_eq!(vault_from_args(["nota.txt", "tkeys", "a.tkeys.bak"]), None);
+    }
+
+    /// Trancar o cofre zera os filtros da lista (o próximo abre sem filtro nenhum ligado).
+    #[test]
+    fn lock_clears_the_list_filters() {
+        let mut app = KeysApp::bare(Prefs::default());
+        app.filters = filters::Filters { kind: filters::KindFilter::Cards, only: filters::Only { favorites: true, totp: true, attachments: false } };
+        assert!(!app.filters.is_clear());
+        app.lock();
+        assert!(app.filters.is_clear(), "trancar deixa os filtros limpos");
     }
 
     /// `--finish-update` (o helper de update do Windows, tratado antes de tudo) não é cofre, mesmo

@@ -60,9 +60,21 @@ pub fn tr(source: &'static str) -> &'static str {
     I18N.t(current(), source)
 }
 
-/// [`tr`] com os `{nome}` preenchidos (`tr_fmt("version {version}", &[("version", "1.0")])`).
+/// `tr_fmt` com os `{nome}` preenchidos (`tr_fmt("version {version}", &[("version", "1.0")])`).
 pub fn tr_fmt(source: &'static str, args: &[(&str, &str)]) -> String {
     craft_i18n::fmt(tr(source), args)
+}
+
+/// Contagem no plural: escolhe a forma do idioma atual (linhas `@plural` do TSV) e preenche `{n}`
+/// (`tr_n(2, "{n} item", "{n} items")` → "2 itens" em pt-br).
+pub fn tr_n(n: u64, one: &'static str, other: &'static str) -> String {
+    I18N.trn(current(), n, one, other)
+}
+
+/// [`tr`] com contexto (a primeira coluna do TSV) — o mesmo texto com tradução diferente por lugar
+/// (`trc("filter", "All")` é "Todos" no popup de tipos, enquanto `tr("All")` é "Todas" nas pastas).
+pub fn trc(context: &'static str, source: &'static str) -> &'static str {
+    I18N.tc(current(), context, source)
 }
 
 /// O nome de um idioma no próprio idioma (a linha `@id language.name` do catálogo; senão, o código).
@@ -99,8 +111,33 @@ mod tests {
         assert_eq!(name_of("en"), "English");
     }
 
+    /// O plural escolhe a forma do idioma e preenche `{n}` — as linhas `@plural` do TSV.
+    #[test]
+    fn plural_escolhe_a_forma_do_idioma() {
+        set_language("en");
+        assert_eq!(tr_n(1, "{n} item added from the other copy", "{n} items added from the other copy"), "1 item added from the other copy");
+        assert_eq!(tr_n(2, "{n} item added from the other copy", "{n} items added from the other copy"), "2 items added from the other copy");
+        set_language("pt-br");
+        assert_eq!(tr_n(1, "{n} item added from the other copy", "{n} items added from the other copy"), "1 item adicionado da outra cópia");
+        assert_eq!(tr_n(2, "{n} item added from the other copy", "{n} items added from the other copy"), "2 itens adicionados da outra cópia");
+        set_language("es");
+        assert_eq!(tr_n(1, "{n} item added from the other copy", "{n} items added from the other copy"), "1 elemento añadido de la otra copia");
+        assert_eq!(tr_n(2, "{n} item added from the other copy", "{n} items added from the other copy"), "2 elementos añadidos de la otra copia");
+        set_language("en");
+    }
+
+    /// O contexto separa traduções do mesmo texto: "All" é "Todas" nas pastas e "Todos" nos tipos.
+    #[test]
+    fn contexto_separa_o_all_das_pastas_e_dos_tipos() {
+        set_language("pt-br");
+        assert_eq!(trc("filter", "All"), "Todos");
+        assert_eq!(tr("All"), "Todas", "o contexto não vaza para as pastas");
+        set_language("en");
+    }
+
     /// Todo `tr("…")`/`tr_fmt("…"` do código tem tradução em pt-br e es (o lugar do antigo enum `Key`, que
-    /// garantia a completude pelo compilador). Lê as fontes do app, então texto novo sem tradução quebra aqui.
+    /// garantia a completude pelo compilador); `tr_n` precisa da linha `@plural` e `trc` da linha de
+    /// contexto no idioma. Lê as fontes do app, então texto novo sem tradução quebra aqui.
     #[test]
     fn every_text_is_translated() {
         let sources = [include_str!("main.rs"), include_str!("shell.rs")];
@@ -110,6 +147,23 @@ mod tests {
             for text in sources.iter().flat_map(|source| literals(source)) {
                 if I18N.t(current(), text) == text && !untranslated_on_purpose(text) {
                     missing.push(format!("{code}: {text}"));
+                }
+            }
+            // `tr_n`: o par (um|vários) tem de ter a linha `@plural` no idioma (o fallback é o inglês).
+            for (um, varios) in sources.iter().flat_map(|source| plural_literals(source)) {
+                let chave = format!("{um}|{varios}");
+                if I18N.get(current(), "@plural", &chave).is_none() {
+                    missing.push(format!("{code}: @plural {chave}"));
+                }
+            }
+            // `trc`: a linha do contexto precisa existir — cair no texto simples esconderia a falta.
+            for (contexto, texto) in sources.iter().flat_map(|source| context_literals(source)) {
+                match I18N.get(current(), contexto, texto) {
+                    None => missing.push(format!("{code}: {contexto}/{texto}")),
+                    Some(traducao) if traducao == texto && !untranslated_on_purpose(texto) => {
+                        missing.push(format!("{code}: {contexto}/{texto}"));
+                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -137,6 +191,7 @@ mod tests {
                 | "CPF"
                 | "RG"
                 | "CNH"
+                | "Logins"
         )
     }
 
@@ -157,5 +212,54 @@ mod tests {
             }
         }
         found
+    }
+
+    /// Os `count` primeiros literais de texto de cada chamada a `opener` (para em `)`: os argumentos
+    /// que não são literais, como o `n` do `tr_n`, são pulados).
+    fn arguments(opener: &str, source: &'static str, count: usize) -> Vec<Vec<&'static str>> {
+        let mut calls = Vec::new();
+        let mut rest = source;
+        while let Some(at) = rest.find(opener) {
+            let after = &rest[at + opener.len()..];
+            let mut literals = Vec::new();
+            let mut cursor = after;
+            while literals.len() < count {
+                let Some(quote) = cursor.find('"') else { break };
+                if cursor[..quote].contains(')') {
+                    break;
+                }
+                let text = &cursor[quote + 1..];
+                let Some(end) = text.find('"') else { break };
+                literals.push(&text[..end]);
+                cursor = &text[end + 1..];
+            }
+            if !literals.is_empty() {
+                calls.push(literals);
+            }
+            rest = after;
+        }
+        calls
+    }
+
+    /// Os pares `(um, vários)` passados a `tr_n(`.
+    fn plural_literals(source: &'static str) -> Vec<(&'static str, &'static str)> {
+        arguments("tr_n(", source, 2)
+            .into_iter()
+            .filter_map(|par| match par.as_slice() {
+                [um, varios] => Some((*um, *varios)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Os pares `(contexto, texto)` passados a `trc(`.
+    fn context_literals(source: &'static str) -> Vec<(&'static str, &'static str)> {
+        arguments("trc(", source, 2)
+            .into_iter()
+            .filter_map(|par| match par.as_slice() {
+                [contexto, texto] => Some((*contexto, *texto)),
+                _ => None,
+            })
+            .collect()
     }
 }
