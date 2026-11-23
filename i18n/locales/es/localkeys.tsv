@@ -24,6 +24,11 @@
 	Delete	Eliminar
 	empty — copy something	vacío — copia algo
 	No items match these filters	Ningún elemento con estos filtros
+	No items match the search	Ningún elemento con esta búsqueda
+	No items in this folder	Ningún elemento en esta carpeta
+	No items match the search, folder and filters	Ningún elemento con esta búsqueda, carpeta y filtros
+	Remove filter {name}	Quitar filtro {name}
+	Done	Listo
 	Vault	Bóveda
 	Master password	Contraseña maestra
 	Unlock	Desbloquear

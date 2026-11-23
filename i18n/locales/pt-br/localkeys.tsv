@@ -24,6 +24,11 @@
 	Delete	Excluir
 	empty — copy something	vazio — copie algo
 	No items match these filters	Nenhum item com estes filtros
+	No items match the search	Nenhum item com esta busca
+	No items in this folder	Nenhum item nesta pasta
+	No items match the search, folder and filters	Nenhum item com esta busca, pasta e filtros
+	Remove filter {name}	Remover filtro {name}
+	Done	Concluir
 	Vault	Cofre
 	Master password	Senha mestra
 	Unlock	Destrancar

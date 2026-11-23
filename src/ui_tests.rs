@@ -787,15 +787,16 @@ fn the_filter_chips_remove_one_filter_without_opening_the_popup() {
     harness.run_steps(2);
     harness.get_by_label("Favorites").click();
     harness.run_steps(2);
-    // Fecha o popup: o botão alterna. A lista fica vazia (não há cartão favorito).
-    harness.get_by_label("Filter (2)").click();
+    // "Done" fecha o popup. A lista fica vazia (não há cartão favorito).
+    harness.get_by_label("Done").click();
     harness.run_steps(2);
-    harness.get_by_label("Cards ×");
-    harness.get_by_label("Favorites ×");
+    assert!(harness.query_by_label("Done").is_none(), "o popup fechou");
+    harness.get_by_label("Remove filter Cards");
+    harness.get_by_label("Remove filter Favorites");
     harness.get_by_label_contains("No items match these filters");
 
     // O × do tipo desliga só o tipo: favoritos fica e o item favorito volta.
-    harness.get_by_label("Cards ×").click();
+    harness.get_by_label("Remove filter Cards").click();
     harness.run_steps(2);
     let filtros = harness.state().filters;
     assert_eq!(filtros.kind, localkeys_core::filters::KindFilter::All);
@@ -803,8 +804,27 @@ fn the_filter_chips_remove_one_filter_without_opening_the_popup() {
     assert_eq!(filtros.active_count(), 1);
     harness.get_by_label("Filter (1)");
     harness.get_by_label_contains("192.168.1.34");
-    assert!(harness.query_by_label("Cards ×").is_none(), "o chip do tipo sumiu");
-    harness.get_by_label("Favorites ×");
+    assert!(harness.query_by_label("Remove filter Cards").is_none(), "o chip do tipo sumiu");
+    harness.get_by_label("Remove filter Favorites");
+}
+
+/// O estado vazio diz a causa real: só busca, só pasta, ou mais de uma coisa.
+#[test]
+fn the_empty_list_names_the_real_cause() {
+    let mut app = unlocked_kinds("empty-cause", Prefs::new("en", ThemeMode::Dark));
+    app.search = "zzz-nada-assim".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label_contains("No items match the search");
+    assert_eq!(harness.query_all_by_label_contains("filters").count(), 0, "não culpa filtros que não existem");
+
+    harness.state_mut().folder_filter = Some("pasta-inexistente".into());
+    harness.run_steps(2);
+    harness.get_by_label_contains("No items match the search, folder and filters");
+
+    harness.state_mut().search.clear();
+    harness.run_steps(2);
+    harness.get_by_label_contains("No items in this folder");
 }
 
 /// O popup Filtrar acha "Com anexos" e "Favoritos" de verdade na lista.
@@ -895,8 +915,8 @@ fn filter_chips_shots() {
             harness.run_steps(2);
             harness.get_by_label("Filter (2)").click(); // fecha o popup
             harness.run_steps(2);
-            harness.get_by_label("Logins ×");
-            harness.get_by_label("With TOTP ×");
+            harness.get_by_label("Remove filter Logins");
+            harness.get_by_label("Remove filter With TOTP");
             shot(&mut harness, &format!("filter-chips-{name}-{label}"));
         }
     }

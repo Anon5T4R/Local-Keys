@@ -598,11 +598,17 @@ fn ghost(ui: &mut egui::Ui, label: &str) -> egui::Response {
 
 /// [`ghost`] com tinta própria (o ★ favorito usa o accent quando ativo).
 fn ghost_ink(ui: &mut egui::Ui, label: &str, ink: egui::Color32) -> egui::Response {
+    ghost_ink_named(ui, label, label, ink)
+}
+
+/// Como `ghost_ink`, mas com o nome acessível separado do texto visível (o chip "Cartões ×" se chama
+/// "Remover filtro Cartões" para leitor de tela).
+fn ghost_ink_named(ui: &mut egui::Ui, label: &str, accessible: &str, ink: egui::Color32) -> egui::Response {
     let skin = Skin::of(ui);
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 14.0, 24.0), egui::Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), accessible));
     if resp.hovered() {
         ui.painter().rect_filled(rect, egui::CornerRadius::same(6), skin.hover);
     }
@@ -3763,9 +3769,15 @@ impl KeysApp {
                     ui.add_space(6.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    if ui.add_enabled(!rascunho.is_clear(), egui::Button::new(tr("Clear"))).clicked() {
-                        rascunho.clear();
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(!rascunho.is_clear(), egui::Button::new(tr("Clear"))).clicked() {
+                            rascunho.clear();
+                        }
+                        // Fecha o popup sem precisar clicar fora (o "Pronto" do Android).
+                        if ui.button(tr("Done")).clicked() {
+                            ui.close();
+                        }
+                    });
                 });
             self.filters = rascunho;
             // Cada filtro ligado é um chip com ×: o clique desliga SÓ aquele, sem abrir o popup.
@@ -3777,7 +3789,8 @@ impl KeysApp {
                     filters::Chip::Attachments => tr("With attachments"),
                     filters::Chip::Favorites => tr("Favorites"),
                 };
-                if ghost_ink(ui, &format!("{nome} ×"), skin.muted).clicked() {
+                let acessivel = tr_fmt("Remove filter {name}", &[("name", nome)]);
+                if ghost_ink_named(ui, &format!("{nome} ×"), &acessivel, skin.muted).clicked() {
                     desligar = Some(chip);
                 }
             }
@@ -3812,8 +3825,15 @@ impl KeysApp {
             } else {
                 // Há itens no cofre, mas os filtros/busca/pasta escondem todos: diz o porquê e oferece o
                 // "Limpar" (some quando nada está escondendo — aí é só a pasta vazia, com os chips acima).
-                ui.label(egui::RichText::new(tr("No items match these filters")).weak());
-                if (!self.filters.is_clear() || !self.search.is_empty() || self.folder_filter.is_some()) && ghost(ui, tr("Clear")).clicked() {
+                let (por_filtro, por_busca, por_pasta) = (!self.filters.is_clear(), !self.search.is_empty(), self.folder_filter.is_some());
+                let motivo = match (por_filtro, por_busca, por_pasta) {
+                    (true, false, false) => tr("No items match these filters"),
+                    (false, true, false) => tr("No items match the search"),
+                    (false, false, true) => tr("No items in this folder"),
+                    _ => tr("No items match the search, folder and filters"),
+                };
+                ui.label(egui::RichText::new(motivo).weak());
+                if (por_filtro || por_busca || por_pasta) && ghost(ui, tr("Clear")).clicked() {
                     self.filters.clear();
                     self.search.clear();
                     self.folder_filter = None;
