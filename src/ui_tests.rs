@@ -592,8 +592,8 @@ fn editing_shows_the_type_fixed_and_keeps_it() {
     harness.run_steps(2);
     harness.get_by_label_contains("Type: Card");
     assert!(harness.query_by_label("New item").is_none(), "sem seletor de tipo na edição");
-    // os campos do próprio tipo carregam
-    assert_eq!(harness.state().add_number, "6362970000457013");
+    // os campos do próprio tipo carregam — o número JÁ em blocos (C.1 vale na edição)
+    assert_eq!(harness.state().add_number, "6362 9700 0045 7013", "abre a edição com blocos de 4");
     // trocar o título e salvar mantém o tipo (não vira login). O clique precisa de um quadro de
     // acomodação depois da mudança de estado direta (o modal re-assenta o layout).
     harness.state_mut().add_name = "Nubank UR".into();

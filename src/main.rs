@@ -1526,7 +1526,9 @@ impl KeysApp {
         if let Some(c) = full.card {
             self.add_cardholder = c.cardholder;
             self.add_brand = c.brand.clone();
-            self.add_number = c.number.clone();
+            // O número abre JÁ em blocos (o Android formata sempre — o pedido C.1 "aparece em
+            // blocos" vale para a edição também; o cofre guarda só os dígitos e o save normaliza).
+            self.add_number = card::group(&c.number);
             self.add_exp = c.exp;
             self.add_code = c.code;
             // A bandeira é "automática" se veio vazia ou se é a que a detecção daria (o número pode
