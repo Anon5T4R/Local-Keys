@@ -1,5 +1,6 @@
 package com.localkeys.android.data.import
 
+import com.localkeys.android.R
 import com.localkeys.android.data.vault.ItemKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -66,7 +67,7 @@ class BwDecryptTest {
         val e = assertThrows(ImportError::class.java) {
             BwDecrypt.decryptExport(pbkdf2Export, "senha-errada")
         }
-        assertEquals("senha incorreta ou arquivo corrompido (MAC)", e.message)
+        assertEquals(R.string.import_err_wrong_password_mac, e.resId)
     }
 
     @Test
@@ -74,7 +75,7 @@ class BwDecryptTest {
         val e = assertThrows(ImportError::class.java) {
             BwDecrypt.decryptExport("""{"items":[]}""", "x")
         }
-        assertEquals("este arquivo não parece um export cifrado do Bitwarden", e.message)
+        assertEquals(R.string.import_err_not_bw_encrypted, e.resId)
     }
 
     @Test
@@ -85,7 +86,8 @@ class BwDecryptTest {
                 "x",
             )
         }
-        assertEquals("KDF do Bitwarden não suportado: 9", e.message)
+        assertEquals(R.string.import_err_bw_kdf, e.resId)
+        assertEquals(listOf<Any>(9), e.args.toList())
     }
 
     @Test
@@ -101,6 +103,6 @@ class BwDecryptTest {
                 "x",
             )
         }
-        assertEquals("base64 inválido", e.message)
+        assertEquals(R.string.import_err_b64, e.resId)
     }
 }

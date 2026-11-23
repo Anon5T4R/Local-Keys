@@ -27,6 +27,7 @@ import com.localkeys.android.data.crypto.TkeysCrypto
 import com.localkeys.android.data.crypto.TkeysError
 import com.localkeys.android.data.import.BitwardenImport
 import com.localkeys.android.data.import.BwDecrypt
+import com.localkeys.android.data.import.ImportError
 import com.localkeys.android.data.import.ImportFormat
 import com.localkeys.android.data.import.Importers
 import com.localkeys.android.data.export.VaultExporter
@@ -514,7 +515,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 encryptedImport = null
                 pendingKdbx = null
                 _state.update {
-                    it.copy(busy = false, pendingImport = null, error = e.message ?: str(R.string.msg_import_generic))
+                    it.copy(busy = false, pendingImport = null, error = importErrorText(e))
                 }
             }
         }
@@ -538,7 +539,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 performImport(items, null)
             } catch (e: Exception) {
                 // Senha errada: mantém o diálogo aberto para tentar de novo.
-                _state.update { it.copy(busy = false, error = e.message ?: str(R.string.msg_import_generic)) }
+                _state.update { it.copy(busy = false, error = importErrorText(e)) }
             }
         }
     }
@@ -813,6 +814,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         TkeysError.Decrypt -> str(R.string.tkeys_decrypt)
         TkeysError.Corrupted -> str(R.string.tkeys_corrupted)
     }
+
+    /** O texto do erro de um importador de arquivo, no idioma da interface (o [ImportError] carrega o recurso). */
+    private fun importErrorText(e: Exception): String =
+        if (e is ImportError) str(e.resId, *e.args) else e.message ?: str(R.string.msg_import_generic)
 
     private fun str(@StringRes id: Int, vararg args: Any): String =
         getApplication<Application>().getString(id, *args)

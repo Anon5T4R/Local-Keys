@@ -1,5 +1,6 @@
 package com.localkeys.android.data.import
 
+import com.localkeys.android.R
 import com.localkeys.android.data.vault.CustomField
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
@@ -65,47 +66,45 @@ object KdbxImport {
 
     private fun decryptToXml(bytes: ByteArray, password: String): DecryptedXml {
         if (bytes.size < 12 || !bytes.copyOfRange(0, 4).contentEquals(KDBX_SIG)) {
-            throw ImportError("este arquivo não parece ser um .kdbx")
+            throw ImportError(R.string.import_err_not_kdbx)
         }
         val major = readU16LE(bytes, 10) // bytes 8-9 = menor, 10-11 = maior
         if (major != 4) {
-            throw ImportError(
-                "Este .kdbx usa o formato $major (antigo). Exporte do KeePass em formato 4.0 e tente de novo."
-            )
+            throw ImportError(R.string.import_err_kdbx_old, major)
         }
 
         // ── Cabeçalho externo ───────────────────────────────────────────
         val header = HashMap<Int, ByteArray>()
         var pos = 12
         while (true) {
-            if (pos + 5 > bytes.size) throw ImportError("cabeçalho do .kdbx corrompido")
+            if (pos + 5 > bytes.size) throw ImportError(R.string.import_err_kdbx_header)
             val type = bytes[pos].toInt() and 0xFF
             val len = readU32LE(bytes, pos + 1)
-            if (pos + 5 + len > bytes.size) throw ImportError("cabeçalho do .kdbx corrompido")
+            if (pos + 5 + len > bytes.size) throw ImportError(R.string.import_err_kdbx_header)
             header[type] = bytes.copyOfRange(pos + 5, pos + 5 + len)
             pos += 5 + len
             if (type == 0) break // END
         }
         val headerData = bytes.copyOfRange(0, pos)
 
-        if (pos + 64 > bytes.size) throw ImportError("arquivo .kdbx incompleto")
+        if (pos + 64 > bytes.size) throw ImportError(R.string.import_err_kdbx_incomplete)
         val headerSha256 = bytes.copyOfRange(pos, pos + 32)
         val headerHmac = bytes.copyOfRange(pos + 32, pos + 64)
         val streamStart = pos + 64
 
         val headerSha = sha256(headerData)
         if (!headerSha.contentEquals(headerSha256)) {
-            throw ImportError("integridade do cabeçalho falhou (arquivo corrompido)")
+            throw ImportError(R.string.import_err_header_integrity)
         }
 
-        val cipherUuid = header[2] ?: throw ImportError("sem cifra no cabeçalho")
+        val cipherUuid = header[2] ?: throw ImportError(R.string.import_err_no_cipher)
         if (!cipherUuid.contentEquals(AES256_UUID)) {
-            throw ImportError("cifra externa não suportada (só AES-256)")
+            throw ImportError(R.string.import_err_outer_cipher)
         }
         val compression = readU32LE(header[3] ?: byteArrayOf(0, 0, 0, 0))
-        val masterSeed = header[4] ?: throw ImportError("sem master seed")
-        val outerIv = header[7] ?: throw ImportError("sem IV externo")
-        val kdfParams = parseVariantDictionary(header[11] ?: throw ImportError("sem parâmetros de KDF"))
+        val masterSeed = header[4] ?: throw ImportError(R.string.import_err_no_seed)
+        val outerIv = header[7] ?: throw ImportError(R.string.import_err_no_iv)
+        val kdfParams = parseVariantDictionary(header[11] ?: throw ImportError(R.string.import_err_no_kdf_params))
 
         // ── Derivação da chave ──────────────────────────────────────────
         val composite = sha256(sha256(password.toByteArray(Charsets.UTF_8)))
@@ -117,7 +116,7 @@ object KdbxImport {
         val headerHmacKey = sha512(le64(-1L) + hmacKey) // u64::MAX (índice do HMAC do cabeçalho)
         val expectedHmac = hmacSha256(headerData, headerHmacKey)
         if (!expectedHmac.contentEquals(headerHmac)) {
-            throw ImportError("senha incorreta ou arquivo corrompido (HMAC do cabeçalho)")
+            throw ImportError(R.string.import_err_wrong_password_hmac)
         }
 
         // ── HMAC block stream → payload cifrado → decrypt + gunzip ─────
@@ -131,10 +130,10 @@ object KdbxImport {
         var streamKey = ByteArray(0)
         var hasStream = false
         while (true) {
-            if (p + 5 > payload.size) throw ImportError("cabeçalho interno corrompido")
+            if (p + 5 > payload.size) throw ImportError(R.string.import_err_inner_header)
             val type = payload[p].toInt() and 0xFF
             val len = readU32LE(payload, p + 1)
-            if (p + 5 + len > payload.size) throw ImportError("cabeçalho interno corrompido")
+            if (p + 5 + len > payload.size) throw ImportError(R.string.import_err_inner_header)
             val data = payload.copyOfRange(p + 5, p + 5 + len)
             p += 5 + len
             when (type) {
@@ -149,32 +148,32 @@ object KdbxImport {
                 3 -> Unit // anexo binário (ignorado por enquanto)
             }
         }
-        if (!hasStream) throw ImportError("cabeçalho interno sem cifra de campos")
+        if (!hasStream) throw ImportError(R.string.import_err_inner_no_cipher)
         return DecryptedXml(payload.copyOfRange(p, payload.size), streamId, streamKey)
     }
 
     // ── KDF ────────────────────────────────────────────────────────────
 
     private fun kdfTransform(vd: Map<String, ByteArray>, composite: ByteArray): ByteArray {
-        val uuid = vd["\$UUID"] ?: throw ImportError("sem identificador de KDF")
+        val uuid = vd["\$UUID"] ?: throw ImportError(R.string.import_err_no_kdf_id)
         return when {
             uuid.contentEquals(KDF_AES_UUID) || uuid.contentEquals(KDF_AES_KDBX3_UUID) -> {
-                val seed = vd["S"] ?: throw ImportError("AES-KDF sem seed")
+                val seed = vd["S"] ?: throw ImportError(R.string.import_err_aeskdf_seed)
                 val rounds = readU64LE(vd["R"] ?: byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0))
                 aesKdf(seed, rounds, composite)
             }
             uuid.contentEquals(KDF_ARGON2_UUID) || uuid.contentEquals(KDF_ARGON2ID_UUID) -> {
                 argon2(
                     id = uuid.contentEquals(KDF_ARGON2ID_UUID),
-                    salt = vd["S"] ?: throw ImportError("Argon2 sem salt"),
-                    memoryBytes = readU64LE(vd["M"] ?: throw ImportError("Argon2 sem memória")),
-                    iterations = readU64LE(vd["I"] ?: throw ImportError("Argon2 sem iterações")),
-                    parallelism = readU32LE(vd["P"] ?: throw ImportError("Argon2 sem paralelismo")),
-                    version = readU32LE(vd["V"] ?: throw ImportError("Argon2 sem versão")),
+                    salt = vd["S"] ?: throw ImportError(R.string.import_err_argon_salt),
+                    memoryBytes = readU64LE(vd["M"] ?: throw ImportError(R.string.import_err_argon_memory)),
+                    iterations = readU64LE(vd["I"] ?: throw ImportError(R.string.import_err_argon_iterations)),
+                    parallelism = readU32LE(vd["P"] ?: throw ImportError(R.string.import_err_argon_parallelism)),
+                    version = readU32LE(vd["V"] ?: throw ImportError(R.string.import_err_argon_version_missing)),
                     password = composite,
                 )
             }
-            else -> throw ImportError("KDF não suportado pelo .kdbx")
+            else -> throw ImportError(R.string.import_err_kdf_unsupported)
         }
     }
 
@@ -200,12 +199,12 @@ object KdbxImport {
         password: ByteArray,
     ): ByteArray {
         if (iterations < 1 || memoryBytes < 8 * 1024 || parallelism < 1) {
-            throw ImportError("parâmetros Argon2 inválidos no arquivo")
+            throw ImportError(R.string.import_err_argon_params_file)
         }
         val v = when (version) {
             0x10 -> Argon2Parameters.ARGON2_VERSION_10
             0x13 -> Argon2Parameters.ARGON2_VERSION_13
-            else -> throw ImportError("versão do Argon2 não suportada no arquivo")
+            else -> throw ImportError(R.string.import_err_argon_version)
         }
         return try {
             val params = Argon2Parameters.Builder(if (id) Argon2Parameters.ARGON2_id else Argon2Parameters.ARGON2_d)
@@ -221,7 +220,7 @@ object KdbxImport {
             gen.generateBytes(password, out)
             out
         } catch (e: Exception) {
-            throw ImportError("falha no Argon2: ${e.message}")
+            throw ImportError(R.string.import_err_argon_failed, e.message.orEmpty())
         }
     }
 
@@ -229,22 +228,22 @@ object KdbxImport {
 
     private fun parseVariantDictionary(data: ByteArray): Map<String, ByteArray> {
         val out = HashMap<String, ByteArray>()
-        if (data.size < 2) throw ImportError("VariantDictionary corrompido")
-        if (readU16LE(data, 0) != 0x0100) throw ImportError("versão de VariantDictionary não suportada")
+        if (data.size < 2) throw ImportError(R.string.import_err_variant_corrupt)
+        if (readU16LE(data, 0) != 0x0100) throw ImportError(R.string.import_err_variant_version)
         var pos = 2
         while (pos < data.size) {
             val type = data[pos].toInt() and 0xFF
             pos += 1
             if (type == 0) return out // END
-            if (pos + 8 > data.size) throw ImportError("VariantDictionary corrompido")
+            if (pos + 8 > data.size) throw ImportError(R.string.import_err_variant_corrupt)
             val keyLen = readU32LE(data, pos)
             pos += 4
-            if (pos + keyLen + 4 > data.size) throw ImportError("VariantDictionary corrompido")
+            if (pos + keyLen + 4 > data.size) throw ImportError(R.string.import_err_variant_corrupt)
             val key = String(data, pos, keyLen, Charsets.UTF_8)
             pos += keyLen
             val valLen = readU32LE(data, pos)
             pos += 4
-            if (pos + valLen > data.size) throw ImportError("VariantDictionary corrompido")
+            if (pos + valLen > data.size) throw ImportError(R.string.import_err_variant_corrupt)
             out[key] = data.copyOfRange(pos, pos + valLen)
             pos += valLen
         }
@@ -258,16 +257,16 @@ object KdbxImport {
         var pos = 0
         var index = 0L
         while (pos < data.size) {
-            if (pos + 36 > data.size) throw ImportError("bloco HMAC corrompido")
+            if (pos + 36 > data.size) throw ImportError(R.string.import_err_hmac_block)
             val hmac = data.copyOfRange(pos, pos + 32)
             val size = readU32LE(data, pos + 32)
-            if (pos + 36 + size > data.size) throw ImportError("bloco HMAC corrompido")
+            if (pos + 36 + size > data.size) throw ImportError(R.string.import_err_hmac_block)
             val block = data.copyOfRange(pos + 36, pos + 36 + size)
             val blockKey = sha512(le64(index) + hmacKey)
             val idx = le64(index)
             val sizeBytes = data.copyOfRange(pos + 32, pos + 36)
             if (!hmacSha256(idx + sizeBytes + block, blockKey).contentEquals(hmac)) {
-                throw ImportError("integridade do payload falhou (bloco $index)")
+                throw ImportError(R.string.import_err_payload_integrity, index)
             }
             pos += 36 + size
             index++
@@ -283,7 +282,7 @@ object KdbxImport {
         val doc = parseDom(decrypted.xml)
         val inner = innerCipher(decrypted.streamId, decrypted.streamKey)
         val rootGroup = doc.documentElement?.child("Root")?.child("Group")
-            ?: throw ImportError("XML do KeePass sem grupo raiz")
+            ?: throw ImportError(R.string.import_err_xml_root)
         val items = mutableListOf<Item>()
         for (el in rootGroup.children("Entry")) {
             val fields = LinkedHashMap<String, String>()
@@ -417,7 +416,7 @@ object KdbxImport {
                 }
                 override fun reset() {}
             })
-            else -> throw ImportError("cifra de campos não suportada (id $streamId)")
+            else -> throw ImportError(R.string.import_err_field_cipher, streamId)
         }
         val engine = if (streamId == INNER_CHACHA20) ChaCha7539Engine() else Salsa20Engine()
         engine.init(false, params)
@@ -427,7 +426,7 @@ object KdbxImport {
     private fun base64Decode(s: String): ByteArray = try {
         Base64.getDecoder().decode(s.trim())
     } catch (e: IllegalArgumentException) {
-        throw ImportError("base64 inválido em campo protegido")
+        throw ImportError(R.string.import_err_b64_protected)
     }
 
     private fun sha256(data: ByteArray): ByteArray =

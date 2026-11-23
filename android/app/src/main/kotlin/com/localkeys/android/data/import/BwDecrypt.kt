@@ -1,5 +1,6 @@
 package com.localkeys.android.data.import
 
+import com.localkeys.android.R
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator
 import org.bouncycastle.crypto.params.Argon2Parameters
 import org.json.JSONObject
@@ -31,20 +32,20 @@ object BwDecrypt {
         val export = try {
             JSONObject(json)
         } catch (e: Exception) {
-            throw ImportError("JSON inválido: ${e.message}")
+            throw ImportError(R.string.import_err_json, e.message.orEmpty())
         }
         val passwordProtected = export.optBoolean("passwordProtected", false)
         val encrypted = export.optBoolean("encrypted", false)
         if (!passwordProtected && !encrypted) {
-            throw ImportError("este arquivo não parece um export cifrado do Bitwarden")
+            throw ImportError(R.string.import_err_not_bw_encrypted)
         }
         val salt = export.optString("salt").takeIf { it.isNotEmpty() }
-            ?: throw ImportError("export sem `salt`")
+            ?: throw ImportError(R.string.import_err_bw_salt)
         val data = export.optString("data").takeIf { it.isNotEmpty() }
-            ?: throw ImportError("export sem `data`")
+            ?: throw ImportError(R.string.import_err_bw_data)
         val kdfType = export.optInt("kdfType", 0)
         val iters = export.optInt("kdfIterations", 0).takeIf { it > 0 }
-            ?: throw ImportError("export sem `kdfIterations`")
+            ?: throw ImportError(R.string.import_err_bw_iterations)
         val memMiB = export.optInt("kdfMemory", 64)
         val parallelism = export.optInt("kdfParallelism", 4)
 
@@ -73,7 +74,7 @@ object BwDecrypt {
                 val saltHash = sha256(salt.toByteArray(Charsets.UTF_8))
                 argon2id(passwordBytes, saltHash, memMiB * 1024, iters, parallelism.coerceAtLeast(1))
             }
-            else -> throw ImportError("KDF do Bitwarden não suportado: $kdfType")
+            else -> throw ImportError(R.string.import_err_bw_kdf, kdfType)
         }
     }
 
@@ -99,7 +100,7 @@ object BwDecrypt {
             gen.generateBytes(password, out)
             out
         } catch (e: Exception) {
-            throw ImportError("parâmetros Argon2 inválidos: ${e.message}")
+            throw ImportError(R.string.import_err_argon_params, e.message.orEmpty())
         }
     }
 
@@ -135,13 +136,13 @@ object BwDecrypt {
     private fun decryptEncString(s: String, encKey: ByteArray, macKey: ByteArray): ByteArray {
         val rest = s.removePrefix("2.")
             .takeUnless { it == s }
-            ?: throw ImportError("formato de cifra não suportado (esperado tipo 2)")
+            ?: throw ImportError(R.string.import_err_cipher_format)
         val parts = rest.split("|")
-        if (parts.size != 3) throw ImportError("enc-string malformada")
+        if (parts.size != 3) throw ImportError(R.string.import_err_enc_string)
         val iv = b64(parts[0])
         val ct = b64(parts[1])
         val tag = b64(parts[2])
-        if (iv.size != 16) throw ImportError("IV inválido")
+        if (iv.size != 16) throw ImportError(R.string.import_err_iv)
 
         // Autentica (iv || ct) ANTES de decifrar.
         val hmac = Mac.getInstance("HmacSHA256")
@@ -150,7 +151,7 @@ object BwDecrypt {
         hmac.update(ct)
         val expected = hmac.doFinal()
         if (!MessageDigest.isEqual(expected, tag)) {
-            throw ImportError("senha incorreta ou arquivo corrompido (MAC)")
+            throw ImportError(R.string.import_err_wrong_password_mac)
         }
 
         val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
@@ -161,6 +162,6 @@ object BwDecrypt {
     private fun b64(s: String): ByteArray = try {
         Base64.getDecoder().decode(s.trim())
     } catch (e: IllegalArgumentException) {
-        throw ImportError("base64 inválido")
+        throw ImportError(R.string.import_err_b64)
     }
 }

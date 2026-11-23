@@ -1,5 +1,6 @@
 package com.localkeys.android.data.import
 
+import com.localkeys.android.R
 import com.localkeys.android.data.vault.Card
 import com.localkeys.android.data.vault.Identity
 import com.localkeys.android.data.vault.Item
@@ -28,7 +29,7 @@ object BitwardenImport {
                 (0 until arr.length()).map { arr.getJSONObject(it) }
             }
         } catch (e: Exception) {
-            throw ImportError("JSON inválido: ${e.message}")
+            throw ImportError(R.string.import_err_json, e.message.orEmpty())
         }
         return objects.map(::bwToItem)
     }

@@ -1,5 +1,6 @@
 package com.localkeys.android.data.import
 
+import com.localkeys.android.R
 import com.localkeys.android.data.vault.ItemKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -57,7 +58,7 @@ class KdbxImportTest {
         val e = assertThrows(ImportError::class.java) {
             KdbxImport.parse(fixture, "senha-errada")
         }
-        assertEquals("senha incorreta ou arquivo corrompido (HMAC do cabeçalho)", e.message)
+        assertEquals(R.string.import_err_wrong_password_hmac, e.resId)
     }
 
     @Test
@@ -65,7 +66,7 @@ class KdbxImportTest {
         val e = assertThrows(ImportError::class.java) {
             KdbxImport.parse("isto não é um kdbx".toByteArray(), "x")
         }
-        assertEquals("este arquivo não parece ser um .kdbx", e.message)
+        assertEquals(R.string.import_err_not_kdbx, e.resId)
     }
 
     @Test
@@ -73,7 +74,7 @@ class KdbxImportTest {
         val e = assertThrows(ImportError::class.java) {
             KdbxImport.parse(fixture, "")
         }
-        assertEquals("senha incorreta ou arquivo corrompido (HMAC do cabeçalho)", e.message)
+        assertEquals(R.string.import_err_wrong_password_hmac, e.resId)
     }
 
     @Test
