@@ -134,6 +134,9 @@ mod tests {
                 | "Local Keys"
                 | "Login"
                 | "E-mail"
+                | "CPF"
+                | "RG"
+                | "CNH"
         )
     }
 

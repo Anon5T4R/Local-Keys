@@ -182,3 +182,13 @@
 	{n} digits	{n} dígitos
 	current code: {code}	código actual: {code}
 	the image is too large (over 4096×4096)	la imagen es demasiado grande (más de 4096×4096)
+	This number fails the card check (Luhn). Check for a typo; you can still save.	Este número no pasa la comprobación de la tarjeta (Luhn). Revisa si está bien escrito; se puede guardar igual.
+	Detected from the number; type to change it.	Detectada por el número; escribe para cambiarla.
+	Add a document	Añadir documento
+	CPF	CPF
+	RG	RG
+	CNH	CNH
+	Date of birth	Fecha de nacimiento
+	Passport	Pasaporte
+	Document (other)	Documento (otro)
+	The CPF check digits don't match. Check for a typo; you can still save.	Los dígitos de control del CPF no coinciden. Revisa si está bien escrito; se puede guardar igual.
