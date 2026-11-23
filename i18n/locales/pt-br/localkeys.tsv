@@ -23,6 +23,7 @@
 	Unpin	Desafixar
 	Delete	Excluir
 	empty — copy something	vazio — copie algo
+	No items match these filters	Nenhum item com estes filtros
 	Vault	Cofre
 	Master password	Senha mestra
 	Unlock	Destrancar
@@ -58,8 +59,8 @@
 	Bitwarden (encrypted export)	Bitwarden (export cifrado)
 	File	Arquivo
 	File password	Senha do arquivo
-	items imported	itens importados
-	card/identity skipped — Local Keys keeps logins and notes	de cartão/identidade pulados — o Local Keys guarda logins e notas
+@plural	{n} item imported|{n} items imported	{n} item importado|{n} itens importados
+@plural	{n} card/identity skipped — Local Keys keeps logins and notes|{n} cards/identities skipped — Local Keys keeps logins and notes	{n} cartão/identidade pulado — o Local Keys guarda logins e notas|{n} cartões/identidades pulados — o Local Keys guarda logins e notas
 	Generator	Gerador
 	Generate	Gerar
 	Use	Usar
