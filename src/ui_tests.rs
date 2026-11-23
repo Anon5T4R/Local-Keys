@@ -90,6 +90,14 @@ fn item_id(app: &KeysApp, name: &str) -> String {
         .to_string()
 }
 
+/// O texto de um nó: o rótulo, ou o valor quando o texto mora lá (TextRun carrega no valor).
+fn node_text(node: &egui_kittest::Node<'_>) -> String {
+    if let Some(label) = node.accesskit_node().label() {
+        return label.to_string();
+    }
+    node.accesskit_node().data().value().unwrap_or_default().to_string()
+}
+
 // O kittest falha se algum texto da tela cair numa fonte sem o glyph (a "caixinha"): é o guarda dos emojis.
 fn harness_sized(app: KeysApp, width: f32) -> Harness<'static, KeysApp> {
     Harness::builder().with_size(egui::vec2(width, 640.0)).with_step_dt(1.0 / 60.0).build_ui_state(
@@ -772,6 +780,166 @@ fn kind_shots() {
             let mut harness = harness_sized(unlocked_kinds("shots-kind", Prefs::new("en", appearance)), width);
             harness.run_steps(2);
             shot(&mut harness, &format!("kind-list-{name}-{label}"));
+        }
+    }
+}
+
+/// Colar um `otpauth://` NO CAMPO grava só a chave base32 e preenche nome e usuário quando estão
+/// vazios — nunca sobrescreve o que a pessoa já digitou.
+#[test]
+fn pasting_an_otpauth_link_fills_name_and_user() {
+    let mut app = unlocked("totp-paste", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("totp-paste");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.open_add_form(NewKind::Login);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    // O campo TOTP do form (o rótulo "TOTP" também existe na lista de fundo — busca por papel+rótulo).
+    let campo = harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+    campo.click();
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Paste("otpauth://totp/GitHub:joao?secret=jbswy3dpehpk3pxp".into()));
+    harness.run_steps(2);
+    let app = harness.state();
+    assert_eq!(app.add_totp, "JBSWY3DPEHPK3PXP", "o campo guarda só a chave base32 limpa");
+    assert_eq!(app.add_name, "GitHub", "nome vazio é preenchido pelo emissor do link");
+    assert_eq!(app.add_user, "joao", "usuário vazio é preenchido pela conta do link");
+
+    // Nome e usuário já preenchidos: o link não sobrescreve.
+    harness.state_mut().add_name = "Meu GitHub".into();
+    harness.state_mut().add_user = "joaozinho".into();
+    let campo = harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+    campo.click();
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Paste("otpauth://totp/Binance:joao%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=Binance".into()));
+    harness.run_steps(2);
+    let app = harness.state();
+    assert_eq!(app.add_name, "Meu GitHub", "nome preenchido fica");
+    assert_eq!(app.add_user, "joaozinho", "usuário preenchido fica");
+    assert_eq!(app.add_totp, "JBSWY3DPEHPK3PXP");
+
+    // E o que vai para o cofre é a chave, não o link.
+    harness.state_mut().add_pass = "x".into();
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    let raw = harness.state().raw.as_ref().expect("cofre");
+    let it = raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == "Meu GitHub").expect("item");
+    assert_eq!(it["login"]["totp"], "JBSWY3DPEHPK3PXP");
+}
+
+/// Os erros aparecem claros embaixo do campo: HOTP (não é TOTP), link sem `secret` e chave que não é
+/// base32 — o texto colado fica no campo, não vira chave.
+#[test]
+fn an_invalid_totp_link_shows_a_clear_error() {
+    let mut app = unlocked("totp-erros", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Login);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    for (link, erro) in [("otpauth://hotp/X?secret=JBSWY3DP&counter=1", "not a TOTP link"), ("otpauth://totp/X?issuer=X", "no secret key")] {
+        let campo =
+            harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+        campo.click();
+        harness.run_steps(1);
+        harness.input_mut().events.push(egui::Event::Paste(link.into()));
+        harness.run_steps(2);
+        let label = node_text(&harness.get_by_label_contains(erro));
+        assert!(label.contains(erro), "erro visível: {label}");
+        assert_eq!(harness.state().add_totp, link, "o link inválido fica no campo, não vira chave");
+        harness.state_mut().add_totp.clear();
+        harness.run_steps(1);
+    }
+    // Chave digitada que não é base32.
+    harness.state_mut().add_totp = "senha1!".into();
+    harness.run_steps(2);
+    let label = node_text(&harness.get_by_label_contains("must be base32"));
+    assert!(label.contains("base32"), "erro visível: {label}");
+}
+
+/// QR de imagem: os bytes de um PNG com QR (o caminho do seletor de arquivo) aplicam a chave, preenchem
+/// o nome vazio e avisam quando os parâmetros saem do padrão — a chave vai inteira mesmo assim.
+#[test]
+fn a_qr_image_fills_the_key_and_warns_on_non_default_params() {
+    let mut app = unlocked("totp-qr", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Login);
+    // QR padrão (6/30s/SHA-1): chave + nome, sem aviso.
+    app.apply_qr_bytes(&crate::qr::qr_png("otpauth://totp/GitHub:joao?secret=JBSWY3DPEHPK3PXP", 8));
+    assert_eq!(app.add_totp, "JBSWY3DPEHPK3PXP");
+    assert_eq!(app.add_name, "GitHub");
+    assert_eq!(app.add_user, "joao");
+    assert!(app.totp_warn.is_none());
+
+    // QR com 8 dígitos/60 s/SHA-256: a chave é gravada com o aviso de que os códigos podem não bater.
+    app.apply_qr_bytes(&crate::qr::qr_png("otpauth://totp/X:y?secret=JBSWY3DPEHPK3PXP&digits=8&period=60&algorithm=SHA256", 8));
+    assert_eq!(app.add_totp, "JBSWY3DPEHPK3PXP", "fora do padrão também grava a chave");
+    let aviso = app.totp_warn.as_deref().expect("aviso de parâmetros");
+    assert!(aviso.contains("8 digits") && aviso.contains("SHA256"), "o aviso diz o que o QR pede: {aviso}");
+
+    // O aviso aparece no form e some quando o campo muda (edição de verdade no campo).
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let texto = node_text(&harness.get_by_label_contains("codes may not match"));
+    assert!(texto.contains("may not match"), "aviso visível: {texto}");
+    let campo = harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+    campo.click();
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Text("X".into()));
+    harness.run_steps(2);
+    assert!(harness.state().totp_warn.is_none(), "o aviso é do link aplicado; mexer no campo limpa");
+
+    // Imagem sem QR e bytes que não são imagem avisam sem quebrar nada.
+    let lisa = image::GrayImage::from_pixel(64, 64, image::Luma([128]));
+    let mut png = Vec::new();
+    image::DynamicImage::ImageLuma8(lisa).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).expect("png");
+    harness.state_mut().apply_qr_bytes(&png);
+    assert!(harness.state().toast.as_ref().is_some_and(|(m, _)| m.contains("no QR code found")), "sem QR: aviso");
+    harness.state_mut().apply_qr_bytes(b"isto nao e uma imagem");
+    assert!(harness.state().toast.as_ref().is_some_and(|(m, _)| m.contains("image file")), "bytes que não são imagem: aviso");
+}
+
+/// Com chave válida no form, a prévia mostra o código atual com a contagem regressiva.
+#[test]
+fn the_totp_field_shows_a_live_preview() {
+    let mut app = unlocked("totp-preview", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Login);
+    app.add_totp = "JBSWY3DPEHPK3PXP".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let preview = node_text(&harness.get_by_label_contains("current code:"));
+    // "current code: 123 456 · 12s" — código em blocos de 3 e a contagem no fim.
+    assert!(preview.contains("current code: "), "prévia visível: {preview}");
+    let codigo = preview.split(": ").nth(1).unwrap_or_default().split(" ·").next().unwrap_or_default();
+    assert_eq!(codigo.len(), 7, "6 dígitos em dois blocos: {codigo:?}");
+    assert!(codigo.chars().next().is_some_and(|c| c.is_ascii_digit()));
+    assert!(preview.ends_with('s') && preview.contains("·"), "contagem regressiva: {preview}");
+}
+
+/// As capturas da fase B (TOTP): prévia do código com contagem, aviso de parâmetros fora do padrão e
+/// os botões de QR — claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
+#[test]
+fn totp_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            // prévia do código
+            let mut app = unlocked("shots-totp", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Login);
+            app.add_name = "GitHub".into();
+            app.add_user = "joao".into();
+            app.add_totp = "JBSWY3DPEHPK3PXP".into();
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("totp-preview-{name}-{label}"));
+
+            // aviso de parâmetros fora do padrão (QR que pede 8 dígitos/60 s/SHA-256)
+            let mut app = unlocked("shots-totp", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Login);
+            app.add_name = "Binance".into();
+            app.add_totp = "JBSWY3DPEHPK3PXP".into();
+            app.totp_warn =
+                Some(crate::unsupported_text(&crate::otpauth::Unsupported { digits: Some(8), period: Some(60), algorithm: Some("SHA256".into()) }));
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("totp-warn-{name}-{label}"));
         }
     }
 }

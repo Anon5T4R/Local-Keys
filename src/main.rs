@@ -19,6 +19,7 @@ mod i18n;
 mod jobs;
 mod pickers;
 mod prefs;
+mod qr;
 mod shell;
 mod theme;
 
@@ -28,7 +29,7 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, card, crypto, export, generator, import, kdbx, totp, vault};
+use localkeys_core::{bwdecrypt, card, crypto, export, generator, import, kdbx, otpauth, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -256,6 +257,34 @@ fn kind_label(kind: vault::ItemKind) -> &'static str {
         vault::ItemKind::Note => tr("Note"),
         vault::ItemKind::Card => tr("Card"),
         vault::ItemKind::Identity => tr("Identity"),
+    }
+}
+
+/// O texto do aviso de parâmetros fora do padrão (por exemplo "8 dígitos, 60 s, SHA-256").
+fn unsupported_text(u: &otpauth::Unsupported) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(digits) = u.digits {
+        parts.push(tr_fmt("{n} digits", &[("n", &digits.to_string())]));
+    }
+    if let Some(period) = u.period {
+        parts.push(format!("{} {}", period, tr("s")));
+    }
+    if let Some(algorithm) = &u.algorithm {
+        parts.push(algorithm.clone());
+    }
+    tr_fmt(
+        "key saved, but the QR asks for {params}. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.",
+        &[("params", &parts.join(", "))],
+    )
+}
+
+/// O motivo do erro de TOTP no idioma da interface (`None` = campo vazio, sem texto).
+fn totp_error_text(reason: otpauth::Reason) -> Option<&'static str> {
+    match reason {
+        otpauth::Reason::NotTotp => Some(tr("this is not a TOTP link (HOTP is not supported)")),
+        otpauth::Reason::NoSecret => Some(tr("the link has no secret key")),
+        otpauth::Reason::BadKey => Some(tr("invalid key: it must be base32 (letters A-Z and digits 2-7)")),
+        otpauth::Reason::Empty => None,
     }
 }
 
@@ -750,6 +779,9 @@ struct KeysApp {
     add_folder_id: Option<String>,
     /// 👁 do campo de senha do form (volta a ocultar ao fechar).
     reveal_form: bool,
+    /// Aviso de parâmetros fora do padrão (digits/period/algorithm ≠ 6/30 s/SHA-1) do último link/QR
+    /// TOTP aplicado no form. Some quando o campo muda — a chave é gravada do mesmo jeito.
+    totp_warn: Option<String>,
     /// 👁 da senha do arquivo de import.
     reveal_import: bool,
     /// Exclusão esperando confirmação (um clique sem querer não apaga).
@@ -862,6 +894,7 @@ impl KeysApp {
             add_folder_id: None,
             form_attachments: Vec::new(),
             reveal_form: false,
+            totp_warn: None,
             reveal_import: false,
             delete_ask: None,
             trash_open: false,
@@ -951,6 +984,7 @@ impl KeysApp {
         self.form_custom.clear();
         self.form_attachments.clear();
         self.reveal_form = false;
+        self.totp_warn = None;
         self.delete_ask = None;
         self.trash_open = false;
         self.purge_ask = None;
@@ -1322,6 +1356,93 @@ impl KeysApp {
         self.form_attachments.clear();
         self.form_custom.clear();
         self.reveal_form = false;
+        self.totp_warn = None;
+    }
+
+    // ── TOTP por link/QR (pedido 022, fase B) ─────────────────────────
+
+    /// Aplica no formulário o texto lido de um QR ou colado: link `otpauth://totp/…` ou chave crua —
+    /// o `apply` do `TotpEditorField` do Android. Texto inválido fica no campo (o motivo do erro
+    /// aparece abaixo dele, derivado a cada quadro); válido grava só a chave base32.
+    fn apply_totp_raw(&mut self, raw: &str) {
+        let text = raw.trim();
+        if text.is_empty() {
+            return;
+        }
+        match otpauth::parse(text) {
+            otpauth::ParseResult::Ok(p) => self.apply_parsed_totp(p),
+            otpauth::ParseResult::Invalid(_) => {
+                self.add_totp = text.to_string();
+                self.totp_warn = None;
+            }
+        }
+    }
+
+    /// O `applyTotp` do Android: grava só a chave base32, preenche nome e usuário quando estão vazios
+    /// (nunca sobrescreve) e guarda o aviso de parâmetros fora do padrão.
+    fn apply_parsed_totp(&mut self, p: otpauth::Parsed) {
+        self.totp_warn = p.unsupported.as_ref().map(unsupported_text);
+        self.add_totp = p.secret;
+        if self.add_name.trim().is_empty()
+            && let Some(nome) = p.issuer.clone().or(p.account.clone())
+        {
+            self.add_name = nome;
+        }
+        if self.form_kind == vault::ItemKind::Login
+            && self.add_user.trim().is_empty()
+            && let Some(conta) = &p.account
+        {
+            self.add_user = conta.clone();
+        }
+    }
+
+    /// QR decodificado de bytes de imagem (arquivo do seletor ou imagem colada): o texto vai pro campo
+    /// pelo mesmo caminho de um link colado.
+    fn apply_qr_bytes(&mut self, bytes: &[u8]) {
+        match qr::decode(bytes) {
+            Ok(text) => self.apply_totp_raw(&text),
+            Err(qr::QrError::NotAnImage) => self.notice(tr("could not read the image file").to_string()),
+            Err(qr::QrError::NoQr) => self.notice(tr("no QR code found in the image").to_string()),
+        }
+    }
+
+    /// "Ler QR de imagem…": seletor nativo de arquivo de imagem (a leitura e o decode correm no callback).
+    fn add_totp_from_file(&mut self, ctx: &egui::Context) {
+        let dialog = rfd::AsyncFileDialog::new().add_filter("PNG/JPEG/BMP", &["png", "jpg", "jpeg", "bmp"]);
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::File(dialog),
+            Box::new(|app, paths| {
+                let Some(path) = paths.first() else { return };
+                match std::fs::read(path) {
+                    Ok(bytes) => app.apply_qr_bytes(&bytes),
+                    Err(_) => app.notice(tr("could not read the image file").to_string()),
+                }
+            }),
+        );
+    }
+
+    /// "Colar imagem": lê a imagem da área de transferência e decodifica o QR dela.
+    fn paste_totp_image(&mut self) {
+        let image = arboard::Clipboard::new().and_then(|mut c| c.get_image());
+        let Ok(image) = image else {
+            self.notice(tr("the clipboard has no image").to_string());
+            return;
+        };
+        // O arboard entrega RGBA; um tamanho que não bate com os bytes não é imagem.
+        let Some(rgba) = u32::try_from(image.width)
+            .ok()
+            .zip(u32::try_from(image.height).ok())
+            .and_then(|(w, h)| image::RgbaImage::from_raw(w, h, image.bytes.into_owned()))
+        else {
+            self.notice(tr("the clipboard has no image").to_string());
+            return;
+        };
+        match qr::decode_gray(&image::imageops::grayscale(&rgba)) {
+            Ok(text) => self.apply_totp_raw(&text),
+            Err(qr::QrError::NoQr) => self.notice(tr("no QR code found in the image").to_string()),
+            Err(qr::QrError::NotAnImage) => self.notice(tr("could not read the image file").to_string()),
+        }
     }
 
     /// Abre o form em modo "novo item" já com o tipo escolhido no seletor do "+". Se há pasta
@@ -1835,6 +1956,8 @@ impl KeysApp {
         let title = if self.form_edit_id.is_some() { tr("Edit") } else { tr("Add") };
         let mut cancel = false;
         let mut add_file = false;
+        let mut ask_qr_file = false;
+        let mut paste_qr_image = false;
         let mut add_field = false;
         let mut remove_field: Option<usize> = None;
         let mut copy_value: Option<(String, String)> = None;
@@ -1876,7 +1999,56 @@ impl KeysApp {
                             ui.end_row();
 
                             let label = ui.label(tr("TOTP"));
-                            ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(field)).labelled_by(label.id);
+                            ui.vertical(|ui| {
+                                let edit = ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(field)).labelled_by(label.id);
+                                // Colar um otpauth:// aplica na hora: grava só a chave e preenche nome
+                                // e usuário VAZIOS (nunca sobrescreve) — o applyTotp do Android.
+                                if edit.changed() {
+                                    self.totp_warn = None;
+                                    let raw = self.add_totp.trim().to_string();
+                                    if raw.to_lowercase().starts_with("otpauth://")
+                                        && let otpauth::ParseResult::Ok(p) = otpauth::parse(&raw)
+                                    {
+                                        self.apply_parsed_totp(p);
+                                    }
+                                }
+                                // Abaixo do campo: o motivo do erro, ou o código atual com contagem.
+                                let texto = self.add_totp.trim().to_string();
+                                if !texto.is_empty() {
+                                    match otpauth::parse(&texto) {
+                                        otpauth::ParseResult::Ok(p) => {
+                                            if let Ok(code) = totp::now(&p.secret) {
+                                                let (a, b) = code.code.split_at(3);
+                                                let preview = tr_fmt("current code: {code}", &[("code", &format!("{a} {b}"))]);
+                                                ui.label(
+                                                    egui::RichText::new(format!("{} · {}{}", preview, code.seconds_remaining, tr("s")))
+                                                        .monospace()
+                                                        .strong(),
+                                                );
+                                                // A contagem precisa de quadros para andar.
+                                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                                            }
+                                            if let Some(warn) = &self.totp_warn {
+                                                ui.label(egui::RichText::new(warn).small().color(egui::Color32::from_rgb(230, 130, 40)));
+                                            }
+                                        }
+                                        otpauth::ParseResult::Invalid(reason) => {
+                                            if let Some(msg) = totp_error_text(reason) {
+                                                ui.label(egui::RichText::new(msg).small().color(egui::Color32::LIGHT_RED));
+                                            }
+                                        }
+                                    }
+                                }
+                                // QR: de um arquivo escolhido ou da imagem na área de transferência.
+                                ui.horizontal_wrapped(|ui| {
+                                    if ghost(ui, tr("Read QR from image…")).clicked() {
+                                        ask_qr_file = true;
+                                    }
+                                    if ghost(ui, tr("Paste image")).clicked() {
+                                        paste_qr_image = true;
+                                    }
+                                });
+                            });
                             ui.end_row();
                         }
                         vault::ItemKind::Card => {
@@ -2070,6 +2242,12 @@ impl KeysApp {
         });
         if add_file {
             self.add_attachment_from(FORM_ATTACH, ctx);
+        }
+        if ask_qr_file {
+            self.add_totp_from_file(ctx);
+        }
+        if paste_qr_image {
+            self.paste_totp_image();
         }
         if let Some(i) = remove_field {
             self.form_custom.remove(i);

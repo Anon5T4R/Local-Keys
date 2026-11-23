@@ -84,7 +84,7 @@ egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
 rfd = "0.17"
 # Espera o seletor nativo fora da thread de UI (já no grafo via wgpu).
 pollster = "1.0"
-rqrr = "0.11.0"
+rqrr = { version = "0.11.0", default-features = false }
 
 [dev-dependencies]
 localkeys-core = { path = "crates/core", features = ["test-support"] }
