@@ -192,3 +192,25 @@
 	Passport	Pasaporte
 	Document (other)	Documento (otro)
 	The CPF check digits don't match. Check for a typo; you can still save.	Los dígitos de control del CPF no coinciden. Revisa si está bien escrito; se puede guardar igual.
+	Save a copy to a synced folder…	Guardar una copia en una carpeta sincronizada…
+	Sync with another copy…	Sincronizar con otra copia…
+	Sync with another copy	Sincronizar con otra copia
+	{n} items added from the other copy	{n} elementos añadidos de la otra copia
+	{n} items updated (the other copy was newer)	{n} elementos actualizados (la otra copia era más reciente)
+	{n} items moved to the trash by the other copy	{n} elementos fueron a la papelera por la otra copia
+	{n} items restored from the trash	{n} elementos restaurados de la papelera
+	{n} ties: this vault keeps its item	{n} empates: esta bóveda se queda con su elemento
+	{n} folders added	{n} carpetas añadidas
+	{n} items go to the other copy	{n} elementos van a la otra copia
+	{n} folders go to the other copy	{n} carpetas van a la otra copia
+	After saving, both copies are identical.	Tras guardar, las dos copias quedan idénticas.
+	Nothing to sync: the copies are already identical.	Nada que sincronizar: las copias ya son idénticas.
+	Save to both copies	Guardar en ambas copias
+	synced: both copies identical	sincronizado: las dos copias idénticas
+	copy checked — this file is the vault now	copia comprobada — ahora la bóveda es este archivo
+	could not read the other copy	no se pudo leer la otra copia
+	the other copy does not open with this vault's password	la otra copia no se abre con la contraseña de esta bóveda
+	the other copy is not a valid vault	la otra copia no es una bóveda válida
+	could not write to the other copy	no se pudo escribir en la otra copia
+	could not write the copy	no se pudo escribir la copia
+	the other copy is the vault in use	la otra copia es la bóveda en uso
