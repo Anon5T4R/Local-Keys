@@ -23,6 +23,7 @@
 	Unpin	Desfijar
 	Delete	Eliminar
 	empty — copy something	vacío — copia algo
+	No items match these filters	Ningún elemento con estos filtros
 	Vault	Bóveda
 	Master password	Contraseña maestra
 	Unlock	Desbloquear
@@ -58,8 +59,8 @@
 	Bitwarden (encrypted export)	Bitwarden (exportación cifrada)
 	File	Archivo
 	File password	Contraseña del archivo
-	items imported	elementos importados
-	card/identity skipped — Local Keys keeps logins and notes	de tarjeta/identidad omitidos — Local Keys guarda inicios de sesión y notas
+@plural	{n} item imported|{n} items imported	{n} elemento importado|{n} elementos importados
+@plural	{n} card/identity skipped — Local Keys keeps logins and notes|{n} cards/identities skipped — Local Keys keeps logins and notes	{n} tarjeta/identidad omitida — Local Keys guarda inicios de sesión y notas|{n} tarjetas/identidades omitidas — Local Keys guarda inicios de sesión y notas
 	Generator	Generador
 	Generate	Generar
 	Use	Usar
@@ -178,7 +179,7 @@
 	this is not a TOTP link (HOTP is not supported)	esto no es un enlace TOTP (HOTP no es compatible)
 	the link has no secret key	el enlace no trae la clave secreta
 	invalid key: it must be base32 (letters A-Z and digits 2-7)	clave no válida: debe ser base32 (letras A-Z y dígitos 2-7)
-	key saved, but the QR asks for {params}. Local Keys generates 6-digit codes every 30 s (SHA-1), so the codes may not match.	clave guardada, pero el QR pide {params}. Local Keys genera códigos de 6 dígitos cada 30 s (SHA-1), así que los códigos pueden no coincidir.
+	key saved, but the QR asks for {params}. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.	clave guardada, pero el QR pide {params}. Local Keys genera códigos de 6 dígitos cada 30 s (SHA-1), así que los códigos pueden no coincidir.
 	{n} digits	{n} dígitos
 	current code: {code}	código actual: {code}
 	the image is too large (over 4096×4096)	la imagen es demasiado grande (más de 4096×4096)
@@ -194,14 +195,24 @@
 	The CPF check digits don't match. Check for a typo; you can still save.	Los dígitos de control del CPF no coinciden. Revisa si está bien escrito; se puede guardar igual.
 	Save a copy to a synced folder	Guardar una copia en una carpeta sincronizada
 	Sync with another copy	Sincronizar con otra copia
-	{n} items added from the other copy	{n} elementos añadidos de la otra copia
-	{n} items updated (the other copy was newer)	{n} elementos actualizados (la otra copia era más reciente)
-	{n} items moved to the trash by the other copy	{n} elementos fueron a la papelera por la otra copia
-	{n} items restored from the trash	{n} elementos restaurados de la papelera
-	{n} ties: this vault keeps its item	{n} empates: esta bóveda se queda con su elemento
-	{n} folders added	{n} carpetas añadidas
-	{n} items go to the other copy	{n} elementos van a la otra copia
-	{n} folders go to the other copy	{n} carpetas van a la otra copia
+@plural	{n} item added from the other copy|{n} items added from the other copy	{n} elemento añadido de la otra copia|{n} elementos añadidos de la otra copia
+@plural	{n} item updated (the other copy was newer)|{n} items updated (the other copy was newer)	{n} elemento actualizado (la otra copia era más reciente)|{n} elementos actualizados (la otra copia era más reciente)
+@plural	{n} item moved to the trash by the other copy|{n} items moved to the trash by the other copy	{n} elemento fue a la papelera por la otra copia|{n} elementos fueron a la papelera por la otra copia
+@plural	{n} item restored from the trash|{n} items restored from the trash	{n} elemento restaurado de la papelera|{n} elementos restaurados de la papelera
+@plural	{n} tie: this vault keeps its item|{n} ties: this vault keeps its item	{n} empate: esta bóveda se queda con su elemento|{n} empates: esta bóveda se queda con su elemento
+@plural	{n} folder added|{n} folders added	{n} carpeta añadida|{n} carpetas añadidas
+@plural	{n} item goes to the other copy|{n} items go to the other copy	{n} elemento va a la otra copia|{n} elementos van a la otra copia
+@plural	{n} folder goes to the other copy|{n} folders go to the other copy	{n} carpeta va a la otra copia|{n} carpetas van a la otra copia
+	Filter ({n})	Filtrar ({n})
+filter	All	Todos
+	Logins	Inicios de sesión
+	Cards	Tarjetas
+	Identities	Identidades
+	With TOTP	Con TOTP
+	With attachments	Con adjuntos
+	Favorites	Favoritos
+	Type	Tipo
+	Show only	Mostrar solo
 	After saving, both copies are identical.	Tras guardar, las dos copias quedan idénticas.
 	Nothing to sync: the copies are already identical.	Nada que sincronizar: las copias ya son idénticas.
 	Save to both copies	Guardar en ambas copias
