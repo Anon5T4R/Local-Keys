@@ -317,6 +317,12 @@ fn copia_abre(session: &crypto::SessionKey, path: &std::path::Path) -> bool {
     })
 }
 
+/// O JSON decifrado tem cara de cofre: objeto, e `items`/`folders` (quando presentes) são arrays.
+/// Um JSON qualquer que decifrasse viraria "cofre vazio" no merge — e a outra cópia seria regravada.
+fn shape_de_cofre(v: &serde_json::Value) -> bool {
+    v.is_object() && v.get("items").is_none_or(serde_json::Value::is_array) && v.get("folders").is_none_or(serde_json::Value::is_array)
+}
+
 /// Um campo personalizado no formulário: `id` vazio = campo novo (o `set_custom_fields` gera o id ao
 /// gravar). `revealed` é estado só da UI (o 👁 do campo Oculto).
 struct FormCustomField {
@@ -1569,9 +1575,21 @@ impl KeysApp {
         };
         let plain = match crypto::open_with_key(&session.key_bytes(), &file) {
             Ok((plain, _)) => plain,
-            // senha diferente, arquivo corrompido ou não é um .tkeys
-            Err(_) => {
+            // O `CryptoError` diz o que foi (sem separar senha errada de adulterado — de propósito).
+            Err(crypto::CryptoError::BadFormat) => {
+                self.err = Some(tr("the other copy is not a .tkeys vault").to_string());
+                return;
+            }
+            Err(crypto::CryptoError::UnsupportedVersion(_)) => {
+                self.err = Some(tr("the other copy uses a newer format version").to_string());
+                return;
+            }
+            Err(crypto::CryptoError::Decrypt) => {
                 self.err = Some(tr("the other copy does not open with this vault's password").to_string());
+                return;
+            }
+            Err(_) => {
+                self.err = Some(tr("could not read the other copy").to_string());
                 return;
             }
         };
@@ -1582,6 +1600,12 @@ impl KeysApp {
                 return;
             }
         };
+        // Shape de cofre ANTES do merge: sem isso, um JSON qualquer decifrado viraria "cofre vazio" e
+        // a sincronização regravaria a outra cópia com o conteúdo daqui.
+        if !shape_de_cofre(&other) {
+            self.err = Some(tr("the other copy is not a valid vault").to_string());
+            return;
+        }
         let result = merge::merge(self.raw.as_ref().expect("cofre aberto"), &other);
         self.sync_plan = Some(SyncPlan { other_path: caminho.to_string(), merged: result.vault, summary: result.summary });
         self.err = None;

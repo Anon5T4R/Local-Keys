@@ -141,8 +141,9 @@ impl SessionKey {
         seal_bytes(&self.key, &self.salt, self.params, plaintext)
     }
 
-    /// Cópia da chave bruta (32 bytes) — **só** para guardar no cofre do SO
-    /// (keyring) no desbloqueio rápido opt-in. Trate como segredo.
+    /// Cópia da chave bruta (32 bytes) — para guardar no cofre do SO (keyring)
+    /// no desbloqueio rápido opt-in e para abrir a outra cópia na
+    /// sincronização (mesma senha, sem re-rodar o Argon2). Trate como segredo.
     pub fn key_bytes(&self) -> [u8; KEY_LEN] {
         *self.key
     }

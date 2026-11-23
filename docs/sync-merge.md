@@ -40,6 +40,8 @@ outra cópia: `toOther` (itens que só existiam aqui ou aqui eram mais novos, in
 - **Mudanças sem hora** (favoritar, apagar uma pasta e desvincular os itens, restaurar um anexo, apagar um
   anexo de vez) não mexem em `updatedAt`. Se só uma cópia mudou assim, os tempos empatam e fica o atual
   (conflito). Renomear pasta: fica o nome do atual.
+- **Item sem `id` (JSON corrompido).** Cópias reais nunca têm um, mas se tiver: o desktop **mantém** o do cofre
+  atual (conservador) e o Android o **descarta** do resultado.
 
 ## Casos de teste (`testdata/sync-merge/<caso>/`)
 

@@ -128,7 +128,8 @@ pub fn merge(current: &Value, other: &Value) -> MergeResult {
         }
     }
     // Item sem `id` (JSON corrompido) fica de fora da regra e é mantido do atual no fim — não some
-    // por causa da sincronização.
+    // por causa da sincronização. DIVERGÊNCIA do Android, que o descarta do resultado (cópias reais
+    // nunca têm item sem id).
     if let Some(arr) = current.get("items").and_then(Value::as_array) {
         merged.extend(arr.iter().filter(|i| i.get("id").and_then(Value::as_str).is_none_or(str::is_empty)).cloned());
     }

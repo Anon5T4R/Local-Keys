@@ -209,6 +209,8 @@
 	copy checked — this file is the vault now	cópia conferida — o cofre agora é este arquivo
 	could not read the other copy	não deu para ler a outra cópia
 	the other copy does not open with this vault's password	a outra cópia não abre com a senha deste cofre
+	the other copy is not a .tkeys vault	a outra cópia não é um cofre .tkeys
+	the other copy uses a newer format version	a outra cópia usa uma versão de formato mais nova
 	the other copy is not a valid vault	a outra cópia não é um cofre válido
 	could not write to the other copy	não deu para gravar na outra cópia
 	could not write the copy	não deu para gravar a cópia

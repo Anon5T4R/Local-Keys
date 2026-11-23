@@ -1319,12 +1319,26 @@ fn sync_edges_wrong_password_same_file_and_identical_copy() {
     let raw = app.raw.clone().expect("cofre");
     app.persist(raw.clone()).then_some(()).expect("grava");
 
-    // Bytes que não são um cofre: erro claro, sem modal.
+    // Bytes que não são um .tkeys: o erro diz O QUÊ (não é um cofre .tkeys), sem pinar mensagem de
+    // senha para arquivo que nem é cofre.
     let lixo = dir.join("lixo.tkeys");
     std::fs::write(&lixo, b"isto nao e um cofre").expect("grava lixo");
     app.sync_with_other(&lixo.display().to_string());
     assert!(!app.sync_open);
-    assert!(app.err.as_deref().is_some_and(|e| e.contains("does not open")), "{:?}", app.err);
+    assert!(app.err.as_deref().is_some_and(|e| e.contains(".tkeys vault")), "{:?}", app.err);
+
+    // JSON decifrado com a senha certa, mas sem cara de cofre (array): erro de cofre válido e NADA
+    // gravado — hoje seria "cofre vazio" e a outra cópia seria regravada.
+    let lista = dir.join("lista.tkeys");
+    let selado = app.session.as_ref().expect("sessão").seal(b"[1,2,3]").expect("sela");
+    std::fs::write(&lista, &selado).expect("grava o array cifrado");
+    let antes_atual = std::fs::read(dir.join("a.tkeys")).expect("cofre atual no disco");
+    app.err = None;
+    app.sync_with_other(&lista.display().to_string());
+    assert!(app.err.as_deref().is_some_and(|e| e.contains("valid vault")), "{:?}", app.err);
+    assert!(!app.sync_open, "nada de modal");
+    assert_eq!(std::fs::read(&lista).expect("outro"), selado, "a outra cópia intocada");
+    assert_eq!(std::fs::read(dir.join("a.tkeys")).expect("atual"), antes_atual, "o cofre atual intocado");
 
     // O próprio arquivo em uso é barrado.
     app.err = None;

@@ -209,6 +209,8 @@
 	copy checked — this file is the vault now	copia comprobada — ahora la bóveda es este archivo
 	could not read the other copy	no se pudo leer la otra copia
 	the other copy does not open with this vault's password	la otra copia no se abre con la contraseña de esta bóveda
+	the other copy is not a .tkeys vault	la otra copia no es un archivo .tkeys
+	the other copy uses a newer format version	la otra copia usa una versión de formato más reciente
 	the other copy is not a valid vault	la otra copia no es una bóveda válida
 	could not write to the other copy	no se pudo escribir en la otra copia
 	could not write the copy	no se pudo escribir la copia
