@@ -1,7 +1,9 @@
 # LocalKeys
 
-Gerenciador de senhas 100% local e offline. Rust puro + egui, sem conta, sem
-telemetria, sem servidores de terceiros — parte da suíte Local.
+Gerenciador de senhas local: o cofre é um arquivo seu, sem conta, sem nuvem e sem
+telemetria. Rust puro + egui — parte da suíte Local. A única conexão de rede é a
+consulta de atualização às releases do GitHub (no desktop, ao abrir; no Android, só
+quando você liga ou pede); o conteúdo do cofre nunca sai do aparelho.
 
 ## Recursos
 - Cofre `.tkeys` cifrado (Argon2id + cifra forte), compatível com o formato do

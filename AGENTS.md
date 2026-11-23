@@ -1,7 +1,7 @@
 # AGENTS.md — LocalKeys
 
-Gerenciador de senhas 100% local e offline, parte da suíte Local do João.
-Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-core`). Sem conta, sem telemetria, sem dependência de servidores de terceiros.
+Gerenciador de senhas local (cofre = arquivo do usuário), parte da suíte Local do João.
+Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-core`). Sem conta, sem nuvem, sem telemetria; a única rede é a consulta de atualização às releases do GitHub (desktop: ao abrir; Android: opt-in).
 
 ## Regras
 - **Dependências:** toda dep que entra/sai/atualiza exige `Cargo.lock` commitado +
