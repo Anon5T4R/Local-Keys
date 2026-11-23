@@ -13,6 +13,7 @@ pub mod export;
 pub mod generator;
 pub mod import;
 pub mod kdbx;
+pub mod merge;
 pub mod otpauth;
 pub mod totp;
 pub mod vault;
