@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "folders": [],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "i1",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 2000,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i1",
+        "uris": [],
+        "totp": ""
+      },
+      "passkeys": [
+        {
+          "credentialId": "Y3JlZA",
+          "rpId": "webauthn.io",
+          "userName": "joao",
+          "userDisplayName": "Joao",
+          "userHandle": "dWg",
+          "key": "a2V5",
+          "alg": -7,
+          "createdAt": 2000
+        }
+      ],
+      "customFields": [
+        {
+          "id": "c1",
+          "name": "CPF",
+          "value": "529.982.247-25",
+          "hidden": false
+        }
+      ]
+    }
+  ]
+}

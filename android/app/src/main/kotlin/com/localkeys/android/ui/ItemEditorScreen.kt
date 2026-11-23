@@ -71,6 +71,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.localkeys.android.R
+import com.localkeys.android.data.forms.CardFormat
+import com.localkeys.android.data.forms.Cpf
 import com.localkeys.android.data.vault.Attachment
 import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
@@ -96,8 +98,10 @@ fun ItemEditorScreen(
     onSave: (Item) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Item novo: o tipo escolhido no "+". */
+    preset: NewItemPreset? = null,
 ) {
-    val state = remember(initial?.id) { ItemEditorState(initial, defaultFolderId) }
+    val state = remember(initial?.id, preset) { ItemEditorState(initial, defaultFolderId, preset) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var generatorOpen by remember { mutableStateOf(false) }
 
@@ -150,7 +154,7 @@ fun ItemEditorScreen(
                 .padding(horizontal = Gutter, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (state.isNew) KindSelector(state)
+            if (state.isNew) KindSelector(state) else KindBadge(state.kind)
 
             // O aviso de nome vazio só aparece depois que a pessoa mexeu no nome (trocar o tipo não conta).
             var nameTouched by rememberSaveable { mutableStateOf(false) }
@@ -314,25 +318,54 @@ private fun LoginFields(state: ItemEditorState, onOpenGenerator: () -> Unit) {
         Spacer(Modifier.width(8.dp))
         Text(stringResource(R.string.editor_add_site))
     }
-    EditorField(
-        state.totp,
-        { state.totp = it },
-        stringResource(R.string.field_totp),
-        supporting = stringResource(R.string.editor_totp_hint),
-    )
+    TotpEditorField(state)
 }
 
 @Composable
 private fun CardFields(state: ItemEditorState) {
     EditorField(state.cardholder, { state.cardholder = it }, stringResource(R.string.field_cardholder), capitalize = KeyboardCapitalization.Words)
-    EditorField(state.brand, { state.brand = it }, stringResource(R.string.field_brand), capitalize = KeyboardCapitalization.Words)
-    EditorField(state.number, { state.number = it }, stringResource(R.string.field_number), KeyboardType.Number)
+    // Número: teclado numérico, grupos de 4 na tela (só dígitos no cofre), bandeira automática e o aviso do
+    // Luhn, que não impede salvar (cartão de teste, número antigo...).
+    val luhnWarning = CardFormat.luhnWarning(state.number)
+    OutlinedTextField(
+        value = state.number,
+        onValueChange = state::updateNumber,
+        label = { Text(stringResource(R.string.field_number)) },
+        singleLine = true,
+        isError = luhnWarning,
+        supportingText = if (luhnWarning) {
+            { Text(stringResource(R.string.card_luhn_warning)) }
+        } else {
+            null
+        },
+        visualTransformation = remember { CardNumberTransformation() },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    EditorField(
+        state.brand,
+        state::updateBrand,
+        stringResource(R.string.field_brand),
+        capitalize = KeyboardCapitalization.Words,
+        supporting = stringResource(R.string.card_brand_hint),
+    )
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
-            EditorField(state.exp, { state.exp = it }, stringResource(R.string.field_exp), KeyboardType.Number)
+            FormattingField(
+                value = state.exp,
+                onValueChange = state::updateExp,
+                format = CardFormat::expiry,
+                label = stringResource(R.string.field_exp_mask),
+                keyboardType = KeyboardType.Number,
+            )
         }
         Column(Modifier.weight(1f)) {
-            PasswordField(value = state.code, onValueChange = { state.code = it }, label = stringResource(R.string.field_code))
+            PasswordField(
+                value = state.code,
+                onValueChange = state::updateCode,
+                label = stringResource(R.string.field_code),
+                keyboardType = KeyboardType.NumberPassword,
+            )
         }
     }
 }
@@ -350,6 +383,7 @@ private fun IdentityFields(state: ItemEditorState) {
         minLines = 2,
         modifier = Modifier.fillMaxWidth(),
     )
+    DocumentShortcuts(onAdd = state::addNamedField)
 }
 
 @Composable
@@ -406,6 +440,16 @@ private fun CustomFieldsEditor(state: ItemEditorState) {
                             value = field.value,
                             onValueChange = { v -> state.customFields[index] = field.copy(value = v) },
                             label = stringResource(R.string.custom_field_value),
+                        )
+                    } else if (Cpf.isCpfField(field.name)) {
+                        // CPF: formata dígitos enquanto digita; outro formato colado fica como está. Aviso sem bloquear.
+                        FormattingField(
+                            value = field.value,
+                            onValueChange = { v -> state.customFields[index] = field.copy(value = v) },
+                            format = Cpf::format,
+                            label = stringResource(R.string.custom_field_value),
+                            keyboardType = KeyboardType.Number,
+                            warning = if (Cpf.warning(field.value)) stringResource(R.string.cpf_warning) else null,
                         )
                     } else {
                         OutlinedTextField(

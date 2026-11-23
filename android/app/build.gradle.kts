@@ -23,8 +23,8 @@ android {
         applicationId = "com.localkeys.android"
         minSdk = 28
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.5.0"
+        versionCode = 14
+        versionName = "0.7.0"
 
         vectorDrawables { useSupportLibrary = true }
         // Smoke test no emulador (CI): abrir o app de verdade e ver a UI subir.
@@ -143,6 +143,11 @@ dependencies {
     // Credential Exchange (FIDO CXF): importar senhas e passkeys de outro gerenciador (o do Google).
     implementation("androidx.credentials.providerevents:providerevents:1.0.0-beta01")
     implementation("androidx.credentials.providerevents:providerevents-play-services:1.0.0-beta01")
+
+    // ── QR do 2FA (otpauth://) pela câmera, sem Play Services ────────────
+    // zxing-android-embedded: a tela de leitura (câmera) em cima do zxing-core, que é Java puro. Apache-2.0.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.3")
 
     // ── SAF (abrir/criar o vault .tkeys no armazenamento do usuário) ─────
     implementation("androidx.documentfile:documentfile:1.0.1")

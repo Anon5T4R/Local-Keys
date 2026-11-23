@@ -20,9 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.credentials.CreatePasswordRequest
 import androidx.credentials.CreatePasswordResponse
-import androidx.credentials.CreatePublicKeyCredentialRequest
 import androidx.credentials.CreatePublicKeyCredentialResponse
 import androidx.credentials.GetCredentialResponse
 import androidx.credentials.GetPublicKeyCredentialOption
@@ -170,13 +168,13 @@ class CredentialActivity : AppCompatActivity() {
     private fun createPassword() {
         val request = PendingIntentHandler.retrieveProviderCreateCredentialRequest(intent)
             ?: return failCreate(CreateCredentialUnknownException())
-        val password = request.callingRequest as? CreatePasswordRequest
-            ?: return failCreate(CreateCredentialUnknownException())
+        val (userId, secret) = CreateRequests.password(request.callingRequest)
+            ?: return failCreate(CreateCredentialUnknownException("unsupported password request: ${request.callingRequest.type}"))
         val caller = CallerOrigin.of(this, request.callingAppInfo)
         val site = caller.browserDomain
         val item = newLogin(
             name = site ?: appLabel(caller.packageName),
-            login = Login(password.id, password.password, listOf(site?.let { "https://$it" } ?: caller.packageName), ""),
+            login = Login(userId, secret, listOf(site?.let { "https://$it" } ?: caller.packageName), ""),
         )
         save(item) { ok ->
             if (!ok) return@save failCreate(CreateCredentialUnknownException(getString(R.string.cred_save_failed)))
@@ -191,8 +189,8 @@ class CredentialActivity : AppCompatActivity() {
         try {
             val request = PendingIntentHandler.retrieveProviderCreateCredentialRequest(intent)
                 ?: return failCreate(CreateCredentialUnknownException())
-            val create = request.callingRequest as? CreatePublicKeyCredentialRequest
-                ?: return failCreate(CreateCredentialUnknownException())
+            val create = CreateRequests.passkey(request.callingRequest)
+                ?: return failCreate(CreateCredentialUnknownException("unsupported passkey request: ${request.callingRequest.type}"))
             val caller = CallerOrigin.of(this, request.callingAppInfo)
             val parsed = WebAuthn.parseCreation(create.requestJson)
             val rpId = parsed.rpId.ifBlank { caller.browserDomain.orEmpty() }
@@ -222,6 +220,7 @@ class CredentialActivity : AppCompatActivity() {
                 finish()
             }
         } catch (e: Exception) {
+            android.util.Log.w("LocalKeysCred", "criação de passkey falhou", e)
             failCreate(CreateCredentialUnknownException(e.message))
         }
     }

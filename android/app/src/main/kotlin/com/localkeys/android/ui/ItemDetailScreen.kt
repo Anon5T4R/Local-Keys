@@ -71,6 +71,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.localkeys.android.R
+import com.localkeys.android.data.store.describeCause
 import com.localkeys.android.data.vault.Attachment
 import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
@@ -337,14 +338,17 @@ private fun AttachmentsSection(item: Item, actions: DetailActions, busy: Boolean
         pendingSave = null
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val ok = withContext(Dispatchers.IO) {
+            val failure = withContext(Dispatchers.IO) {
                 runCatching {
-                    openTruncating(context.contentResolver, uri)?.use {
-                        it.write(Base64.decode(att.dataB64, Base64.NO_WRAP))
-                    } != null
-                }.getOrDefault(false)
+                    writeDocument(context.contentResolver, uri, Base64.decode(att.dataB64, Base64.NO_WRAP))
+                }.exceptionOrNull()
             }
-            Toast.makeText(context, if (ok) R.string.attach_saved else R.string.attach_save_failed, Toast.LENGTH_SHORT).show()
+            if (failure == null) {
+                Toast.makeText(context, R.string.attach_saved, Toast.LENGTH_SHORT).show()
+            } else {
+                val msg = context.getString(R.string.attach_save_failed_cause, describeCause(failure))
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
         }
     }
 

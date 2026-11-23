@@ -6,8 +6,8 @@ package com.localkeys.android.ui
  */
 sealed interface Route {
     data class Detail(val id: String) : Route
-    /** [id] null = item novo. */
-    data class Edit(val id: String?) : Route
+    /** [id] null = item novo, do tipo [preset] (o que foi escolhido no "+"). */
+    data class Edit(val id: String?, val preset: NewItemPreset? = null) : Route
     data object Trash : Route
     data object Folders : Route
     data object Settings : Route
@@ -17,7 +17,7 @@ sealed interface Route {
 
     fun encode(): String = when (this) {
         is Detail -> "detail:$id"
-        is Edit -> "edit:${id.orEmpty()}"
+        is Edit -> if (id == null && preset != null) "new:${preset.name}" else "edit:${id.orEmpty()}"
         Trash -> "trash"
         Folders -> "folders"
         Settings -> "settings"
@@ -27,6 +27,7 @@ sealed interface Route {
         fun decode(s: String): Route? = when {
             s.startsWith("detail:") -> Detail(s.removePrefix("detail:"))
             s.startsWith("edit:") -> Edit(s.removePrefix("edit:").ifEmpty { null })
+            s.startsWith("new:") -> Edit(null, NewItemPreset.entries.firstOrNull { it.name == s.removePrefix("new:") })
             s == "trash" -> Trash
             s == "folders" -> Folders
             s == "settings" -> Settings

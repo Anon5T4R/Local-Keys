@@ -1,0 +1,44 @@
+{
+  "ajustes": {
+    "tema": "escuro"
+  },
+  "version": 1,
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Rede",
+      "icone": "wifi"
+    }
+  ],
+  "items": [
+    {
+      "id": "w1",
+      "kind": "wifi",
+      "name": "Casa",
+      "ssid": "Casa-2G",
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "futuro": {
+        "x": 1
+      }
+    },
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "i1",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i1",
+        "uris": [],
+        "totp": ""
+      },
+      "cor": "azul"
+    }
+  ]
+}

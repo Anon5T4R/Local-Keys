@@ -31,7 +31,17 @@ import com.localkeys.android.data.import.ImportFormat
 import com.localkeys.android.data.import.Importers
 import com.localkeys.android.data.export.VaultExporter
 import com.localkeys.android.data.passkey.CxfImport
+import com.localkeys.android.data.store.DocumentIo
+import com.localkeys.android.data.store.DocumentWriteException
+import com.localkeys.android.data.store.DocumentWriter
+import com.localkeys.android.data.store.RecentVault
+import com.localkeys.android.data.store.RecentVaults
+import com.localkeys.android.data.sync.JsonEq
+import com.localkeys.android.data.sync.VaultMerge
+import org.json.JSONObject
 import com.localkeys.android.data.store.SettingsStore
+import com.localkeys.android.data.store.describeCause
+import com.localkeys.android.data.vault.AutofillPrefs
 import com.localkeys.android.data.vault.AutofillSaveBridge
 import com.localkeys.android.data.vault.CredentialBridge
 import com.localkeys.android.data.vault.Folder
@@ -46,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,19 +65,19 @@ import java.util.UUID
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 
+/** O documento do SAF para o [DocumentWriter]: os modos de escrita e a releitura pelo ContentResolver. */
+class ResolverDocument(private val resolver: ContentResolver, private val uri: Uri) : DocumentIo {
+    override fun openOutput(mode: String): java.io.OutputStream? = resolver.openOutputStream(uri, mode)
+
+    override fun openInput(): java.io.InputStream? = resolver.openInputStream(uri)
+}
+
 /**
- * Abre o documento para regravar do zero. O modo "w" do SAF NÃO trunca em todo provedor (o de armazenamento
- * externo, por exemplo): um cofre que encolheu ficava com o rabo do anterior no fim do arquivo, e a próxima
- * gravação acusava "arquivo modificado fora do app". "wt" trunca; quem não o aceita cai no "w".
+ * Regrava o documento do zero ("wt", com o "w" de reserva; ver [DocumentWriter]) e devolve o que ficou
+ * gravado, relido (null se o provedor não deixa reler). Lança [DocumentWriteException] com a causa.
  */
-fun openTruncating(resolver: ContentResolver, uri: Uri): java.io.OutputStream? =
-    try {
-        resolver.openOutputStream(uri, "wt")
-    } catch (_: IllegalArgumentException) {
-        resolver.openOutputStream(uri, "w")
-    } catch (_: java.io.FileNotFoundException) {
-        resolver.openOutputStream(uri, "w")
-    }
+fun writeDocument(resolver: ContentResolver, uri: Uri, bytes: ByteArray): ByteArray? =
+    DocumentWriter.write(ResolverDocument(resolver, uri), bytes)
 
 /**
  * O arquivo no disco mudou desde a última leitura/gravação conhecida (ex.: o
@@ -116,6 +127,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val externalChange: Boolean = false,
         /** Tema escolhido nas configurações ("system", "light" ou "dark"). */
         val themeMode: String = "system",
+        /** Cofres abertos recentemente, o atual incluído (a tela de desbloqueio troca entre eles). */
+        val recentVaults: List<RecentVault> = emptyList(),
+        /** Copiar o TOTP depois de preencher um login pelo autofill. */
+        val copyTotpAfterAutofill: Boolean = true,
+        /** Sincronizar com outra cópia: esperando a senha dela ou a confirmação do resumo. */
+        val syncPending: SyncPending? = null,
     )
 
     private val crypto = TkeysCrypto(LazySodiumAndroid(SodiumAndroid()))
@@ -133,8 +150,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * para os bytes recém-gravados.
      */
     private var cachedBlob: ByteArray? = null
-    private var wrappedKeyHex: String? = null
-    private var biometricOn: Boolean = false
+
+    /** Chaves biométricas por cofre (URI → hex). Só a do cofre atual é usada ([currentWrappedKey]). */
+    @Volatile
+    private var biometricKeys: Map<String, String> = emptyMap()
     private var encryptedImport: String? = null
     private var pendingKdbx: ByteArray? = null
     private var pendingExport: String? = null
@@ -142,35 +161,90 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
-            // Só quando a URI muda: o DataStore reemite a cada preferência gravada (tema, biometria), e reler o
-            // arquivo nessas horas trocaria a base da detecção de mudança externa no meio do uso.
-            settings.vaultUri.distinctUntilChanged().collect { uri ->
-                _state.update { it.copy(vaultUri = uri) }
-                if (uri != null) loadBlob(uri)
+            // A chave biométrica única das versões antigas vira a do cofre atual antes de qualquer leitura.
+            runCatching { settings.migrateLegacy() }
+            launch {
+                // Só quando a URI muda: o DataStore reemite a cada preferência gravada (tema, biometria), e reler o
+                // arquivo nessas horas trocaria a base da detecção de mudança externa no meio do uso.
+                settings.vaultUri.distinctUntilChanged().collect { uri ->
+                    cachedBlob = null
+                    _state.update {
+                        it.copy(vaultUri = uri, vaultName = null, biometricAvailable = uri != null && biometricKeys.containsKey(uri))
+                    }
+                    if (uri != null) loadBlob(uri)
+                }
             }
-        }
-        viewModelScope.launch {
-            settings.biometricEnabled.collect { enabled ->
-                biometricOn = enabled
-                _state.update { it.copy(biometricAvailable = enabled && !wrappedKeyHex.isNullOrEmpty()) }
+            launch {
+                settings.biometricKeys.collect { keys ->
+                    biometricKeys = keys
+                    _state.update { it.copy(biometricAvailable = it.vaultUri?.let(keys::containsKey) == true) }
+                }
             }
         }
         viewModelScope.launch {
             settings.themeMode.collect { mode -> _state.update { it.copy(themeMode = mode) } }
         }
         viewModelScope.launch {
-            settings.wrappedKeyHex.collect { hex ->
-                wrappedKeyHex = hex
-                _state.update { it.copy(biometricAvailable = biometricOn && !hex.isNullOrEmpty()) }
+            settings.recentVaults.collect { list -> _state.update { it.copy(recentVaults = list) } }
+        }
+        viewModelScope.launch {
+            settings.copyTotpAfterAutofill.collect { on ->
+                AutofillPrefs.copyTotp = on
+                _state.update { it.copy(copyTotpAfterAutofill = on) }
             }
         }
+    }
+
+    /** A chave biométrica do cofre atual (nunca a de outro), ou null. */
+    private fun currentWrappedKey(): Pair<String, String>? {
+        val uri = _state.value.vaultUri ?: return null
+        return biometricKeys[uri]?.let { uri to it }
     }
 
     // ── Abrir cofre existente ────────────────────────────────────────────
 
     /** URI escolhida no SAF (abrir). Persiste e carrega os bytes do arquivo. */
-    fun onVaultUriChosen(uri: Uri) {
-        viewModelScope.launch { settings.setVaultUri(uri.toString()) }
+    fun onVaultUriChosen(uri: Uri) = switchVault(uri.toString())
+
+    /**
+     * Troca para outro cofre (um recente ou um arquivo escolhido agora): tranca o atual antes, para a chave de
+     * um cofre nunca ficar aberta junto com o outro, e carrega o novo. Escolher o mesmo cofre de novo relê.
+     */
+    fun switchVault(uri: String) {
+        if (_state.value.vault != null) lock()
+        viewModelScope.launch {
+            val current = settings.vaultUri.first()
+            if (current == uri) {
+                _state.update { it.copy(vaultUri = uri, biometricAvailable = biometricKeys.containsKey(uri)) }
+                loadBlob(uri)
+            } else {
+                settings.setVaultUri(uri)
+            }
+        }
+    }
+
+    /**
+     * Esquece um cofre da lista de recentes (e a chave biométrica dele). Nunca apaga o arquivo. Se não for o
+     * cofre atual, devolve também a permissão de acesso ao documento.
+     */
+    fun forgetVault(uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val biometricLeft = settings.forgetRecentVault(uri)
+            if (biometricLeft == 0) runCatching { biometricKey.delete() }
+            if (uri != _state.value.vaultUri) {
+                runCatching {
+                    getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                        Uri.parse(uri),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    )
+                }
+            }
+        }
+    }
+
+    /** Liga ou desliga a cópia do TOTP depois do autofill. */
+    fun setCopyTotpAfterAutofill(enabled: Boolean) {
+        viewModelScope.launch { settings.setCopyTotpAfterAutofill(enabled) }
     }
 
     private fun loadBlob(uri: String) {
@@ -192,6 +266,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                         ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
                 }.getOrNull() ?: Uri.parse(uri).lastPathSegment?.substringAfterLast('/')
                 _state.update { it.copy(vaultName = name) }
+                settings.touchRecentVault(uri, name)
             } catch (e: Exception) {
                 cachedBlob = null
                 _state.update {
@@ -315,18 +390,18 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Cipher DECRYPT do cofre biométrico guardado — ou null se indisponível. */
     fun biometricDecryptCipher(): Cipher? {
-        val hex = wrappedKeyHex ?: return null
+        val (_, hex) = currentWrappedKey() ?: return null
         return runCatching { biometricKey.createDecryptCipher(Hex.decode(hex)) }.getOrNull()
     }
 
-    /** Após a biometria: cifra a chave derivada e guarda no DataStore. */
+    /** Após a biometria: cifra a chave derivada e guarda no DataStore, presa a este cofre. */
     fun enableBiometricWithCipher(cipher: Cipher) {
         val key = repository.keyBytes() ?: return
+        val uri = _state.value.vaultUri ?: return
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 val wrapped = biometricKey.wrapWithCipher(key, cipher)
-                settings.setWrappedKeyHex(Hex.encode(wrapped))
-                settings.setBiometricEnabled(true)
+                settings.setBiometricKey(uri, Hex.encode(wrapped))
                 _state.update { it.copy(notice = str(R.string.msg_biometric_enabled)) }
             } catch (e: Exception) {
                 _state.update { it.copy(error = str(R.string.biometric_unavailable, e.message ?: "")) }
@@ -336,35 +411,53 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Após a biometria: recupera a chave e abre o vault sem senha. */
     fun unlockWithBiometricCipher(cipher: Cipher) {
-        val hex = wrappedKeyHex
-        val blob = cachedBlob
-        if (hex == null || blob == null) return
+        val (uri, hex) = currentWrappedKey() ?: return
+        val blob = cachedBlob ?: return
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             try {
                 val key = biometricKey.unwrapWithCipher(Hex.decode(hex), cipher)
+                // O cofre pode ter sido trocado enquanto a digital era lida: a chave só abre o cofre dela.
+                if (_state.value.vaultUri != uri) {
+                    _state.update { it.copy(busy = false) }
+                    return@launch
+                }
                 val vault = repository.unlockWithKey(key, blob)
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, screen = Screen.Vault, busy = false) }
             } catch (e: Exception) {
-                // Cadastrar dedo/rosto novo invalida a chave do Keystore →
-                // o desbloqueio rápido morre e o app volta para a senha.
-                if (e is TkeysError || e is AEADBadTagException || e is KeyPermanentlyInvalidatedException) {
-                    disableBiometric()
-                    _state.update { it.copy(error = str(R.string.msg_biometric_changed), busy = false) }
-                } else {
-                    _state.update { it.copy(error = str(R.string.msg_biometric_failed, e.message ?: ""), busy = false) }
+                when (e) {
+                    // Cadastrar dedo/rosto novo invalida a chave do Keystore: nenhuma chave guardada serve mais.
+                    is KeyPermanentlyInvalidatedException -> {
+                        clearAllBiometric()
+                        _state.update { it.copy(error = str(R.string.msg_biometric_changed), busy = false) }
+                    }
+                    // A chave guardada não abre este cofre (senha trocada no desktop, chave antiga): só a dele cai.
+                    is TkeysError, is AEADBadTagException -> {
+                        disableBiometric()
+                        _state.update { it.copy(error = str(R.string.msg_biometric_changed), busy = false) }
+                    }
+                    else -> _state.update { it.copy(error = str(R.string.msg_biometric_failed, describeCause(e)), busy = false) }
                 }
             }
         }
     }
 
-    /** Desativa o desbloqueio biométrico (apaga chave do Keystore + prefs). */
+    /** Desativa o desbloqueio biométrico deste cofre (os outros cofres continuam com o deles). */
     fun disableBiometric() {
+        val uri = _state.value.vaultUri ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val left = settings.setBiometricKey(uri, null)
+            // Sem cofre nenhum usando, a chave do Keystore também vai embora.
+            if (left == 0) runCatching { biometricKey.delete() }
+            _state.update { it.copy(biometricAvailable = false) }
+        }
+    }
+
+    private fun clearAllBiometric() {
         viewModelScope.launch(Dispatchers.Default) {
             runCatching { biometricKey.delete() }
-            settings.setBiometricEnabled(false)
-            settings.setWrappedKeyHex(null)
+            settings.clearBiometricKeys()
             _state.update { it.copy(biometricAvailable = false) }
         }
     }
@@ -592,12 +685,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(busy = false, notice = str(R.string.msg_import_empty)) }
                     return@launch
                 }
-                val ok = persistNewItems(parsed.items)
+                val failure = persistNewItemsOrError(parsed.items)
                 _state.update {
-                    if (ok) {
+                    if (failure == null) {
                         it.copy(busy = false, notice = str(R.string.msg_cxf_imported, parsed.passwords, parsed.passkeys))
                     } else {
-                        it.copy(busy = false, error = str(R.string.msg_op_failed, str(R.string.op_import), str(R.string.err_write_failed)))
+                        val detail = (failure as? TkeysError)?.let(::tkeysErrorMessage)
+                            ?: failure.message?.takeIf { m -> m.isNotBlank() }
+                            ?: describeCause(failure)
+                        it.copy(busy = false, error = str(R.string.msg_op_failed, str(R.string.op_import), detail))
                     }
                 }
             } catch (_: ImportCredentialsCancellationException) {
@@ -651,8 +747,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         file: ByteArray,
         force: Boolean = false,
     ) {
-        suspend fun writeOnce(): Boolean = withContext(Dispatchers.IO) {
-            openTruncating(resolver, document)?.use { it.write(file) } != null
+        // A gravação inteira (com o "w" de reserva) e a releitura: devolve o que ficou no disco.
+        suspend fun writeOnce(): ByteArray? = withContext(Dispatchers.IO) {
+            try {
+                writeDocument(resolver, document, file)
+            } catch (e: DocumentWriteException.NotTruncated) {
+                throw IOException(str(R.string.err_write_not_truncated, e.written, e.found), e)
+            } catch (e: DocumentWriteException.Failed) {
+                throw IOException(str(R.string.err_write_failed_cause, e.message ?: ""), e)
+            }
         }
         val known = cachedBlob
         if (!force && known != null) {
@@ -663,13 +766,16 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 throw ExternalChangeException()
             }
         }
-        if (!writeOnce()) throw IOException(str(R.string.err_write_failed))
-        if (writtenIsSane(resolver, document)) {
+        if (writtenIsSane(writeOnce())) {
             cachedBlob = file
             return
         }
-        if (!writeOnce()) throw IOException(str(R.string.err_write_retry_failed))
-        if (!writtenIsSane(resolver, document)) throw IOException(str(R.string.err_write_unrecoverable))
+        val retry = try {
+            writeOnce()
+        } catch (e: IOException) {
+            throw IOException(str(R.string.err_write_retry_failed, e.message ?: describeCause(e)), e)
+        }
+        if (!writtenIsSane(retry)) throw IOException(str(R.string.err_write_unrecoverable))
         cachedBlob = file
     }
 
@@ -692,7 +798,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (e is ExternalChangeException) {
             _state.update { it.copy(externalChange = true, busy = false) }
         } else {
-            val detail = if (e is TkeysError) tkeysErrorMessage(e) else (e.message ?: "")
+            val detail = if (e is TkeysError) tkeysErrorMessage(e) else (e.message?.takeIf { it.isNotBlank() } ?: describeCause(e))
             _state.update {
                 it.copy(error = str(R.string.msg_op_failed, str(context), detail), busy = false)
             }
@@ -711,17 +817,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     private fun str(@StringRes id: Int, vararg args: Any): String =
         getApplication<Application>().getString(id, *args)
 
-    /** Relê o documento e confere que reabre com a sessão e bate com o vault atual. */
-    private suspend fun writtenIsSane(resolver: ContentResolver, document: Uri): Boolean {
-        val blob = withContext(Dispatchers.IO) {
-            try {
-                resolver.openInputStream(document)?.use { it.readBytes() }
-            } catch (e: Exception) {
-                null
-            }
-        } ?: return false
-        return runCatching { repository.verifySaved(blob) }.isSuccess
-    }
+    /** O que ficou gravado (relido) reabre com a sessão e bate com o vault atual? Null = não deu para reler. */
+    private fun writtenIsSane(blob: ByteArray?): Boolean =
+        blob != null && runCatching { repository.verifySaved(blob) }.isSuccess
 
     /** Mantém o cache do autofill em sincronia com o estado do cofre. */
     private fun syncAutofillCache(vault: Vault?) {
@@ -741,28 +839,31 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * e só devolve true com o arquivo gravado e conferido. Se o arquivo mudou por fora (outra tela do app ou
      * outro aparelho), relê e tenta de novo uma vez — nada é sobrescrito.
      */
-    private suspend fun persistNewItems(items: List<Item>): Boolean = withContext(Dispatchers.Default) {
+    private suspend fun persistNewItems(items: List<Item>): Boolean = persistNewItemsOrError(items) == null
+
+    /** Como [persistNewItems], mas devolve a falha (null = gravado e conferido) para a mensagem ter a causa. */
+    private suspend fun persistNewItemsOrError(items: List<Item>): Exception? = withContext(Dispatchers.Default) {
         suspend fun once() {
             val updated = repository.appendItems(items)
             persistAndCommit(updated, notice = null)
         }
         try {
             once()
-            true
+            null
         } catch (_: ExternalChangeException) {
             try {
-                val uri = _state.value.vaultUri ?: return@withContext false
+                val uri = _state.value.vaultUri ?: throw IOException(str(R.string.err_no_file))
                 val bytes = readDocumentBytes(getApplication<Application>().contentResolver, Uri.parse(uri))
-                    ?: return@withContext false
+                    ?: throw IOException(str(R.string.err_file_not_found))
                 repository.reload(bytes)
                 cachedBlob = bytes
                 once()
-                true
-            } catch (_: Exception) {
-                false
+                null
+            } catch (e: Exception) {
+                e
             }
-        } catch (_: Exception) {
-            false
+        } catch (e: Exception) {
+            e
         }
     }
 
@@ -819,6 +920,198 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Sincronização: levar o cofre para outra pasta / juntar com outra cópia ──
+
+    /**
+     * Destino escolhido no SAF para levar o cofre (pasta do OneDrive, Drive, rclone, Syncthing...): grava o cofre
+     * cifrado lá, relê e confere que abre com a chave atual, e só então passa a usar o arquivo novo (recentes,
+     * permissão e chave da biometria vão junto). O arquivo antigo fica como cópia de segurança. Qualquer falha:
+     * continua no cofre antigo e mostra a causa.
+     */
+    fun onMoveTargetChosen(target: Uri) {
+        val oldUri = _state.value.vaultUri ?: return
+        if (target.toString() == oldUri) {
+            _state.update { it.copy(error = str(R.string.sync_move_same_file)) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val file = repository.save()
+                repository.verifySaved(file)
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        resolver.takePersistableUriPermission(
+                            target,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        )
+                    }
+                }
+                val back = withContext(Dispatchers.IO) { writeDocument(resolver, target, file) }
+                    ?: throw IOException(str(R.string.err_file_not_found))
+                // Relido do destino: abre com a chave atual e é exatamente o cofre aberto.
+                repository.verifySaved(back)
+
+                val newUri = target.toString()
+                val newName = displayName(resolver, target)
+                val oldName = _state.value.vaultName ?: RecentVaults.fallbackName(oldUri)
+                biometricKeys[oldUri]?.let { hex ->
+                    settings.setBiometricKey(newUri, hex)
+                    settings.setBiometricKey(oldUri, null)
+                }
+                // O arquivo antigo vira só cópia de segurança: sai da lista para não ser aberto por engano.
+                settings.forgetRecentVault(oldUri)
+                settings.touchRecentVault(newUri, newName)
+                cachedBlob = back
+                _state.update { it.copy(vaultUri = newUri, vaultName = newName, busy = false) }
+                settings.setVaultUri(newUri)
+                _state.update {
+                    it.copy(notice = str(R.string.sync_move_done, newName ?: newUri, describeLocation(oldName, oldUri)))
+                }
+            } catch (e: Exception) {
+                val detail = (e as? TkeysError)?.let(::tkeysErrorMessage) ?: e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                _state.update { it.copy(busy = false, error = str(R.string.sync_move_failed, detail)) }
+            }
+        }
+    }
+
+    /** O caminho do arquivo quando o provedor mostra ("Download/localkeys.tkeys"); senão só o nome. */
+    private fun describeLocation(name: String, uri: String): String {
+        val docId = runCatching { java.net.URLDecoder.decode(uri, "UTF-8") }.getOrDefault(uri).substringAfterLast("/document/", "")
+        // "primary:Download/x.tkeys" / "raw:/storage/.../x.tkeys" → o caminho; "msf:12" (sem caminho) → o nome.
+        return if (docId.contains('/')) docId.substringAfter(':') else name
+    }
+
+    private fun displayName(resolver: ContentResolver, uri: Uri): String? = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }.getOrNull()
+
+    /** Uma outra cópia em andamento: escolhida, aberta (ou esperando a senha) e já juntada. */
+    data class SyncPending(
+        val otherName: String,
+        val needsPassword: Boolean,
+        val summary: VaultMerge.Summary? = null,
+        val passwordError: String? = null,
+    )
+
+    private var syncOtherUri: Uri? = null
+    private var syncOtherBytes: ByteArray? = null
+    private var syncOther: VaultRepository.OtherCopy? = null
+    private var syncMerged: Vault? = null
+
+    /** Outra cópia escolhida no SAF: tenta abrir com a chave atual; se não der, pede a senha dela. */
+    fun onSyncOtherChosen(uri: Uri) {
+        if (uri.toString() == _state.value.vaultUri) {
+            _state.update { it.copy(error = str(R.string.sync_same_file)) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IOException(str(R.string.err_file_not_found))
+                val name = displayName(resolver, uri) ?: RecentVaults.fallbackName(uri.toString())
+                syncOtherUri = uri
+                syncOtherBytes = bytes
+                val other = withContext(Dispatchers.Default) { repository.openOtherWithSessionKey(bytes) }
+                if (other == null) {
+                    _state.update { it.copy(busy = false, syncPending = SyncPending(name, needsPassword = true)) }
+                } else {
+                    prepareSync(name, other)
+                }
+            } catch (e: Exception) {
+                clearSync()
+                val detail = (e as? TkeysError)?.let(::tkeysErrorMessage) ?: e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                _state.update { it.copy(busy = false, syncPending = null, error = str(R.string.sync_open_failed, detail)) }
+            }
+        }
+    }
+
+    /** Senha da outra cópia (quando a chave atual não abriu). Errada: o diálogo continua aberto. */
+    fun onSyncPassword(password: String) {
+        val bytes = syncOtherBytes ?: return
+        val pending = _state.value.syncPending ?: return
+        if (password.isBlank()) return
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, syncPending = pending.copy(passwordError = null)) }
+            try {
+                prepareSync(pending.otherName, repository.openOtherWithPassword(bytes, password))
+            } catch (e: TkeysError) {
+                _state.update { it.copy(busy = false, syncPending = pending.copy(passwordError = tkeysErrorMessage(e))) }
+            }
+        }
+    }
+
+    private fun prepareSync(name: String, other: VaultRepository.OtherCopy) {
+        val result = VaultMerge.merge(repository.vault, other.vault)
+        syncOther = other
+        syncMerged = result.vault
+        _state.update { it.copy(busy = false, syncPending = SyncPending(name, needsPassword = false, summary = result.summary)) }
+    }
+
+    /**
+     * Confirmou o resumo: grava o resultado no cofre atual (com a conferência de sempre) e na outra cópia
+     * (relida e conferida com a chave dela). Se a outra cópia falhar, o atual fica com a junção e o aviso diz.
+     */
+    fun confirmSync() {
+        val merged = syncMerged ?: return
+        val other = syncOther ?: return
+        val otherUri = syncOtherUri ?: return
+        val name = _state.value.syncPending?.otherName.orEmpty()
+        _state.update { it.copy(syncPending = null) }
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, error = null) }
+            val mergedJson = JSONObject(merged.toJson())
+            try {
+                if (!JsonEq.same(mergedJson, JSONObject(repository.vault.toJson()))) {
+                    repository.replace(merged)
+                    persistAndCommit(merged, notice = null)
+                }
+            } catch (e: Exception) {
+                clearSync()
+                failSave(e, R.string.op_sync)
+                return@launch
+            }
+            val otherProblem = if (JsonEq.same(mergedJson, JSONObject(other.vault.toJson()))) {
+                null
+            } else {
+                try {
+                    val blob = repository.sealFor(other, merged)
+                    val back = withContext(Dispatchers.IO) {
+                        writeDocument(getApplication<Application>().contentResolver, otherUri, blob)
+                    }
+                    if (back == null || !repository.verifyFor(other, back, merged)) str(R.string.err_write_unrecoverable) else null
+                } catch (e: Exception) {
+                    e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                }
+            }
+            clearSync()
+            _state.update {
+                if (otherProblem == null) {
+                    it.copy(busy = false, notice = str(R.string.sync_done, name))
+                } else {
+                    it.copy(busy = false, error = str(R.string.sync_other_failed, name, otherProblem))
+                }
+            }
+        }
+    }
+
+    /** Cancelou (ou fechou o diálogo): nada é gravado. */
+    fun cancelSync() {
+        clearSync()
+        _state.update { it.copy(syncPending = null) }
+    }
+
+    private fun clearSync() {
+        syncOtherUri = null
+        syncOtherBytes = null
+        syncOther = null
+        syncMerged = null
+    }
+
     // ── Exportar ─────────────────────────────────────────────────────────
 
     /** "json" ou "csv": monta o conteúdo em claro e guarda até o SAF responder. */
@@ -839,12 +1132,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         pendingExport = null
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val written = getApplication<Application>().contentResolver
-                    .let { openTruncating(it, uri) }?.use { it.write(content.toByteArray(Charsets.UTF_8)) } != null
-                if (!written) throw IOException(str(R.string.err_write_failed))
+                writeDocument(getApplication<Application>().contentResolver, uri, content.toByteArray(Charsets.UTF_8))
                 _state.update { it.copy(notice = str(R.string.msg_export_saved)) }
             } catch (e: Exception) {
-                _state.update { it.copy(error = str(R.string.msg_export_save_failed, e.message ?: "")) }
+                _state.update { it.copy(error = str(R.string.msg_export_save_failed, describeCause(e))) }
             }
         }
     }

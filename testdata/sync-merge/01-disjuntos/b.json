@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "folders": [],
+  "items": [
+    {
+      "id": "i2",
+      "kind": "login",
+      "name": "i2",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "joao",
+        "password": "senha-i2",
+        "uris": [],
+        "totp": ""
+      }
+    }
+  ]
+}

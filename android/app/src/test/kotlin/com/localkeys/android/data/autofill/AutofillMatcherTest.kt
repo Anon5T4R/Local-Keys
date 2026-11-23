@@ -111,4 +111,18 @@ class AutofillMatcherTest {
         )
         assertEquals(emptyList<Login>(), AutofillMatcher.loginsFor(v, "com.x", "https://x.com"))
     }
+
+    @Test
+    fun itens_com_totp_seguem_as_mesmas_regras_de_casamento() {
+        val binance = login("joao", "com.binance.dev").copy(totp = "JBSWY3DPEHPK3PXP")
+        val outro = login("maria", "com.outro.app").copy(totp = "JBSWY3DPEHPK3PXP")
+        val v = vault(binance, outro)
+        val items = AutofillMatcher.itemsFor(v, "com.binance.dev", null)
+        assertEquals(listOf("id0"), items.map { it.id })
+        assertEquals("JBSWY3DPEHPK3PXP", items.single().login?.totp)
+        // App sem login cadastrado: nenhum código é oferecido.
+        assertTrue(AutofillMatcher.itemsFor(v, "com.malicioso", null).isEmpty())
+        // Site no navegador: vale o domínio, não o pacote do navegador.
+        assertTrue(AutofillMatcher.itemsFor(v, "com.binance.dev", "phishing.example").isEmpty())
+    }
 }

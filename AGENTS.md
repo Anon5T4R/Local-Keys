@@ -27,6 +27,8 @@ Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-c
 - `src/` — o app (`src/pickers.rs`: seletor nativo async via rfd + pollster,
   portal XDG no Linux; também `src/i18n.rs`, `src/prefs.rs`, `src/theme.rs`, `src/shell.rs` e
   `i18n/locales/<code>/*.tsv`)
+- `docs/sync-merge.md` — as regras de juntar duas cópias do cofre ("Sincronizar com outra cópia"), as mesmas no
+  Android e no desktop; os casos comuns (JSON puro) ficam em `testdata/sync-merge/` e os dois lados os rodam.
 - Casca da suíte = `src/shell.rs` + craft-icons + craft-palette + craft-desktop-theme
   (espelhos do local-libs)
 - `icons/` — ícones do app (master PNG 1024)

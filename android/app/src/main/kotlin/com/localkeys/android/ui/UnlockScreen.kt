@@ -63,7 +63,8 @@ fun UnlockScreen(
     onErrorShown: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var password by rememberSaveable { mutableStateOf("") }
+    // A senha digitada não passa de um cofre para o outro.
+    var password by rememberSaveable(state.vaultUri) { mutableStateOf("") }
     // Com a biometria ligada, o pedido de digital/rosto já sobe ao abrir a tela (uma vez por abertura; cancelar
     // deixa a senha-mestra à mão e o botão de biometria continua lá).
     var autoPrompted by rememberSaveable { mutableStateOf(false) }

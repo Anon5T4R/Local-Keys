@@ -1,5 +1,6 @@
 package com.localkeys.android.data.autofill
 
+import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.data.vault.Login
 import com.localkeys.android.data.vault.Vault
@@ -53,23 +54,29 @@ object AutofillMatcher {
      * Logins para o pedido de autofill: os que casam com o domínio do site ou com o pacote do app (igualdade,
      * não "contém"), fora da lixeira. Se nada casar, nada é oferecido.
      */
-    fun loginsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Login> {
+    fun loginsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Login> =
+        itemsFor(vault, packageName, webDomain).mapNotNull { it.login }
+
+    /**
+     * Como [loginsFor], mas devolve os itens (nome para a lista do autofill, id para achar o TOTP na hora de
+     * preencher). Mesmas regras de casamento: site ou app, nada além disso.
+     */
+    fun itemsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Item> {
         val v = vault ?: return emptyList()
         val logins = v.items
             .filter { it.kind == ItemKind.LOGIN && it.login != null && it.deletedAt == null }
-            .mapNotNull { it.login }
-            .distinctBy { it.username to it.password }
+            .distinctBy { it.login!!.username to it.login.password }
         if (logins.isEmpty()) return emptyList()
 
         val domain = webDomain?.let { normalizeDomain(it) }
         val matched = if (domain != null) {
-            logins.filter { login -> login.uris.any { matchesDomain(it, domain) } }
+            logins.filter { item -> item.login!!.uris.any { matchesDomain(it, domain) } }
         } else {
             emptyList()
         }
         val byPackage = if (domain == null && packageName != null) {
-            logins.filter { login ->
-                login.uris.any {
+            logins.filter { item ->
+                item.login!!.uris.any {
                     val uri = it.trim().lowercase()
                     uri == packageName.lowercase() || uri == "androidapp://${packageName.lowercase()}"
                 }
@@ -80,6 +87,6 @@ object AutofillMatcher {
 
         // Só o que casa com o site ou com o app. Sem "sugestões" de outras contas: um app malicioso não pode
         // ver na lista as senhas que não são dele.
-        return (matched + byPackage).distinctBy { it.username to it.password }.take(MAX_DATASETS)
+        return (matched + byPackage).distinctBy { it.id }.take(MAX_DATASETS)
     }
 }

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.CancellationSignal
 import android.os.OutcomeReceiver
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.credentials.exceptions.ClearCredentialException
 import androidx.credentials.exceptions.CreateCredentialException
@@ -14,8 +15,6 @@ import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.provider.AuthenticationAction
 import androidx.credentials.provider.BeginCreateCredentialRequest
 import androidx.credentials.provider.BeginCreateCredentialResponse
-import androidx.credentials.provider.BeginCreatePasswordCredentialRequest
-import androidx.credentials.provider.BeginCreatePublicKeyCredentialRequest
 import androidx.credentials.provider.BeginGetCredentialRequest
 import androidx.credentials.provider.BeginGetCredentialResponse
 import androidx.credentials.provider.CreateEntry
@@ -61,10 +60,25 @@ class LocalKeysCredentialService : CredentialProviderService() {
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<BeginCreateCredentialResponse, CreateCredentialException>,
     ) {
-        val action = when (request) {
-            is BeginCreatePublicKeyCredentialRequest -> CredentialActivity.ACTION_CREATE_PASSKEY
-            is BeginCreatePasswordCredentialRequest -> CredentialActivity.ACTION_CREATE_PASSWORD
-            else -> {
+        try {
+            beginCreate(request, callback)
+        } catch (e: Exception) {
+            // Falha aqui faz o Android pular o Local Keys e ir para o próximo provedor: fica no log.
+            Log.w(TAG, "onBeginCreateCredentialRequest falhou (${request.type})", e)
+            callback.onError(CreateCredentialUnknownException(e.message))
+        }
+    }
+
+    private fun beginCreate(
+        request: BeginCreateCredentialRequest,
+        callback: OutcomeReceiver<BeginCreateCredentialResponse, CreateCredentialException>,
+    ) {
+        val kind = CreateRequests.kindOf(request)
+        Log.i(TAG, "criação pedida: ${request.javaClass.simpleName} tipo=${request.type} -> $kind")
+        val action = when (kind) {
+            CreateRequests.Kind.PASSKEY -> CredentialActivity.ACTION_CREATE_PASSKEY
+            CreateRequests.Kind.PASSWORD -> CredentialActivity.ACTION_CREATE_PASSWORD
+            null -> {
                 callback.onError(CreateCredentialUnknownException())
                 return
             }
@@ -96,6 +110,7 @@ class LocalKeysCredentialService : CredentialProviderService() {
     companion object {
         const val REQ_UNLOCK = 7000
         const val REQ_CREATE = 7100
+        private const val TAG = "LocalKeysCred"
     }
 }
 

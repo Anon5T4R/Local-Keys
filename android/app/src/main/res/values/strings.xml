@@ -88,7 +88,6 @@
     <string name="attach_add">Add attachment</string>
     <string name="attach_too_large">Attachment too large (max. 10 MB).</string>
     <string name="attach_read_failed">Could not read the attachment.</string>
-    <string name="attach_save_failed">Could not save the attachment.</string>
 
     <!-- Histórico de senhas -->
     <string name="history_title">Password history (%1$d)</string>
@@ -165,8 +164,7 @@
     <!-- Erros internos de I/O do documento -->
     <string name="err_file_not_found">file not found</string>
     <string name="err_no_file">the vault is not linked to a file</string>
-    <string name="err_write_failed">could not write the vault</string>
-    <string name="err_write_retry_failed">the write came out corrupted and the retry failed</string>
+    <string name="err_write_retry_failed">the write came out corrupted and the retry failed: %1$s</string>
     <string name="err_write_unrecoverable">the written file does not reopen; try opening another vault</string>
 
     <!-- Erros do .tkeys (mapeados por tipo no ViewModel) -->
@@ -339,7 +337,7 @@
     <string name="settings_autofill">Autofill</string>
     <string name="settings_autofill_body">Fills username and password in the login fields of apps and websites, and offers to store new logins in the vault.</string>
     <string name="settings_credentials">Passwords and passkeys</string>
-    <string name="settings_credentials_body">Android 14 or newer: Local Keys shows up when an app or website asks for a password or a passkey, and stores new passkeys in the vault.</string>
+    <string name="settings_credentials_body">Android 14 or newer: apps and websites offer the “preferred service” chosen in Settings › Passwords, passkeys &amp; accounts. For Local Keys to be offered (passkeys in apps included), make it the preferred service or turn it on as an additional provider.</string>
     <string name="settings_status_on">Active</string>
     <string name="settings_status_off">Off</string>
     <string name="settings_turn_on">Turn on</string>
@@ -347,7 +345,7 @@
     <string name="settings_open_failed">Could not open this system screen on this device.</string>
     <string name="settings_import_export">Import and export</string>
     <string name="settings_import_file_body">Bitwarden (JSON, encrypted or not), KeePass (.kdbx) or CSV.</string>
-    <string name="settings_import_other_body">Passwords and passkeys from Google Password Manager or another app that supports FIDO credential exchange. Needs Google Play services.</string>
+    <string name="settings_import_other_body">Passwords and passkeys from Google Password Manager or another app that supports FIDO credential exchange.</string>
     <string name="settings_export_body">JSON or CSV, not encrypted — only to move to another app.</string>
     <string name="settings_about">About</string>
     <string name="settings_version">Version %1$s</string>
@@ -400,4 +398,105 @@
     <string name="update_done_notice">Updated to Local Keys %1$s.</string>
     <string name="update_cancelled_notice">Update cancelled.</string>
     <string name="update_failed_notice">Update failed: %1$s</string>
+
+    <!-- gravação em provedores de nuvem -->
+    <string name="err_write_failed_cause">could not write the vault (%1$s)</string>
+    <string name="err_write_not_truncated">the storage app wrote the vault but kept old bytes at the end (%2$d bytes instead of %1$d). Save the vault to local storage and try again</string>
+    <string name="attach_save_failed_cause">Could not save the attachment: %1$s</string>
+
+    <!-- troca de cofre -->
+    <string name="switch_forget">Remove</string>
+    <string name="switch_forget_named">Remove %1$s from the list</string>
+    <string name="switch_forget_title">Remove from the list?</string>
+    <string name="switch_forget_message">%1$s leaves the list of recent vaults. The file is not deleted; you can open it again at any time.</string>
+
+    <!-- TOTP no autofill -->
+    <string name="settings_copy_totp">Copy TOTP after autofill</string>
+    <string name="settings_copy_totp_body">When a login with a TOTP is filled, its current code goes to the clipboard (marked sensitive), ready to paste.</string>
+    <string name="autofill_totp_label">TOTP code</string>
+    <string name="autofill_totp_copied">TOTP code copied</string>
+
+    <!-- serviço preferencial e Play services -->
+    <string name="settings_credentials_preferred_yes">Local Keys is the preferred service.</string>
+    <string name="settings_credentials_preferred_no">Local Keys is not the preferred service: apps offer the preferred one first.</string>
+    <string name="settings_import_other_note">Needs Google Play services.</string>
+
+    <!-- Cofre (troca de cofre nas configurações) -->
+    <string name="settings_vault">Vault</string>
+    <string name="settings_vault_current">Open now</string>
+    <string name="settings_vault_switch_hint">Tap to switch (locks the current vault)</string>
+    <string name="settings_vault_open_other">Open another vault…</string>
+    <string name="settings_vault_open_other_body">Pick a .tkeys file; the current vault is locked first.</string>
+
+    <!-- Novo item pelo "+" -->
+    <string name="new_item_title">New item</string>
+    <string name="new_item_blank">Blank item</string>
+    <string name="new_item_login_hint">Username, password, websites and 2FA</string>
+    <string name="new_item_card_hint">Number, expiry and security code</string>
+    <string name="new_item_identity_hint">Name, contact details and documents</string>
+    <string name="new_item_note_hint">Free text</string>
+    <string name="new_item_blank_hint">No ready-made format: you add the fields</string>
+    <string name="editor_kind_fixed">Type: %1$s</string>
+
+    <!-- TOTP por QR ou colado -->
+    <string name="totp_scan">Scan QR</string>
+    <string name="totp_paste">Paste</string>
+    <string name="totp_scan_prompt">Point the camera at the 2FA QR code</string>
+    <string name="totp_camera_denied">Without camera access the QR can\'t be read. You can still paste or type the key.</string>
+    <string name="totp_clipboard_empty">The clipboard is empty.</string>
+    <string name="totp_not_totp">This QR is not for time-based codes (TOTP).</string>
+    <string name="totp_no_secret">The link has no secret key.</string>
+    <string name="totp_invalid_key">Invalid key: it must be base32 (letters A–Z and digits 2–7).</string>
+    <string name="totp_preview">Current code: %1$s</string>
+    <string name="totp_unsupported">Key saved, but this QR asks for %1$s. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.</string>
+    <string name="totp_digits">%1$d digits</string>
+    <string name="totp_period">%1$d s</string>
+
+    <!-- Cartão -->
+    <string name="card_luhn_warning">This number fails the card check (Luhn). Check for a typo; you can still save.</string>
+    <string name="card_brand_hint">Detected from the number; type to change it.</string>
+    <string name="field_exp_mask">Expiry (MM/YY)</string>
+
+    <!-- Identidade: atalhos de documento -->
+    <string name="doc_shortcuts_label">Add a document</string>
+    <string name="doc_cpf">CPF</string>
+    <string name="doc_rg">RG</string>
+    <string name="doc_cnh">CNH</string>
+    <string name="doc_birth">Date of birth</string>
+    <string name="doc_passport">Passport</string>
+    <string name="doc_other">Document (other)</string>
+    <string name="cpf_warning">The CPF check digits don\'t match. Check for a typo; you can still save.</string>
+
+    <!-- Sincronização -->
+    <string name="sync_section">Sync</string>
+    <string name="sync_move">Move vault to a synced folder</string>
+    <string name="sync_move_body">Pick a folder from OneDrive, Drive, rclone, Syncthing…; the vault moves there so your other devices see it. The old file stays as a backup.</string>
+    <string name="sync_other">Sync with another copy</string>
+    <string name="sync_other_body">Pick another copy of this vault (.tkeys). Both are merged into one and the result is written to both files.</string>
+    <string name="sync_move_same_file">That is the file already in use.</string>
+    <string name="sync_move_done">Vault moved: the app now uses the new %1$s. The old file stays where it was, as a backup (%2$s); it left the vault list.</string>
+    <string name="sync_move_failed">Could not move the vault; it stays where it was. %1$s</string>
+    <string name="sync_same_file">That is the vault already open. Pick the other copy.</string>
+    <string name="sync_open_failed">Could not open the other copy: %1$s</string>
+    <string name="sync_password_title">Password of the other copy</string>
+    <string name="sync_password_message">%1$s does not open with the password of this vault. Type its master password.</string>
+    <string name="sync_open">Open</string>
+    <string name="sync_summary_title">Sync with %1$s?</string>
+    <string name="sync_summary_same_title">%1$s is already in sync</string>
+    <string name="sync_summary_nothing">Both copies already have the same items. Nothing to write.</string>
+    <string name="sync_summary_here">This vault receives</string>
+    <string name="sync_summary_there">The other copy receives</string>
+    <string name="sync_count_added">New items</string>
+    <string name="sync_count_updated">Updated items</string>
+    <string name="sync_count_trashed">Moved to trash</string>
+    <string name="sync_count_restored">Restored from trash</string>
+    <string name="sync_count_folders">New folders</string>
+    <string name="sync_count_conflicts">Conflicts (this device\'s version kept)</string>
+    <string name="sync_count_to_other">New or newer items</string>
+    <string name="sync_summary_no_backup">No automatic backup copy: Android only lets an app create files in a folder it was given full access to. The other copy\'s current file is overwritten with the merged vault.</string>
+    <string name="sync_confirm">Sync</string>
+    <string name="sync_ok">OK</string>
+    <string name="sync_done">Synced: this vault and %1$s are now identical.</string>
+    <string name="sync_other_failed">This vault was updated, but %1$s was not: %2$s</string>
+    <string name="op_sync">Sync</string>
 </resources>

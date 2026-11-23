@@ -47,6 +47,12 @@ data class HostCallbacks(
     val onRequestBiometric: (BiometricRequest) -> Unit,
     /** null = aparelho sem Credential Exchange (Android < 14). */
     val onImportOther: (() -> Unit)?,
+    /** Seletor do sistema para abrir outro cofre (troca de cofre nas configurações). */
+    val onOpenVault: () -> Unit,
+    /** Criar o arquivo de destino para levar o cofre (nome sugerido = o do cofre atual). */
+    val onMoveVault: (String) -> Unit,
+    /** Escolher a outra cópia para sincronizar. */
+    val onSyncOther: () -> Unit,
 )
 
 /**
@@ -70,6 +76,7 @@ fun VaultHost(
     val totpClock = rememberTotpClock()
     val holder = rememberSaveableStateHolder()
     var exportOpen by rememberSaveable { mutableStateOf(false) }
+    var newItemOpen by rememberSaveable { mutableStateOf(false) }
 
     // Consumir o aviso muda a chave do LaunchedEffect e o cancelaria: a snackbar roda num escopo à parte.
     val snackScope = rememberCoroutineScope()
@@ -130,7 +137,7 @@ fun VaultHost(
                 snackbarHostState = snackbar,
                 menu = menu,
                 onOpen = { id -> stack = NavStack.openItem(stack, id, twoPane) },
-                onNew = { push(Route.Edit(null)) },
+                onNew = { newItemOpen = true },
                 onToggleFavorite = viewModel::toggleFavorite,
                 onLock = viewModel::lock,
                 banner = if (updateState.showBanner) {
@@ -172,6 +179,7 @@ fun VaultHost(
                 val initial = route.id?.let { id -> vault.items.firstOrNull { it.id == id } }
                 ItemEditorScreen(
                     initial = initial,
+                    preset = route.preset,
                     folders = vault.folders,
                     defaultFolderId = (filters.folder as? FolderFilter.In)?.id,
                     busy = state.busy,
@@ -210,6 +218,15 @@ fun VaultHost(
             Route.Settings -> SettingsScreen(
                 biometricOn = state.biometricAvailable,
                 vaultName = state.vaultName,
+                vaultUri = state.vaultUri,
+                recentVaults = state.recentVaults,
+                vaultActions = VaultSwitchActions(
+                    onSwitch = viewModel::switchVault,
+                    onOpenOther = callbacks.onOpenVault,
+                    onForget = viewModel::forgetVault,
+                ),
+                onMoveVault = { callbacks.onMoveVault(state.vaultName ?: "localkeys.tkeys") },
+                onSyncOther = callbacks.onSyncOther,
                 themeMode = state.themeMode,
                 onThemeMode = viewModel::setThemeMode,
                 busy = state.busy,
@@ -220,6 +237,8 @@ fun VaultHost(
                 onImportFile = callbacks.onPickImport,
                 onImportOther = callbacks.onImportOther,
                 onExport = { exportOpen = true },
+                copyTotpAfterAutofill = state.copyTotpAfterAutofill,
+                onCopyTotpAfterAutofill = viewModel::setCopyTotpAfterAutofill,
                 updateState = updateState,
                 updateActions = updateActions,
             )
@@ -266,6 +285,24 @@ fun VaultHost(
             error = state.error,
             onConfirm = viewModel::onImportPassword,
             onDismiss = viewModel::dismissImport,
+        )
+    }
+    state.syncPending?.let { pending ->
+        SyncDialog(
+            pending = pending,
+            busy = state.busy,
+            onPassword = viewModel::onSyncPassword,
+            onConfirm = viewModel::confirmSync,
+            onCancel = viewModel::cancelSync,
+        )
+    }
+    if (newItemOpen) {
+        NewItemSheet(
+            onPick = { preset ->
+                newItemOpen = false
+                push(Route.Edit(null, preset))
+            },
+            onDismiss = { newItemOpen = false },
         )
     }
     if (exportOpen) {
