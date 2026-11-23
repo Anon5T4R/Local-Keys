@@ -15,6 +15,82 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
 }
 
+// ── Núcleo Rust (crates/ffi) por UniFFI ──────────────────────────────────────────────────────────────
+// O formato .tkeys e a criptografia vêm do MESMO código do desktop (localkeys-core). Três tarefas, nesta ordem:
+//   cargoBuildHost  → a lib do computador (os testes JVM carregam por JNA) e a base dos bindings;
+//   generateUniffi  → os bindings Kotlin (app/src/generated/uniffi, fora do git);
+//   cargoNdk        → as libs .so de cada ABI (app/src/main/jniLibs, fora do git), sempre em release.
+// Precisa de: Rust (rustup) com os targets *-linux-android, `cargo install cargo-ndk` e o NDK do Android.
+// `-PskipNative` pula as três (quando os artefatos já foram gerados).
+val skipNative = providers.gradleProperty("skipNative").isPresent
+val ffiDir = rootProject.layout.projectDirectory.dir("../crates/ffi")
+val cargoTarget = layout.buildDirectory.dir("cargo")
+val hostLibDir = layout.buildDirectory.dir("cargo/debug")
+val generatedKotlin = layout.projectDirectory.dir("src/generated/uniffi/kotlin")
+val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
+val hostLibName = System.getProperty("os.name").lowercase().let {
+    when {
+        it.contains("win") -> "localkeys_ffi.dll"
+        it.contains("mac") -> "liblocalkeys_ffi.dylib"
+        else -> "liblocalkeys_ffi.so"
+    }
+}
+val ffiSources = fileTree(rootProject.layout.projectDirectory.dir("..")) {
+    include("crates/ffi/src/**", "crates/ffi/Cargo.*", "crates/ffi/uniffi.toml", "crates/core/src/**", "crates/core/Cargo.toml")
+}
+
+val cargoBuildHost = tasks.register<Exec>("cargoBuildHost") {
+    group = "native"
+    workingDir = ffiDir.asFile
+    environment("CARGO_TARGET_DIR", cargoTarget.get().asFile.absolutePath)
+    commandLine("cargo", "build", "--locked")
+    inputs.files(ffiSources)
+    outputs.dir(hostLibDir)
+    enabled = !skipNative
+}
+
+val generateUniffi = tasks.register<Exec>("generateUniffi") {
+    group = "native"
+    dependsOn(cargoBuildHost)
+    workingDir = ffiDir.asFile
+    environment("CARGO_TARGET_DIR", cargoTarget.get().asFile.absolutePath)
+    commandLine(
+        "cargo", "run", "--locked", "--bin", "uniffi-bindgen", "--",
+        "generate", "--library", hostLibDir.get().file(hostLibName).asFile.absolutePath,
+        "--language", "kotlin", "--no-format",
+        "--config", ffiDir.file("uniffi.toml").asFile.absolutePath,
+        "--out-dir", generatedKotlin.asFile.absolutePath,
+    )
+    inputs.files(ffiSources)
+    outputs.dir(generatedKotlin)
+    enabled = !skipNative
+}
+
+// O cargo-ndk acha o NDK em $ANDROID_NDK_HOME ou em $ANDROID_HOME/ndk/<versão>.
+val sdkDir = androidComponents.sdkComponents.sdkDirectory
+val cargoNdk = tasks.register<Exec>("cargoNdk") {
+    group = "native"
+    workingDir = ffiDir.asFile
+    environment("CARGO_TARGET_DIR", cargoTarget.get().asFile.absolutePath)
+    if (System.getenv("ANDROID_NDK_HOME") == null) environment("ANDROID_HOME", sdkDir.get().asFile.absolutePath)
+    commandLine(
+        "cargo", "ndk",
+        "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64", "-t", "x86",
+        "-o", jniLibsDir.asFile.absolutePath,
+        "build", "--release", "--locked",
+    )
+    inputs.files(ffiSources)
+    outputs.dir(jniLibsDir)
+    enabled = !skipNative
+}
+
+tasks.named("preBuild") { dependsOn(generateUniffi, cargoNdk) }
+tasks.withType<Test>().configureEach {
+    dependsOn(cargoBuildHost)
+    // JNA acha a lib do computador por aqui (no Android, ela vem do jniLibs do APK).
+    systemProperty("jna.library.path", hostLibDir.get().asFile.absolutePath)
+}
+
 android {
     namespace = "com.localkeys.android"
     compileSdk = 35
@@ -70,6 +146,8 @@ android {
     }
 
     sourceSets["main"].kotlin.srcDirs("src/main/kotlin")
+    // Os bindings do UniFFI (gerados pela tarefa generateUniffi; fora do git).
+    sourceSets["main"].kotlin.srcDirs("src/generated/uniffi/kotlin")
     sourceSets["test"].kotlin.srcDirs("src/test/kotlin")
 
     testOptions {
@@ -119,15 +197,8 @@ dependencies {
     // ações (busca, estrela, editar/excluir). O R8 poda os não usados.
     implementation("androidx.compose.material:material-icons-extended")
 
-    // ── Cripto: libsodium (Argon2id + XChaCha20-Poly1305) ────────────────
-    // lazysodium-android traz o libsodium nativo para todos os ABIs; o @aar do
-    // JNA é o que entrega as libs nativas do JNA no Android (ver README do
-    // lazysodium-android). Excluímos o jna.jar transitivo do POM — senão o
-    // checkDebugDuplicateClasses acusa classes do com.sun.jna repetidas. O MESMO
-    // código roda em teste JVM com lazysodium-java.
-    implementation("com.goterl:lazysodium-android:5.2.0") {
-        exclude(group = "net.java.dev.jna", module = "jna")
-    }
+    // ── Cripto: o núcleo Rust (crates/ffi) por UniFFI ────────────────────────
+    // O UniFFI carrega a lib nativa por JNA; o @aar do JNA é o que entrega a libjnidispatch do Android.
     implementation("net.java.dev.jna:jna:5.17.0@aar")
 
     // ── Biometria (desbloqueio sem senha) ────────────────────────────────

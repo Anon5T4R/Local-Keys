@@ -1,7 +1,5 @@
 package com.localkeys.android.data.vault
 
-import com.goterl.lazysodium.LazySodiumJava
-import com.goterl.lazysodium.SodiumJava
 import com.localkeys.android.data.crypto.KdfParams
 import com.localkeys.android.data.crypto.TkeysCrypto
 import com.localkeys.android.data.crypto.TkeysError
@@ -35,7 +33,7 @@ class OtherCopyTest {
 
     @Before
     fun setUp() {
-        crypto = TkeysCrypto(LazySodiumJava(SodiumJava()))
+        crypto = TkeysCrypto()
         repository = VaultRepository(crypto)
     }
 

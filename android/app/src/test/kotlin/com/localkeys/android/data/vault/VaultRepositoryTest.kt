@@ -1,11 +1,10 @@
 package com.localkeys.android.data.vault
 
-import com.goterl.lazysodium.LazySodiumJava
-import com.goterl.lazysodium.SodiumJava
+import com.localkeys.android.data.crypto.ReferenceTkeysCrypto
 import com.localkeys.android.data.crypto.TkeysCrypto
 import com.localkeys.android.data.crypto.TkeysError
 import com.localkeys.android.data.crypto.TkeysFormat
-import com.localkeys.android.data.crypto.parseHeader
+import com.localkeys.android.data.crypto.refParseHeader
 import com.localkeys.android.data.crypto.TkeysCryptoTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +18,7 @@ import org.junit.Test
 
 /**
  * O repositório é a ponte entre o `.tkeys` cifrado e o `Vault` em memória.
- * Estes testes rodam na JVM (lazysodium-java), sem Android — exatamente como
+ * Estes testes rodam na JVM (núcleo Rust por UniFFI), sem Android — exatamente como
  * a suíte de crypto.
  */
 class VaultRepositoryTest {
@@ -29,7 +28,7 @@ class VaultRepositoryTest {
 
     @Before
     fun setUp() {
-        crypto = TkeysCrypto(LazySodiumJava(SodiumJava()))
+        crypto = TkeysCrypto()
         repository = VaultRepository(crypto)
     }
 
@@ -62,8 +61,8 @@ class VaultRepositoryTest {
     @Test
     fun desbloqueia_com_a_chave_bruta_derivada() {
         val file = TkeysCryptoTest.fixtureBytes()
-        val header = parseHeader(file)
-        val key = crypto.deriveKey(TkeysCryptoTest.FIXTURE_PASSWORD, header.salt, header.params)
+        val header = refParseHeader(file)
+        val key = ReferenceTkeysCrypto().deriveKey(TkeysCryptoTest.FIXTURE_PASSWORD, header.salt, header.params)
         val vault = repository.unlockWithKey(key, file)
         assertEquals("gmail", vault.items[0].name)
         assertTrue(repository.isUnlocked)
@@ -97,10 +96,10 @@ class VaultRepositoryTest {
     @Test
     fun salvar_recifra_com_mesmo_salt_params_e_nonce_novo() {
         val vault = repository.unlock(TkeysCryptoTest.fixtureBytes(), TkeysCryptoTest.FIXTURE_PASSWORD)
-        val before = parseHeader(TkeysCryptoTest.fixtureBytes())
+        val before = refParseHeader(TkeysCryptoTest.fixtureBytes())
 
         val saved = repository.save()
-        val after = parseHeader(saved)
+        val after = refParseHeader(saved)
 
         // Salt e params do KDF preservados (a chave da sessão continua válida)…
         assertEquals(before.salt.toList(), after.salt.toList())

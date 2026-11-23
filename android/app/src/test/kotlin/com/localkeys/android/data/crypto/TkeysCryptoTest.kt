@@ -1,7 +1,5 @@
 package com.localkeys.android.data.crypto
 
-import com.goterl.lazysodium.LazySodiumJava
-import com.goterl.lazysodium.SodiumJava
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
@@ -11,10 +9,9 @@ import org.junit.Test
 import java.util.Base64
 
 /**
- * Validação cruzada com o desktop: o fixture abaixo foi gerado pelo Rust do
- * LocalKeys (`crypto.rs`, params m=512/t=1/p=1) cifrando um vault JSON real.
- * Se este port Kotlin abrir esse arquivo, Argon2id + XChaCha20-Poly1305 + o
- * layout do header batem 1:1 com o desktop.
+ * O `.tkeys` do app, pelo núcleo Rust (UniFFI): o fixture abaixo foi gerado pelo Rust do desktop
+ * (`crypto.rs`, params m=512/t=1/p=1) cifrando um vault JSON real. A conferência byte a byte com a implementação de
+ * referência em Kotlin está em `CrossCheckTest`.
  */
 class TkeysCryptoTest {
 
@@ -22,7 +19,7 @@ class TkeysCryptoTest {
 
     @Before
     fun setUp() {
-        crypto = TkeysCrypto(LazySodiumJava(SodiumJava()))
+        crypto = TkeysCrypto()
     }
 
     companion object {
@@ -72,43 +69,12 @@ class TkeysCryptoTest {
 
     @Test
     fun header_parse_do_fixture() {
-        val header = parseHeader(fixtureBytes())
+        val header = refParseHeader(fixtureBytes())
         assertEquals(1, header.version)
         assertEquals(1, header.kdfId)
         assertEquals(TEST_PARAMS, header.params)
         assertEquals(TkeysFormat.SALT_LEN, header.salt.size)
         assertEquals(TkeysFormat.NONCE_LEN, header.nonce.size)
-    }
-
-    // A chave derivada (Argon2id, salt/params do fixture) precisa bater 1:1 com a
-    // do desktop (vista via cargo test no crypto.rs do LocalKeys).
-    @Test
-    fun kdf_deriva_a_mesma_chave_do_desktop() {
-        val header = parseHeader(fixtureBytes())
-        val key = crypto.deriveKey(FIXTURE_PASSWORD, header.salt, header.params)
-        val actual = Hex.encode(key).lowercase()
-        val expected = "3bae09343f4ede7dc1ea3de521d6d2e035c356c2f04580abcd64f490c35ccc6a"
-        assertEquals(expected, actual)
-    }
-
-    // Recifra o plaintext do fixture com os MESMOS salt/nonce/chave do desktop e
-    // compara byte a byte: prova que a cifragem é idêntica (XChaCha20 + header
-    // como AAD), não só que os dois lados se abrem mutuamente.
-    @Test
-    fun recifragem_do_fixture_e_identica_a_do_desktop() {
-        val file = fixtureBytes()
-        val header = parseHeader(file)
-        val key = crypto.deriveKey(FIXTURE_PASSWORD, header.salt, header.params)
-        val rebuilt = crypto.seal(key, header.salt, header.params, header.nonce, FIXTURE_PLAINTEXT.toByteArray())
-        assertEquals("cifragem Kotlin != fixture do desktop", file.toList(), rebuilt.toList())
-    }
-
-    @Test
-    fun abre_com_chave_bruta_derivada() {
-        val header = parseHeader(fixtureBytes())
-        val key = crypto.deriveKey(FIXTURE_PASSWORD, header.salt, header.params)
-        val plaintext = String(crypto.openWithKey(key, fixtureBytes()))
-        assertEquals(FIXTURE_PLAINTEXT, plaintext)
     }
 
     // ── Integridade (header é AAD, tag cobre o ciphertext) ───────────────
@@ -174,17 +140,10 @@ class TkeysCryptoTest {
     }
 
     @Test
-    fun kdf_deterministico() {
-        val a = crypto.deriveKey("mesma senha", ByteArray(TkeysFormat.SALT_LEN) { 7 }, TEST_PARAMS)
-        val b = crypto.deriveKey("mesma senha", ByteArray(TkeysFormat.SALT_LEN) { 7 }, TEST_PARAMS)
-        assertEquals(a.toList(), b.toList())
-    }
-
-    @Test
     fun header_tem_60_bytes() {
         val created = crypto.createVault("pw", "x".toByteArray(), TEST_PARAMS)
         assertTrue(created.file.size > TkeysFormat.HEADER_LEN)
         assertEquals("TKEYS\u0000", String(created.file.copyOfRange(0, 6)))
-        assertEquals(TEST_PARAMS, parseHeader(created.file).params)
+        assertEquals(TEST_PARAMS, refParseHeader(created.file).params)
     }
 }

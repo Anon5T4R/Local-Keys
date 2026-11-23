@@ -17,8 +17,6 @@ import androidx.credentials.providerevents.transfer.ImportCredentialsRequest
 import androidx.credentials.providerevents.transfer.KnownExtensions
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.goterl.lazysodium.LazySodiumAndroid
-import com.goterl.lazysodium.SodiumAndroid
 import com.localkeys.android.R
 import com.localkeys.android.data.biometric.BiometricVaultKey
 import com.localkeys.android.data.autofill.AutofillMatcher
@@ -136,7 +134,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val syncPending: SyncPending? = null,
     )
 
-    private val crypto = TkeysCrypto(LazySodiumAndroid(SodiumAndroid()))
+    private val crypto = TkeysCrypto()
     private val repository = VaultRepository(crypto)
     private val settings = SettingsStore(application)
     private val biometricKey = BiometricVaultKey()
