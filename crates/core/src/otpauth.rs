@@ -103,11 +103,9 @@ pub fn parse(raw: &str) -> ParseResult {
     // Fora do padrão? `parse` que falha não sinaliza (o `toIntOrNull` do Android vira null).
     let digits = param("digits").and_then(|d| d.parse::<u32>().ok()).filter(|d| *d != DIGITS);
     let period = param("period").and_then(|p| p.parse::<u64>().ok()).filter(|p| *p != PERIOD);
-    let algorithm = param("algorithm")
-        .map(|a| a.trim().to_uppercase())
-        .filter(|a| !a.is_empty() && a != "SHA1");
-    let unsupported = (digits.is_some() || period.is_some() || algorithm.is_some())
-        .then(|| Unsupported { digits, period, algorithm: algorithm.clone() });
+    let algorithm = param("algorithm").map(|a| a.trim().to_uppercase()).filter(|a| !a.is_empty() && a != "SHA1");
+    let unsupported =
+        (digits.is_some() || period.is_some() || algorithm.is_some()).then(|| Unsupported { digits, period, algorithm: algorithm.clone() });
 
     ParseResult::Ok(Parsed { secret, issuer, account, unsupported })
 }
