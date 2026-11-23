@@ -713,7 +713,7 @@ fn saving_trims_the_fields_like_the_android() {
 }
 
 /// A linha da lista mostra o resumo do tipo: usuário, bandeira e `•••• 1234`, nome completo, começo da
-/// nota — e o filtro TOTP continua servindo com itens de qualquer tipo na tela.
+/// nota — e o "Com TOTP" do popup Filtrar continua servindo com itens de qualquer tipo na tela.
 #[test]
 fn the_list_shows_the_right_summary_per_kind() {
     let mut harness = harness(unlocked_kinds("summaries", Prefs::new("en", ThemeMode::Dark)));
@@ -724,12 +724,182 @@ fn the_list_shows_the_right_summary_per_kind() {
     harness.get_by_label_contains("comprar pão");
     // o ícone do tipo acompanha o nome na linha
     harness.get_by_label_contains("💳 Nubank");
-    // o filtro TOTP esconde o que não tem segredo (cartão, identidade, nota) e mantém o login
-    harness.get_by_label("TOTP ⟳").click();
+    // o filtro "Com TOTP" esconde o que não tem segredo (cartão, identidade, nota) e mantém o login
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("With TOTP").click();
     harness.run_steps(2);
     assert_eq!(harness.query_all_by_label_contains("••••").count(), 0, "cartão escondido");
     assert_eq!(harness.query_all_by_label_contains("comprar pão").count(), 0, "nota escondida");
     harness.get_by_label_contains("joao");
+}
+
+/// O botão "Filtrar" abre o popup; tipo e "mostrar só" se combinam com E, o botão mostra quantos filtros
+/// estão ligados e "Limpar" volta a lista inteira.
+#[test]
+fn the_filter_popup_combines_filters_shows_the_count_and_clears() {
+    use localkeys_core::filters::KindFilter;
+
+    let mut harness = harness(unlocked_kinds("filters", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    assert!(harness.state().filters.is_clear());
+
+    // Só o tipo: mostra o cartão, esconde o login.
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().filters.kind, KindFilter::Cards);
+    harness.get_by_label_contains("Nubank");
+    assert_eq!(harness.query_all_by_label_contains("Gmail").count(), 0, "login fora do tipo");
+
+    // Combina tipo + "Com TOTP": cartão não tem TOTP, então some — e o botão mostra 2.
+    harness.get_by_label("With TOTP").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().filters.active_count(), 2);
+    harness.get_by_label("Filter (2)");
+    assert_eq!(harness.query_all_by_label_contains("Nubank").count(), 0, "cartão sem TOTP");
+
+    // Troca o tipo para Logins: o login com TOTP volta (2 filtros ainda).
+    harness.get_by_label("Logins").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().filters.active_count(), 2);
+    harness.get_by_label_contains("Gmail");
+
+    // Limpar zera tudo e a lista volta inteira.
+    harness.get_by_label("Clear").click();
+    harness.run_steps(2);
+    assert!(harness.state().filters.is_clear());
+    harness.get_by_label("Filter");
+    harness.get_by_label_contains("Nubank");
+    harness.get_by_label_contains("comprar pão");
+}
+
+/// Os chips dos filtros ligados: o × desliga SÓ aquele filtro (sem abrir o popup), a contagem do botão
+/// cai e a lista atualiza; o outro filtro continua ligado.
+#[test]
+fn the_filter_chips_remove_one_filter_without_opening_the_popup() {
+    let mut harness = harness(unlocked("chips", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards").click();
+    harness.run_steps(2);
+    harness.get_by_label("Favorites").click();
+    harness.run_steps(2);
+    // Fecha o popup: o botão alterna. A lista fica vazia (não há cartão favorito).
+    harness.get_by_label("Filter (2)").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards ×");
+    harness.get_by_label("Favorites ×");
+    harness.get_by_label_contains("No items match these filters");
+
+    // O × do tipo desliga só o tipo: favoritos fica e o item favorito volta.
+    harness.get_by_label("Cards ×").click();
+    harness.run_steps(2);
+    let filtros = harness.state().filters;
+    assert_eq!(filtros.kind, localkeys_core::filters::KindFilter::All);
+    assert!(filtros.only.favorites, "o outro filtro continua ligado");
+    assert_eq!(filtros.active_count(), 1);
+    harness.get_by_label("Filter (1)");
+    harness.get_by_label_contains("192.168.1.34");
+    assert!(harness.query_by_label("Cards ×").is_none(), "o chip do tipo sumiu");
+    harness.get_by_label("Favorites ×");
+}
+
+/// O popup Filtrar acha "Com anexos" e "Favoritos" de verdade na lista.
+#[test]
+fn the_filter_popup_finds_attachments_and_favorites() {
+    let mut app = unlocked("filters-only", Prefs::new("en", ThemeMode::Dark));
+    let id = item_id(&app, "1lib.sk");
+    let raw = app.raw.as_mut().expect("cofre");
+    assert!(crate::vault::add_attachment(raw, &id, "nota.txt", "text/plain", "QQ=="), "anexa");
+    app.items = crate::vault::items_view(app.raw.as_ref().expect("cofre"));
+
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("With attachments").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("1lib.sk");
+    assert_eq!(harness.query_all_by_label_contains("192.168.1.34").count(), 0, "sem anexo, escondido");
+
+    // Troca para Favoritos: o item com anexo (não favorito) some e sobra o favorito.
+    harness.get_by_label("With attachments").click();
+    harness.run_steps(2);
+    harness.get_by_label("Favorites").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("192.168.1.34");
+    assert_eq!(harness.query_all_by_label_contains("1lib.sk").count(), 0, "não favorito, escondido");
+}
+
+/// Filtros escondendo tudo num cofre com itens: mensagem própria (+ Limpar), e o rodapé "Items:" conta
+/// o cofre inteiro, não a lista filtrada.
+#[test]
+fn filtered_out_shows_the_message_and_the_footer_counts_the_whole_vault() {
+    let mut harness = harness(unlocked_kinds("empty-filter", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    harness.get_by_label("Items: 4");
+
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards").click();
+    harness.run_steps(2);
+    harness.get_by_label("With TOTP").click();
+    harness.run_steps(2);
+    harness.get_by_label("Filter (2)").click(); // fecha o popup: sobra o Limpar do estado vazio
+    harness.run_steps(2);
+    harness.get_by_label_contains("No items match these filters");
+    harness.get_by_label("Items: 4");
+
+    harness.get_by_label("Clear").click();
+    harness.run_steps(2);
+    assert!(harness.state().filters.is_clear());
+    assert_eq!(harness.query_all_by_label_contains("No items match these filters").count(), 0);
+    harness.get_by_label_contains("Nubank");
+}
+
+/// As capturas do popup Filtrar (com tipo e "mostrar só" ligados) e do cartão com a bandeira detectada
+/// digitando o número, claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
+#[test]
+fn filter_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let mut harness = harness_sized(unlocked_kinds("shots-filter", Prefs::new("en", appearance)), width);
+            harness.run_steps(2);
+            harness.get_by_label("Filter").click();
+            harness.run_steps(2);
+            harness.get_by_label("Logins").click();
+            harness.run_steps(2);
+            harness.get_by_label("With TOTP").click();
+            harness.run_steps(2);
+            shot(&mut harness, &format!("filter-popup-{name}-{label}"));
+        }
+    }
+}
+
+/// As capturas dos chips dos filtros (dois ligados, popup fechado para os chips e a lista aparecerem),
+/// claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
+#[test]
+fn filter_chips_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let mut harness = harness_sized(unlocked_kinds("shots-chips", Prefs::new("en", appearance)), width);
+            harness.run_steps(2);
+            harness.get_by_label("Filter").click();
+            harness.run_steps(2);
+            harness.get_by_label("Logins").click();
+            harness.run_steps(2);
+            harness.get_by_label("With TOTP").click();
+            harness.run_steps(2);
+            harness.get_by_label("Filter (2)").click(); // fecha o popup
+            harness.run_steps(2);
+            harness.get_by_label("Logins ×");
+            harness.get_by_label("With TOTP ×");
+            shot(&mut harness, &format!("filter-chips-{name}-{label}"));
+        }
+    }
 }
 
 /// As capturas da fase A (pedido 022): seletor de tipo, formulários de cada tipo e a lista com os
@@ -1199,11 +1369,22 @@ fn smart_shots() {
             app.open_add_form(NewKind::Card);
             app.add_name = "Visa".into();
             app.add_cardholder = "João da Silva".into();
-            app.add_number = "4111 1111 1111 1112".into();
             app.add_exp = "01/2027".into();
             app.add_code = "123".into();
             let mut harness = harness_sized(app, width);
             harness.run_steps(2);
+            // O número é DIGITADO (não setado no estado): a bandeira só é detectada no `changed`, como
+            // a pessoa vê ao preencher o formulário de verdade.
+            let campo = harness
+                .get_all_by_role(Role::TextInput)
+                .find(|node| node.accesskit_node().label().is_some_and(|l| l == "Number"))
+                .expect("campo Number do cartão");
+            campo.click();
+            harness.run_steps(1);
+            harness.input_mut().events.push(egui::Event::Text("4111111111111111".into()));
+            harness.run_steps(2);
+            assert_eq!(harness.state().add_number, "4111 1111 1111 1111", "o número aparece em blocos");
+            assert_eq!(harness.state().add_brand, "Visa", "a bandeira é detectada ao digitar");
             shot(&mut harness, &format!("smart-card-form-{name}-{label}"));
 
             let mut app = unlocked("shots-c", Prefs::new("en", appearance));
@@ -1270,8 +1451,8 @@ fn the_sync_summary_shows_before_writing_and_updates_both_files() {
     let mut harness = harness(app);
     harness.run_steps(2);
     let linha = node_text(&harness.get_by_label_contains("added from the other copy"));
-    assert!(linha.contains("1 items added"), "resumo antes de gravar: {linha}");
-    harness.get_by_label_contains("go to the other copy");
+    assert!(linha.contains("1 item added"), "resumo antes de gravar, no singular: {linha}");
+    harness.get_by_label_contains("1 item goes to the other copy");
 
     // Gravar: os DOIS arquivos ficam iguais e o cofre adota o item novo.
     harness.get_by_label("Save to both copies").click();
@@ -1284,6 +1465,45 @@ fn the_sync_summary_shows_before_writing_and_updates_both_files() {
     assert!(a["items"].as_array().is_some_and(|arr| arr.iter().any(|i| i["name"] == "Novo da outra")));
     assert_ne!(std::fs::read(&other_path).expect("regravada"), antes, "a outra cópia mudou no disco");
     assert!(crate::copia_abre(harness.state().session.as_ref().expect("sessão"), &other_path));
+}
+
+/// O resumo da sincronização usa a forma certa do plural: "2 items added" ao lado de "1 item updated",
+/// nunca "1 items".
+#[test]
+fn the_sync_summary_pluralizes_counts() {
+    let mut app = unlocked("sync-plural", Prefs::new("en", ThemeMode::Dark));
+    app.sync_plan = Some(crate::SyncPlan {
+        other_path: r"C:\Users\joao\OneDrive\cofre.tkeys".into(),
+        merged: app.raw.clone().expect("cofre"),
+        summary: crate::merge::MergeSummary {
+            added: 2,
+            updated: 1,
+            trashed: 0,
+            restored: 0,
+            conflicts: 0,
+            folders_added: 0,
+            to_other: 0,
+            folders_to_other: 0,
+        },
+    });
+    app.sync_open = true;
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label_contains("2 items added from the other copy");
+    harness.get_by_label_contains("1 item updated (the other copy was newer)");
+    assert_eq!(harness.query_all_by_label_contains("1 items").count(), 0, "nada de \"1 items\"");
+}
+
+/// O relatório da importação usa o plural: "1 item imported" e "2 cards/identities skipped".
+#[test]
+fn the_import_report_pluralizes_counts() {
+    let mut app = unlocked("import-report", Prefs::new("en", ThemeMode::Dark));
+    app.import_report = Some((1, 2));
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label_contains("1 item imported");
+    harness.get_by_label_contains("2 cards/identities skipped — Local Keys keeps logins and notes");
+    assert_eq!(harness.query_all_by_label_contains("1 items").count(), 0, "nada de \"1 items\"");
 }
 
 /// "Salvar cópia em pasta sincronizada": a cópia é conferida (abre), passa a ser o cofre em uso e a

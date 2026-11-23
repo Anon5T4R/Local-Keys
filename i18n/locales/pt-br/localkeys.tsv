@@ -23,6 +23,7 @@
 	Unpin	Desafixar
 	Delete	Excluir
 	empty — copy something	vazio — copie algo
+	No items match these filters	Nenhum item com estes filtros
 	Vault	Cofre
 	Master password	Senha mestra
 	Unlock	Destrancar
@@ -58,8 +59,8 @@
 	Bitwarden (encrypted export)	Bitwarden (export cifrado)
 	File	Arquivo
 	File password	Senha do arquivo
-	items imported	itens importados
-	card/identity skipped — Local Keys keeps logins and notes	de cartão/identidade pulados — o Local Keys guarda logins e notas
+@plural	{n} item imported|{n} items imported	{n} item importado|{n} itens importados
+@plural	{n} card/identity skipped — Local Keys keeps logins and notes|{n} cards/identities skipped — Local Keys keeps logins and notes	{n} cartão/identidade pulado — o Local Keys guarda logins e notas|{n} cartões/identidades pulados — o Local Keys guarda logins e notas
 	Generator	Gerador
 	Generate	Gerar
 	Use	Usar
@@ -194,14 +195,24 @@
 	The CPF check digits don't match. Check for a typo; you can still save.	Os dígitos verificadores do CPF não conferem. Confira se digitou certo; dá para salvar assim mesmo.
 	Save a copy to a synced folder	Salvar cópia em pasta sincronizada
 	Sync with another copy	Sincronizar com outra cópia
-	{n} items added from the other copy	{n} itens adicionados da outra cópia
-	{n} items updated (the other copy was newer)	{n} itens atualizados (a outra cópia era mais nova)
-	{n} items moved to the trash by the other copy	{n} itens foram para a lixeira pela outra cópia
-	{n} items restored from the trash	{n} itens restaurados da lixeira
-	{n} ties: this vault keeps its item	{n} empates: este cofre fica com o item
-	{n} folders added	{n} pastas adicionadas
-	{n} items go to the other copy	{n} itens vão para a outra cópia
-	{n} folders go to the other copy	{n} pastas vão para a outra cópia
+@plural	{n} item added from the other copy|{n} items added from the other copy	{n} item adicionado da outra cópia|{n} itens adicionados da outra cópia
+@plural	{n} item updated (the other copy was newer)|{n} items updated (the other copy was newer)	{n} item atualizado (a outra cópia era mais nova)|{n} itens atualizados (a outra cópia era mais nova)
+@plural	{n} item moved to the trash by the other copy|{n} items moved to the trash by the other copy	{n} item foi para a lixeira pela outra cópia|{n} itens foram para a lixeira pela outra cópia
+@plural	{n} item restored from the trash|{n} items restored from the trash	{n} item restaurado da lixeira|{n} itens restaurados da lixeira
+@plural	{n} tie: this vault keeps its item|{n} ties: this vault keeps its item	{n} empate: este cofre fica com o item|{n} empates: este cofre fica com o item
+@plural	{n} folder added|{n} folders added	{n} pasta adicionada|{n} pastas adicionadas
+@plural	{n} item goes to the other copy|{n} items go to the other copy	{n} item vai para a outra cópia|{n} itens vão para a outra cópia
+@plural	{n} folder goes to the other copy|{n} folders go to the other copy	{n} pasta vai para a outra cópia|{n} pastas vão para a outra cópia
+	Filter ({n})	Filtrar ({n})
+filter	All	Todos
+	Logins	Logins
+	Cards	Cartões
+	Identities	Identidades
+	With TOTP	Com TOTP
+	With attachments	Com anexos
+	Favorites	Favoritos
+	Type	Tipo
+	Show only	Mostrar só
 	After saving, both copies are identical.	Depois de gravar, as duas cópias ficam iguais.
 	Nothing to sync: the copies are already identical.	Nada a sincronizar: as cópias já estão iguais.
 	Save to both copies	Gravar nas duas cópias
