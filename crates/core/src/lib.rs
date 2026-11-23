@@ -6,6 +6,7 @@
 //! mesmo código nos dois lados.
 
 pub mod bwdecrypt;
+pub mod card;
 pub mod crypto;
 pub mod export;
 pub mod generator;

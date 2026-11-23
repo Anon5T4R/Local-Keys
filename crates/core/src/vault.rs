@@ -8,7 +8,42 @@
 //! (`serde_json::Value`), nunca um struct que re-serializaria só os campos
 //! conhecidos.
 
+use crate::card;
 use serde_json::{Value, json};
+
+/// O tipo de um item — os quatro `kind` que o cofre conhece (o mesmo wire do oficial e do Android).
+/// Valor desconhecido no arquivo cai em [`ItemKind::Note`]: nota é o tipo sem campos próprios, então um
+/// `kind` novo (gravado por uma versão futura) abre e edita sem perder nada.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemKind {
+    Login,
+    Note,
+    Card,
+    Identity,
+}
+
+impl ItemKind {
+    /// A string que vai no JSON.
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Login => "login",
+            Self::Note => "note",
+            Self::Card => "card",
+            Self::Identity => "identity",
+        }
+    }
+
+    /// O `kind` do JSON; desconhecido → `None`.
+    pub fn from_wire(wire: &str) -> Option<Self> {
+        match wire {
+            "login" => Some(Self::Login),
+            "note" => Some(Self::Note),
+            "card" => Some(Self::Card),
+            "identity" => Some(Self::Identity),
+            _ => None,
+        }
+    }
+}
 
 /// Vault recém-criado — mesma semente do oficial (`lib.rs` do LocalKeys).
 pub const EMPTY_VAULT: &str = r#"{"version":1,"folders":[],"items":[]}"#;
@@ -32,6 +67,11 @@ pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> 
 pub struct ItemView {
     pub id: String,
     pub name: String,
+    pub kind: ItemKind,
+    /// Segunda linha da lista: o resumo do tipo (usuário, bandeira e final do cartão, nome da pessoa,
+    /// começo da nota). `None` = só o nome.
+    pub summary: Option<String>,
+    /// Nome de usuário do login — só para as ações de copiar (o resumo da lista é o [`Self::summary`]).
     pub username: Option<String>,
     /// Segredo TOTP (base32) se o item tiver — a UI gera o código ao vivo.
     pub totp: Option<String>,
@@ -75,6 +115,8 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                     Some(ItemView {
                         id: ri.id,
                         name: ri.name,
+                        kind: it.get("kind").and_then(Value::as_str).and_then(ItemKind::from_wire).unwrap_or(ItemKind::Note),
+                        summary: list_summary(it),
                         username: ri.login.as_ref().map(|l| l.username.clone()),
                         totp: ri.login.and_then(|l| if l.totp.is_empty() { None } else { Some(l.totp) }),
                         favorite: ri.favorite,
@@ -88,6 +130,41 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// A segunda linha da lista por tipo — o `subtitle` do `VaultFilters.kt` do Android, que é a referência:
+/// login → usuário; cartão → "bandeira  •••• 1234" (sem número suficiente, o titular); identidade → nome
+/// completo (sem ele, o e-mail); nota → a primeira linha não vazia.
+fn list_summary(item: &Value) -> Option<String> {
+    let text = |key: &str| item.get(key).and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    match item.get("kind").and_then(Value::as_str).and_then(ItemKind::from_wire).unwrap_or(ItemKind::Note) {
+        ItemKind::Login => {
+            item.get("login").and_then(|l| l.get("username")).and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty()).map(str::to_string)
+        }
+        ItemKind::Card => {
+            let card = item.get("card")?;
+            let brand = card.get("brand").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let digits: String = card.get("number").and_then(Value::as_str).unwrap_or_default().chars().filter(char::is_ascii_digit).collect();
+            let last4 = if digits.chars().count() >= 4 {
+                let start = digits.char_indices().nth_back(3).map_or(0, |(i, _)| i);
+                format!("•••• {}", &digits[start..])
+            } else {
+                String::new()
+            };
+            let joined = [brand, last4.as_str()].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join("  ");
+            let cardholder = card.get("cardholder").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            Some(if joined.is_empty() { cardholder.to_string() } else { joined }).filter(|s| !s.is_empty())
+        }
+        ItemKind::Identity => {
+            let id = item.get("identity")?;
+            let first = id.get("firstName").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let last = id.get("lastName").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let name = [first, last].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ");
+            let email = id.get("email").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            Some(if name.is_empty() { email.to_string() } else { name }).filter(|s| !s.is_empty())
+        }
+        ItemKind::Note => text("notes").lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string),
+    }
 }
 
 fn now_ms() -> i64 {
@@ -161,6 +238,74 @@ pub fn custom_field(name: &str, value: &str, hidden: bool) -> Value {
     json!({ "id": gen_id(), "name": name, "value": value, "hidden": hidden })
 }
 
+/// Um campo personalizado para a UI (o `id` vazio marca um campo NOVO — [`set_custom_fields`] gera o id ao
+/// gravar).
+pub struct CustomFieldView {
+    pub id: String,
+    pub name: String,
+    pub value: String,
+    pub hidden: bool,
+}
+
+/// Os `customFields` de um item (vazio quando não tem). Só as chaves do oficial; desconhecidas dentro de
+/// um campo atravessam via [`set_custom_fields`], que grava por cima do campo existente.
+fn custom_fields_of(item: &Value) -> Vec<CustomFieldView> {
+    item.get("customFields")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|f| CustomFieldView {
+                    id: f.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    name: f.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    value: f.get("value").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    hidden: f.get("hidden").and_then(Value::as_bool).unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Os campos personalizados de um item pelo id — o que o form de edição carrega.
+pub fn custom_fields(raw: &Value, id: &str) -> Vec<CustomFieldView> {
+    item(raw, id).map(custom_fields_of).unwrap_or_default()
+}
+
+/// SUBSTITUI os `customFields` de um item (mostrar/adicionar/editar/remover do form passa por aqui, para
+/// qualquer tipo). Escrita conservadora: campo com `id` existente é regravado por cima (chaves desconhecidas
+/// do campo ficam), campo novo ganha id; lista vazia num item que JÁ TINHA campos vira `[]` (remove todos),
+/// num item que não tinha não cria a chave. Não toca em `updatedAt` — o add/edit do item já gravou.
+pub fn set_custom_fields(raw: &mut Value, item_id: &str, fields: &[CustomFieldView]) -> bool {
+    let Some(it) = item_mut(raw, item_id) else {
+        return false;
+    };
+    let tinha = it.get("customFields").is_some_and(Value::is_array);
+    if fields.is_empty() {
+        if tinha {
+            it["customFields"] = json!([]);
+        }
+        return true;
+    }
+    if !tinha {
+        it["customFields"] = json!([]);
+    }
+    // O array velho ANTES de limpar: campo já gravado é regravado por cima (chaves desconhecidas ficam).
+    let velho: Vec<Value> = it.get("customFields").and_then(Value::as_array).cloned().unwrap_or_default();
+    let arr = it["customFields"].as_array_mut().expect("customFields é array (garantido acima)");
+    arr.clear();
+    for f in fields {
+        let mut obj = velho
+            .iter()
+            .find(|old| old.get("id").and_then(Value::as_str) == Some(f.id.as_str()))
+            .cloned()
+            .unwrap_or_else(|| json!({ "id": if f.id.is_empty() { gen_id() } else { f.id.clone() } }));
+        obj["name"] = json!(f.name);
+        obj["value"] = json!(f.value);
+        obj["hidden"] = json!(f.hidden);
+        arr.push(obj);
+    }
+    true
+}
+
 /// Acrescenta um item já montado (`make_item`) ao vault bruto.
 pub fn push_item(raw: &mut Value, item: Value) {
     if !raw["items"].is_array() {
@@ -189,13 +334,111 @@ pub struct LoginForm<'a> {
     pub notes: &'a str,
 }
 
-/// Tudo que o form de edição mostra de um login (inclui o que não é segredo).
+/// Tudo que o form de edição mostra de um login (a URL é só a primeira, a que o form edita).
 pub struct LoginFull {
     pub username: String,
     pub password: String,
     pub totp: String,
     pub url: String,
+}
+
+/// Campos do form de cartão — o que a UI coleta pra criar OU editar. `number`, `exp` e `code` chegam como
+/// digitados; o armazenamento ([`add_card`]/[`edit_card`]) normaliza pela regra fixa do cofre
+/// (`card.number`/`card.code` só dígitos, `card.exp` `MM/AA`).
+#[derive(Clone, Copy)]
+pub struct CardForm<'a> {
+    pub name: &'a str,
+    pub cardholder: &'a str,
+    pub brand: &'a str,
+    pub number: &'a str,
+    pub exp: &'a str,
+    pub code: &'a str,
+    pub notes: &'a str,
+}
+
+/// Campos do form de identidade.
+#[derive(Clone, Copy)]
+pub struct IdentityForm<'a> {
+    pub name: &'a str,
+    pub first_name: &'a str,
+    pub last_name: &'a str,
+    pub email: &'a str,
+    pub phone: &'a str,
+    pub address: &'a str,
+    pub notes: &'a str,
+}
+
+/// Campos do form de nota.
+#[derive(Clone, Copy)]
+pub struct NoteForm<'a> {
+    pub name: &'a str,
+    pub notes: &'a str,
+}
+
+/// O cartão de um item, para o form de edição carregar.
+pub struct CardFull {
+    pub cardholder: String,
+    pub brand: String,
+    pub number: String,
+    pub exp: String,
+    pub code: String,
+}
+
+/// A identidade de um item, para o form de edição carregar.
+pub struct IdentityFull {
+    pub first_name: String,
+    pub last_name: String,
+    pub email: String,
+    pub phone: String,
+    pub address: String,
+}
+
+/// Tudo o que o form de edição mostra de um item, de qualquer tipo: o tipo (fixo no form), os campos do
+/// tipo e os campos personalizados. O que não existe para o tipo vem `None`/vazio.
+pub struct ItemFull {
+    pub kind: ItemKind,
+    pub name: String,
     pub notes: String,
+    pub login: Option<LoginFull>,
+    pub card: Option<CardFull>,
+    pub identity: Option<IdentityFull>,
+    pub custom_fields: Vec<CustomFieldView>,
+}
+
+/// Carrega um item para o form de edição. O `kind` decide quais campos a UI mostra; `login` só existe em
+/// item de login (nota/cartão/identidade não carregam), e o contrário vale para `card`/`identity`.
+pub fn item_full(raw: &Value, id: &str) -> Option<ItemFull> {
+    let it = item(raw, id)?;
+    let notes = it.get("notes").and_then(Value::as_str).unwrap_or("").to_string();
+    let login = it.get("login").filter(|l| l.is_object()).map(|login| LoginFull {
+        username: login.get("username").and_then(Value::as_str).unwrap_or("").to_string(),
+        password: login.get("password").and_then(Value::as_str).unwrap_or("").to_string(),
+        totp: login.get("totp").and_then(Value::as_str).unwrap_or("").to_string(),
+        url: login.get("uris").and_then(|u| u.get(0)).and_then(Value::as_str).unwrap_or("").to_string(),
+    });
+    let card = it.get("card").filter(|c| c.is_object()).map(|card| CardFull {
+        cardholder: card.get("cardholder").and_then(Value::as_str).unwrap_or("").to_string(),
+        brand: card.get("brand").and_then(Value::as_str).unwrap_or("").to_string(),
+        number: card.get("number").and_then(Value::as_str).unwrap_or("").to_string(),
+        exp: card.get("exp").and_then(Value::as_str).unwrap_or("").to_string(),
+        code: card.get("code").and_then(Value::as_str).unwrap_or("").to_string(),
+    });
+    let identity = it.get("identity").filter(|i| i.is_object()).map(|identity| IdentityFull {
+        first_name: identity.get("firstName").and_then(Value::as_str).unwrap_or("").to_string(),
+        last_name: identity.get("lastName").and_then(Value::as_str).unwrap_or("").to_string(),
+        email: identity.get("email").and_then(Value::as_str).unwrap_or("").to_string(),
+        phone: identity.get("phone").and_then(Value::as_str).unwrap_or("").to_string(),
+        address: identity.get("address").and_then(Value::as_str).unwrap_or("").to_string(),
+    });
+    Some(ItemFull {
+        kind: it.get("kind").and_then(Value::as_str).and_then(ItemKind::from_wire).unwrap_or(ItemKind::Note),
+        name: it.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+        notes,
+        login,
+        card,
+        identity,
+        custom_fields: custom_fields_of(it),
+    })
 }
 
 /// Linha da lixeira: o que a UI mostra e o id pra restaurar/excluir de vez.
@@ -225,6 +468,102 @@ pub fn add_login(raw: &mut Value, form: LoginForm<'_>) {
     push_item(raw, item);
 }
 
+/// O objeto `card` de um item: normalizado pela regra fixa do cofre (número e código só com dígitos,
+/// validade `MM/AA` — o `MM/AAAA` continua aceito, ver `card.rs`).
+fn card_object(form: &CardForm<'_>) -> Value {
+    json!({
+        "cardholder": form.cardholder,
+        "brand": form.brand,
+        "number": card::number(form.number),
+        "exp": card::expiry(form.exp),
+        "code": card::cvv(form.code),
+    })
+}
+
+/// ACRESCENTA um item de cartão (kind=card, sem `login` — o `emptyItem("card")` do oficial não carrega).
+pub fn add_card(raw: &mut Value, form: CardForm<'_>) {
+    let mut item = make_item(NewItem { kind: "card", name: form.name, notes: form.notes, favorite: false, login: None, custom_fields: Vec::new() });
+    item["card"] = card_object(&form);
+    push_item(raw, item);
+}
+
+/// EDITA um item de cartão — mesma escrita conservadora do `edit_login`: só `name`/`notes`/`updatedAt` e as
+/// cinco chaves de `card` (o objeto nasce se faltava; chaves desconhecidas DENTRO de `card` ficam).
+pub fn edit_card(raw: &mut Value, id: &str, form: CardForm<'_>) -> bool {
+    let Some(it) = item_mut(raw, id) else {
+        return false;
+    };
+    it["name"] = json!(form.name);
+    it["notes"] = json!(form.notes);
+    it["updatedAt"] = json!(now_ms());
+    let card = card_object(&form);
+    if !it.get("card").is_some_and(Value::is_object) {
+        it["card"] = json!({});
+    }
+    if let Some(obj) = it.get_mut("card").and_then(Value::as_object_mut) {
+        for key in ["cardholder", "brand", "number", "exp", "code"] {
+            obj.insert(key.into(), card[key].clone());
+        }
+    }
+    true
+}
+
+/// O objeto `identity` de um item.
+fn identity_object(form: &IdentityForm<'_>) -> Value {
+    json!({
+        "firstName": form.first_name,
+        "lastName": form.last_name,
+        "email": form.email,
+        "phone": form.phone,
+        "address": form.address,
+    })
+}
+
+/// ACRESCENTA um item de identidade (kind=identity, sem `login`).
+pub fn add_identity(raw: &mut Value, form: IdentityForm<'_>) {
+    let mut item =
+        make_item(NewItem { kind: "identity", name: form.name, notes: form.notes, favorite: false, login: None, custom_fields: Vec::new() });
+    item["identity"] = identity_object(&form);
+    push_item(raw, item);
+}
+
+/// EDITA um item de identidade — escrita conservadora como [`edit_card`].
+pub fn edit_identity(raw: &mut Value, id: &str, form: IdentityForm<'_>) -> bool {
+    let Some(it) = item_mut(raw, id) else {
+        return false;
+    };
+    it["name"] = json!(form.name);
+    it["notes"] = json!(form.notes);
+    it["updatedAt"] = json!(now_ms());
+    let identity = identity_object(&form);
+    if !it.get("identity").is_some_and(Value::is_object) {
+        it["identity"] = json!({});
+    }
+    if let Some(obj) = it.get_mut("identity").and_then(Value::as_object_mut) {
+        for key in ["firstName", "lastName", "email", "phone", "address"] {
+            obj.insert(key.into(), identity[key].clone());
+        }
+    }
+    true
+}
+
+/// ACRESCENTA um item de nota (kind=note, sem `login`/`card`/`identity`).
+pub fn add_note(raw: &mut Value, form: NoteForm<'_>) {
+    let item = make_item(NewItem { kind: "note", name: form.name, notes: form.notes, favorite: false, login: None, custom_fields: Vec::new() });
+    push_item(raw, item);
+}
+
+/// EDITA um item de nota — só `name`/`notes`/`updatedAt` (nota não tem campos próprios).
+pub fn edit_note(raw: &mut Value, id: &str, form: NoteForm<'_>) -> bool {
+    let Some(it) = item_mut(raw, id) else {
+        return false;
+    };
+    it["name"] = json!(form.name);
+    it["notes"] = json!(form.notes);
+    it["updatedAt"] = json!(now_ms());
+    true
+}
+
 /// `(username, password, totp)` do login pelo id — só leitura.
 pub fn login_triple(raw: &Value, id: &str) -> Option<(String, String, String)> {
     raw.get("items")?.as_array()?.iter().find_map(|it| {
@@ -238,21 +577,6 @@ pub fn login_triple(raw: &Value, id: &str) -> Option<(String, String, String)> {
             login.get("password").and_then(Value::as_str)?.to_string(),
             login.get("totp").and_then(Value::as_str).unwrap_or("").to_string(),
         ))
-    })
-}
-
-/// Tudo o que o form de edição precisa carregar de um item (inclui `uris[0]`
-/// e `notes`). Item de nota/cartão devolve os campos vazios — o form só edita
-/// login, e o `edit_login` cria o login que faltava.
-pub fn login_full(raw: &Value, id: &str) -> Option<LoginFull> {
-    let it = item(raw, id)?;
-    let login = it.get("login");
-    Some(LoginFull {
-        username: login.and_then(|l| l.get("username")).and_then(Value::as_str).unwrap_or("").to_string(),
-        password: login.and_then(|l| l.get("password")).and_then(Value::as_str).unwrap_or("").to_string(),
-        totp: login.and_then(|l| l.get("totp")).and_then(Value::as_str).unwrap_or("").to_string(),
-        url: login.and_then(|l| l.get("uris")).and_then(|u| u.get(0)).and_then(Value::as_str).unwrap_or("").to_string(),
-        notes: it.get("notes").and_then(Value::as_str).unwrap_or("").to_string(),
     })
 }
 
@@ -776,20 +1100,23 @@ mod tests {
     }
 
     #[test]
-    fn login_full_carrega_o_que_o_form_mostra() {
+    fn item_full_carrega_o_login_do_form() {
         let v: Value = serde_json::from_str(
             r#"{"version":1,"folders":[],"items":[{"id":"x","kind":"login","name":"N",
                "notes":"nota","login":{"username":"u","password":"p",
                "uris":["https://a","https://b"],"totp":"JBSWY3DPEHPK3PXP"}}]}"#,
         )
         .unwrap();
-        let full = login_full(&v, "x").expect("item existe");
-        assert_eq!(full.username, "u");
-        assert_eq!(full.password, "p");
-        assert_eq!(full.totp, "JBSWY3DPEHPK3PXP");
-        assert_eq!(full.url, "https://a", "só a primeira URI");
+        let full = item_full(&v, "x").expect("item existe");
+        assert_eq!(full.kind, ItemKind::Login);
         assert_eq!(full.notes, "nota");
-        assert!(login_full(&v, "não-existe").is_none());
+        let login = full.login.expect("login carregado");
+        assert_eq!(login.username, "u");
+        assert_eq!(login.password, "p");
+        assert_eq!(login.totp, "JBSWY3DPEHPK3PXP");
+        assert_eq!(login.url, "https://a", "só a primeira URI");
+        assert!(full.card.is_none() && full.identity.is_none());
+        assert!(item_full(&v, "não-existe").is_none());
     }
 
     #[test]
@@ -1021,5 +1348,236 @@ mod tests {
         assert_eq!(std::fs::read(&p).unwrap(), b"dois");
         assert_eq!(std::fs::read(dir.join("v.tkeys.bak")).unwrap(), b"um");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── pedido 022, fase A: os quatro tipos ─────────────────────────────
+
+    #[test]
+    fn add_card_grava_o_formato_fixo_do_cofre() {
+        let mut v: Value = serde_json::from_str(EMPTY_VAULT).unwrap();
+        add_card(
+            &mut v,
+            CardForm {
+                name: "Nubank",
+                cardholder: "João da Silva",
+                brand: "Elo",
+                // colado com espaços e traço: o cofre guarda só os dígitos
+                number: "6362 9700-0045 7013",
+                exp: "01/2027",
+                code: "12a4",
+                notes: "",
+            },
+        );
+        let it = &v["items"][0];
+        assert_eq!(it["kind"], "card");
+        assert_eq!(it["name"], "Nubank");
+        assert_eq!(it["card"]["cardholder"], "João da Silva");
+        assert_eq!(it["card"]["brand"], "Elo");
+        assert_eq!(it["card"]["number"], "6362970000457013", "número: só dígitos");
+        assert_eq!(it["card"]["exp"], "01/2027", "MM/AAAA aceito");
+        assert_eq!(it["card"]["code"], "124", "código: só dígitos");
+        assert!(it.get("login").is_none(), "cartão não carrega login (o mesmo do oficial)");
+    }
+
+    #[test]
+    fn edit_card_normaliza_e_preserva_o_resto() {
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[{"id":"f1","name":"Pessoal"}],
+               "items":[{"id":"c1","kind":"card","name":"Velho","favorite":true,"folderId":"f1","notes":"keep",
+                          "createdAt":1,"updatedAt":1,"deletedAt":null,
+                          "card":{"cardholder":"João","brand":"Visa","number":"4111 1111 1111 1111","exp":"12/27","code":"123","chaveDesconhecida":9},
+                          "customFields":[{"id":"cf1","name":"pin","value":"1234","hidden":true}]}]}"#,
+        )
+        .unwrap();
+        assert!(edit_card(
+            &mut v,
+            "c1",
+            CardForm {
+                name: "Itaú",
+                cardholder: "João",
+                brand: "Mastercard",
+                number: "5555 5555 5555 4444",
+                exp: "0330",
+                code: "9876",
+                notes: "keep"
+            }
+        ));
+        let it = &v["items"][0];
+        assert_eq!(it["name"], "Itaú");
+        assert_eq!(it["card"]["number"], "5555555555554444");
+        assert_eq!(it["card"]["exp"], "03/30", "sem barra vira MM/AA");
+        assert_eq!(it["card"]["code"], "9876");
+        // o que não foi editado atravessa intacto
+        assert_eq!(it["kind"], "card");
+        assert_eq!(it["favorite"], true);
+        assert_eq!(it["folderId"], "f1");
+        assert_eq!(it["card"]["chaveDesconhecida"], 9, "chave desconhecida dentro de card fica");
+        assert_eq!(it["customFields"][0]["name"], "pin");
+        assert_ne!(it["updatedAt"], json!(1), "updateItem grava updatedAt");
+        assert!(!edit_card(&mut v, "não-existe", CardForm { name: "x", cardholder: "", brand: "", number: "", exp: "", code: "", notes: "" }));
+    }
+
+    #[test]
+    fn add_identity_grava_os_cinco_campos_sem_login() {
+        let mut v: Value = serde_json::from_str(EMPTY_VAULT).unwrap();
+        add_identity(
+            &mut v,
+            IdentityForm {
+                name: "Passaporte João",
+                first_name: "João",
+                last_name: "Silva",
+                email: "joao@example.com",
+                phone: "+55 11 91234-5678",
+                address: "Rua A, 123",
+                notes: "",
+            },
+        );
+        let it = &v["items"][0];
+        assert_eq!(it["kind"], "identity");
+        assert_eq!(it["identity"]["firstName"], "João");
+        assert_eq!(it["identity"]["lastName"], "Silva");
+        assert_eq!(it["identity"]["email"], "joao@example.com");
+        assert_eq!(it["identity"]["phone"], "+55 11 91234-5678");
+        assert_eq!(it["identity"]["address"], "Rua A, 123");
+        assert!(it.get("login").is_none());
+        assert!(it.get("card").is_none());
+
+        let id = v["items"][0]["id"].as_str().unwrap().to_string();
+        assert!(edit_identity(
+            &mut v,
+            &id,
+            IdentityForm { name: "Passaporte João", first_name: "João", last_name: "Souza", email: "", phone: "", address: "", notes: "" }
+        ));
+        assert_eq!(v["items"][0]["identity"]["lastName"], "Souza");
+        assert_eq!(v["items"][0]["identity"]["email"], "", "campo limpo grava vazio");
+        // identidade que não existia (item corrompido) nasce no edit
+        v["items"][0]["identity"] = Value::Null;
+        assert!(edit_identity(&mut v, &id, IdentityForm { name: "x", first_name: "a", last_name: "", email: "", phone: "", address: "", notes: "" }));
+        assert_eq!(v["items"][0]["identity"]["firstName"], "a");
+    }
+
+    #[test]
+    fn add_nota_e_edita_sem_criar_outra_coisa() {
+        let mut v: Value = serde_json::from_str(EMPTY_VAULT).unwrap();
+        add_note(&mut v, NoteForm { name: "Receita", notes: "1 ovo\n2 colheres de açúcar" });
+        let it = &v["items"][0];
+        assert_eq!(it["kind"], "note");
+        assert_eq!(it["notes"], "1 ovo\n2 colheres de açúcar");
+        for key in ["login", "card", "identity", "customFields"] {
+            assert!(it.get(key).is_none(), "nota não carrega {key}");
+        }
+        let id = it["id"].as_str().unwrap().to_string();
+        assert!(edit_note(&mut v, &id, NoteForm { name: "Receita do bolo", notes: "só o texto" }));
+        assert_eq!(v["items"][0]["name"], "Receita do bolo");
+        assert_eq!(v["items"][0]["notes"], "só o texto");
+    }
+
+    #[test]
+    fn resumo_da_lista_por_tipo() {
+        let v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[
+               {"id":"l1","kind":"login","name":"Gmail","favorite":false,"deletedAt":null,
+                "login":{"username":"joao","password":"p","uris":[],"totp":""}},
+               {"id":"l2","kind":"login","name":"Sem usuário","favorite":false,"deletedAt":null,
+                "login":{"username":"","password":"p","uris":[],"totp":""}},
+               {"id":"c1","kind":"card","name":"Nubank","favorite":false,"deletedAt":null,
+                "card":{"cardholder":"João","brand":"Elo","number":"6362970000457013","exp":"01/2027","code":"123"}},
+               {"id":"c2","kind":"card","name":"Velho","favorite":false,"deletedAt":null,
+                "card":{"cardholder":"João","brand":"","number":"123","exp":"","code":""}},
+               {"id":"i1","kind":"identity","name":"Eu","favorite":false,"deletedAt":null,
+                "identity":{"firstName":"João","lastName":"Silva","email":"joao@example.com","phone":"","address":""}},
+               {"id":"i2","kind":"identity","name":"Contato","favorite":false,"deletedAt":null,
+                "identity":{"firstName":"","lastName":"","email":"maria@example.com","phone":"","address":""}},
+               {"id":"n1","kind":"note","name":"Lista","favorite":false,"deletedAt":null,
+                "notes":"\n   \ncomprar pão\nlevar o note"}]}"#,
+        )
+        .unwrap();
+        let resumo = |id: &str| items_view(&v).iter().find(|i| i.id == id).and_then(|i| i.summary.clone());
+        assert_eq!(resumo("l1").as_deref(), Some("joao"));
+        assert_eq!(resumo("l2"), None, "login sem usuário: sem segunda linha");
+        assert_eq!(resumo("c1").as_deref(), Some("Elo  •••• 7013"));
+        assert_eq!(resumo("c2").as_deref(), Some("João"), "sem bandeira nem 4 dígitos: o titular");
+        assert_eq!(resumo("i1").as_deref(), Some("João Silva"));
+        assert_eq!(resumo("i2").as_deref(), Some("maria@example.com"), "sem nome: o e-mail");
+        assert_eq!(resumo("n1").as_deref(), Some("comprar pão"), "a primeira linha não vazia");
+        // o kind de cada linha
+        let kind = |id: &str| items_view(&v).iter().find(|i| i.id == id).map(|i| i.kind);
+        assert_eq!(kind("l1"), Some(ItemKind::Login));
+        assert_eq!(kind("c1"), Some(ItemKind::Card));
+        assert_eq!(kind("i1"), Some(ItemKind::Identity));
+        assert_eq!(kind("n1"), Some(ItemKind::Note));
+    }
+
+    #[test]
+    fn campos_personalizados_por_id_do_item() {
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[
+               {"id":"x","kind":"login","name":"N","favorite":false,"deletedAt":null,
+                "login":{"username":"u","password":"p","uris":[],"totp":""},
+                "customFields":[{"id":"cf1","name":"pin","value":"1234","hidden":true,"extra":"fica"}]},
+               {"id":"y","kind":"note","name":"M","favorite":false,"deletedAt":null,"notes":""}]}"#,
+        )
+        .unwrap();
+        // ler
+        let campos = custom_fields(&v, "x");
+        assert_eq!(campos.len(), 1);
+        assert_eq!(campos[0].name, "pin");
+        assert!(campos[0].hidden);
+        assert!(custom_fields(&v, "y").is_empty());
+        // gravar: edita o existente (id mantido, chave desconhecida preservada) e acrescenta um novo
+        let novos = vec![
+            CustomFieldView { id: "cf1".into(), name: "PIN".into(), value: "4321".into(), hidden: false },
+            CustomFieldView { id: String::new(), name: "recuperacao".into(), value: "código".into(), hidden: true },
+        ];
+        assert!(set_custom_fields(&mut v, "x", &novos));
+        let arr = v["items"][0]["customFields"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], "cf1");
+        assert_eq!(arr[0]["name"], "PIN");
+        assert_eq!(arr[0]["hidden"], false);
+        assert_eq!(arr[0]["extra"], "fica", "chave desconhecida do campo atravessa");
+        let novo_id = arr[1]["id"].as_str().unwrap();
+        assert_eq!(novo_id.len(), 36, "campo novo ganha id do formato do oficial");
+        assert_eq!(arr[1]["value"], "código");
+        // remover todos num item que TINHA: vira lista vazia
+        assert!(set_custom_fields(&mut v, "x", &[]));
+        assert_eq!(v["items"][0]["customFields"], json!([]));
+        // item que NÃO TINHA e lista vazia: nem cria a chave
+        assert!(set_custom_fields(&mut v, "y", &[]));
+        assert!(v["items"][1].get("customFields").is_none());
+        // id inexistente: false
+        assert!(!set_custom_fields(&mut v, "não-existe", &novos));
+    }
+
+    #[test]
+    fn item_full_carrega_cartao_identidade_e_nota() {
+        let v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[
+               {"id":"c","kind":"card","name":"Visa","favorite":false,"deletedAt":null,
+                "card":{"cardholder":"João","brand":"Visa","number":"4111111111111111","exp":"12/27","code":"123"}},
+               {"id":"i","kind":"identity","name":"Eu","favorite":false,"deletedAt":null,
+                "identity":{"firstName":"João","lastName":"Silva","email":"j@e.com","phone":"11","address":"Rua A"}},
+               {"id":"n","kind":"note","name":"Nota","favorite":false,"deletedAt":null,"notes":"texto",
+                "customFields":[{"id":"cf","name":"k","value":"v","hidden":false}]}]}"#,
+        )
+        .unwrap();
+        let card = item_full(&v, "c").expect("cartão");
+        assert_eq!(card.kind, ItemKind::Card);
+        let c = card.card.expect("campos do cartão");
+        assert_eq!(c.number, "4111111111111111");
+        assert!(card.login.is_none() && card.identity.is_none());
+        let id = item_full(&v, "i").expect("identidade");
+        let ident = id.identity.expect("campos da identidade");
+        assert_eq!(ident.first_name, "João");
+        assert_eq!(ident.address, "Rua A");
+        let note = item_full(&v, "n").expect("nota");
+        assert_eq!(note.kind, ItemKind::Note);
+        assert_eq!(note.notes, "texto");
+        assert_eq!(note.custom_fields.len(), 1);
+        assert_eq!(note.custom_fields[0].value, "v");
+        // kind desconhecido abre como nota (não perde nada: nota não tem campos próprios)
+        let mut v2 = v.clone();
+        v2["items"][0]["kind"] = json!("passkey-futuro");
+        assert_eq!(item_full(&v2, "c").expect("abre").kind, ItemKind::Note);
     }
 }

@@ -1142,17 +1142,20 @@ impl KeysApp {
 
     /// Abre o form carregando o item (inclui `uris[0]`, as notas e a pasta).
     fn open_edit_form(&mut self, id: &str) {
-        let Some(full) = self.raw.as_ref().and_then(|r| vault::login_full(r, id)) else {
+        let Some(full) = self.raw.as_ref().and_then(|r| vault::item_full(r, id)) else {
             return;
         };
+        // Item sem login (nota/cartão/identidade): os campos do login abrem vazios.
+        let vazio = vault::LoginFull { username: String::new(), password: String::new(), totp: String::new(), url: String::new() };
+        let login = full.login.as_ref().unwrap_or(&vazio);
         self.form_edit_id = Some(id.to_string());
         self.add_folder_id = self.items.iter().find(|i| i.id == id).and_then(|i| i.folder_id.clone());
         self.add_name = self.items.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_default();
-        self.add_user = full.username;
-        self.add_pass = full.password;
-        self.add_totp = full.totp;
-        self.add_url = full.url;
-        self.add_notes = full.notes;
+        self.add_user = login.username.clone();
+        self.add_pass = login.password.clone();
+        self.add_totp = login.totp.clone();
+        self.add_url = login.url.clone();
+        self.add_notes = full.notes.clone();
         self.reveal_form = false;
         self.form_open = true;
     }
