@@ -170,3 +170,14 @@
 	Hidden	Oculto
 	Add field	Adicionar campo
 	Remove field	Remover campo
+	Read QR from image…	Ler QR de imagem…
+	Paste image	Colar imagem
+	no QR code found in the image	nenhum QR encontrado na imagem
+	could not read the image file	não deu para ler o arquivo de imagem
+	the clipboard has no image	a área de transferência não tem imagem
+	this is not a TOTP link (HOTP is not supported)	isto não é um link TOTP (HOTP não é suportado)
+	the link has no secret key	o link não traz a chave secreta
+	invalid key: it must be base32 (letters A-Z and digits 2-7)	chave inválida: precisa ser base32 (letras A-Z e números 2-7)
+	key saved, but the QR asks for {params}. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.	chave salva, mas o QR pede {params}. O Local Keys gera códigos de 6 dígitos a cada 30 s (SHA-1), então os códigos podem não bater.
+	{n} digits	{n} dígitos
+	current code: {code}	código atual: {code}
