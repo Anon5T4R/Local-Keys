@@ -775,6 +775,91 @@ fn the_filter_popup_combines_filters_shows_the_count_and_clears() {
     harness.get_by_label_contains("comprar pão");
 }
 
+/// Os chips dos filtros ligados: o × desliga SÓ aquele filtro (sem abrir o popup), a contagem do botão
+/// cai e a lista atualiza; o outro filtro continua ligado.
+#[test]
+fn the_filter_chips_remove_one_filter_without_opening_the_popup() {
+    let mut harness = harness(unlocked("chips", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards").click();
+    harness.run_steps(2);
+    harness.get_by_label("Favorites").click();
+    harness.run_steps(2);
+    // Fecha o popup: o botão alterna. A lista fica vazia (não há cartão favorito).
+    harness.get_by_label("Filter (2)").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards ×");
+    harness.get_by_label("Favorites ×");
+    harness.get_by_label_contains("No items match these filters");
+
+    // O × do tipo desliga só o tipo: favoritos fica e o item favorito volta.
+    harness.get_by_label("Cards ×").click();
+    harness.run_steps(2);
+    let filtros = harness.state().filters;
+    assert_eq!(filtros.kind, localkeys_core::filters::KindFilter::All);
+    assert!(filtros.only.favorites, "o outro filtro continua ligado");
+    assert_eq!(filtros.active_count(), 1);
+    harness.get_by_label("Filter (1)");
+    harness.get_by_label_contains("192.168.1.34");
+    assert!(harness.query_by_label("Cards ×").is_none(), "o chip do tipo sumiu");
+    harness.get_by_label("Favorites ×");
+}
+
+/// O popup Filtrar acha "Com anexos" e "Favoritos" de verdade na lista.
+#[test]
+fn the_filter_popup_finds_attachments_and_favorites() {
+    let mut app = unlocked("filters-only", Prefs::new("en", ThemeMode::Dark));
+    let id = item_id(&app, "1lib.sk");
+    let raw = app.raw.as_mut().expect("cofre");
+    assert!(crate::vault::add_attachment(raw, &id, "nota.txt", "text/plain", "QQ=="), "anexa");
+    app.items = crate::vault::items_view(app.raw.as_ref().expect("cofre"));
+
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("With attachments").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("1lib.sk");
+    assert_eq!(harness.query_all_by_label_contains("192.168.1.34").count(), 0, "sem anexo, escondido");
+
+    // Troca para Favoritos: o item com anexo (não favorito) some e sobra o favorito.
+    harness.get_by_label("With attachments").click();
+    harness.run_steps(2);
+    harness.get_by_label("Favorites").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("192.168.1.34");
+    assert_eq!(harness.query_all_by_label_contains("1lib.sk").count(), 0, "não favorito, escondido");
+}
+
+/// Filtros escondendo tudo num cofre com itens: mensagem própria (+ Limpar), e o rodapé "Items:" conta
+/// o cofre inteiro, não a lista filtrada.
+#[test]
+fn filtered_out_shows_the_message_and_the_footer_counts_the_whole_vault() {
+    let mut harness = harness(unlocked_kinds("empty-filter", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    harness.get_by_label("Items: 4");
+
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards").click();
+    harness.run_steps(2);
+    harness.get_by_label("With TOTP").click();
+    harness.run_steps(2);
+    harness.get_by_label("Filter (2)").click(); // fecha o popup: sobra o Limpar do estado vazio
+    harness.run_steps(2);
+    harness.get_by_label_contains("No items match these filters");
+    harness.get_by_label("Items: 4");
+
+    harness.get_by_label("Clear").click();
+    harness.run_steps(2);
+    assert!(harness.state().filters.is_clear());
+    assert_eq!(harness.query_all_by_label_contains("No items match these filters").count(), 0);
+    harness.get_by_label_contains("Nubank");
+}
+
 /// As capturas do popup Filtrar (com tipo e "mostrar só" ligados) e do cartão com a bandeira detectada
 /// digitando o número, claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
 #[test]
@@ -790,6 +875,29 @@ fn filter_shots() {
             harness.get_by_label("With TOTP").click();
             harness.run_steps(2);
             shot(&mut harness, &format!("filter-popup-{name}-{label}"));
+        }
+    }
+}
+
+/// As capturas dos chips dos filtros (dois ligados, popup fechado para os chips e a lista aparecerem),
+/// claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
+#[test]
+fn filter_chips_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let mut harness = harness_sized(unlocked_kinds("shots-chips", Prefs::new("en", appearance)), width);
+            harness.run_steps(2);
+            harness.get_by_label("Filter").click();
+            harness.run_steps(2);
+            harness.get_by_label("Logins").click();
+            harness.run_steps(2);
+            harness.get_by_label("With TOTP").click();
+            harness.run_steps(2);
+            harness.get_by_label("Filter (2)").click(); // fecha o popup
+            harness.run_steps(2);
+            harness.get_by_label("Logins ×");
+            harness.get_by_label("With TOTP ×");
+            shot(&mut harness, &format!("filter-chips-{name}-{label}"));
         }
     }
 }
@@ -1383,6 +1491,18 @@ fn the_sync_summary_pluralizes_counts() {
     harness.run_steps(2);
     harness.get_by_label_contains("2 items added from the other copy");
     harness.get_by_label_contains("1 item updated (the other copy was newer)");
+    assert_eq!(harness.query_all_by_label_contains("1 items").count(), 0, "nada de \"1 items\"");
+}
+
+/// O relatório da importação usa o plural: "1 item imported" e "2 cards/identities skipped".
+#[test]
+fn the_import_report_pluralizes_counts() {
+    let mut app = unlocked("import-report", Prefs::new("en", ThemeMode::Dark));
+    app.import_report = Some((1, 2));
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label_contains("1 item imported");
+    harness.get_by_label_contains("2 cards/identities skipped — Local Keys keeps logins and notes");
     assert_eq!(harness.query_all_by_label_contains("1 items").count(), 0, "nada de \"1 items\"");
 }
 
