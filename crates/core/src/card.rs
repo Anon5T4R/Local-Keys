@@ -143,11 +143,7 @@ pub fn brand_of(number: &str) -> Option<Brand> {
 
 /// Tamanhos dos grupos na TELA: Amex 4-6-5; o resto de 4 em 4.
 fn groups(number: &str) -> &'static [usize] {
-    if brand_of(number) == Some(Brand::Amex) {
-        &[4, 6, 5]
-    } else {
-        &[4, 4, 4, 4, 4]
-    }
+    if brand_of(number) == Some(Brand::Amex) { &[4, 6, 5] } else { &[4, 4, 4, 4, 4] }
 }
 
 /// O número em blocos de 4 (Amex 4-6-5), só para EXIBIÇÃO — o cofre continua guardando só os dígitos
@@ -195,7 +191,7 @@ pub fn luhn_ok(number: &str) -> bool {
             n
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Avisar do Luhn? Só com o número completo (13+ dígitos) que não fecha — nunca bloqueia.
