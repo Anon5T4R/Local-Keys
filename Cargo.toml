@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["xtask", "crates/core"]
 default-members = ["."]
-exclude = ["libs"]
+exclude = ["libs", "crates/ffi"]
 
 [workspace.package]
 # Nada da suíte vai ao crates.io: dependência `path` sem versão numa crate publicável reprova o

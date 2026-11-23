@@ -1,0 +1,29 @@
+[package]
+name = "localkeys-ffi"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Ponte UniFFI do localkeys-core para o Keys Android (Kotlin): formato .tkeys, cripto e sessão"
+
+# Workspace próprio, de propósito: o UniFFI é MPL-2.0 (copyleft de arquivo) e só entra no .so do Android.
+# Fora do workspace do desktop, o Cargo.lock e o cargo-deny do desktop não mudam. Build: android/scripts/build-native.sh.
+[workspace]
+
+[lib]
+name = "localkeys_ffi"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+localkeys-core = { path = "../core" }
+uniffi = { version = "0.32", features = ["cli"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = true
+panic = "abort"

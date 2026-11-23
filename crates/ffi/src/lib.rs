@@ -1,0 +1,201 @@
+//! Ponte UniFFI do `localkeys-core` para o Keys Android: o formato `.tkeys`, a criptografia (Argon2id +
+//! XChaCha20-Poly1305) e a sessão de gravação são o MESMO código do desktop. Aqui só se traduz tipos: nenhuma
+//! regra nova e nenhuma primitiva própria. Os bindings Kotlin saem de `uniffi-bindgen` (ver `uniffi.toml`).
+//!
+//! `panic = "abort"` no release: um panic dentro do `.so` derrubaria o processo de qualquer jeito, e abortar
+//! evita unwinding através do FFI. Os erros previstos viram [`FfiError`].
+
+use std::sync::Arc;
+
+use localkeys_core::crypto::{self, CryptoError, KdfParams, SessionKey};
+
+uniffi::setup_scaffolding!();
+
+/// Os erros do `.tkeys`, um a um com o `CryptoError` do núcleo (no Kotlin viram `FfiException`, que o app
+/// traduz para o `TkeysError` que as telas já conhecem).
+#[derive(Debug, PartialEq, Eq, uniffi::Error)]
+pub enum FfiError {
+    /// Não é um arquivo `.tkeys` (magic errado ou truncado).
+    BadFormat,
+    /// Versão de formato que este build não conhece.
+    UnsupportedVersion { version: u8 },
+    /// Falha ao derivar a chave (parâmetros de Argon2 inválidos).
+    Kdf,
+    /// Senha errada OU arquivo adulterado (propositalmente indistinguíveis).
+    Decrypt,
+    /// Estrutura inválida: a chave bruta não tem 32 bytes.
+    Corrupted,
+}
+
+impl std::fmt::Display for FfiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FfiError::BadFormat => write!(f, "bad .tkeys format"),
+            FfiError::UnsupportedVersion { version } => write!(f, "unsupported .tkeys version {version}"),
+            FfiError::Kdf => write!(f, "key derivation failed"),
+            FfiError::Decrypt => write!(f, "wrong password or corrupted file"),
+            FfiError::Corrupted => write!(f, "corrupted file"),
+        }
+    }
+}
+
+impl std::error::Error for FfiError {}
+
+impl From<CryptoError> for FfiError {
+    fn from(e: CryptoError) -> Self {
+        match e {
+            CryptoError::BadFormat => FfiError::BadFormat,
+            CryptoError::UnsupportedVersion(version) => FfiError::UnsupportedVersion { version },
+            CryptoError::Kdf => FfiError::Kdf,
+            CryptoError::Decrypt => FfiError::Decrypt,
+        }
+    }
+}
+
+/// Parâmetros do Argon2id (ficam em claro no header do arquivo). `m_cost` em KiB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct KdfParamsFfi {
+    pub m_cost: u32,
+    pub t_cost: u32,
+    pub p_cost: u32,
+}
+
+impl From<KdfParams> for KdfParamsFfi {
+    fn from(p: KdfParams) -> Self {
+        KdfParamsFfi { m_cost: p.m_cost, t_cost: p.t_cost, p_cost: p.p_cost }
+    }
+}
+
+impl From<KdfParamsFfi> for KdfParams {
+    fn from(p: KdfParamsFfi) -> Self {
+        KdfParams { m_cost: p.m_cost, t_cost: p.t_cost, p_cost: p.p_cost }
+    }
+}
+
+/// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
+/// senha (nonce novo a cada `seal`).
+#[derive(uniffi::Object)]
+pub struct Session {
+    inner: SessionKey,
+}
+
+#[uniffi::export]
+impl Session {
+    /// Recifra o `plaintext` com a chave da sessão e um nonce novo: devolve o arquivo `.tkeys` inteiro.
+    pub fn seal(&self, plaintext: Vec<u8>) -> Result<Vec<u8>, FfiError> {
+        Ok(self.inner.seal(&plaintext)?)
+    }
+
+    /// Cópia da chave bruta (32 bytes), só para o cofre do SO no desbloqueio por biometria. Trate como segredo.
+    pub fn key_bytes(&self) -> Vec<u8> {
+        self.inner.key_bytes().to_vec()
+    }
+}
+
+/// Um cofre aberto: o JSON decifrado + a sessão para regravar.
+#[derive(uniffi::Record)]
+pub struct Opened {
+    pub plaintext: Vec<u8>,
+    pub session: Arc<Session>,
+}
+
+/// Um cofre recém-criado: o arquivo `.tkeys` + a sessão (já fica "destrancado").
+#[derive(uniffi::Record)]
+pub struct Created {
+    pub file: Vec<u8>,
+    pub session: Arc<Session>,
+}
+
+/// Header (60 bytes) + a tag do AEAD (16): abaixo disso o arquivo está truncado, não é senha errada. O Kotlin sempre
+/// distinguiu os dois (`Corrupted` x `Decrypt`) e as telas dependem disso; o núcleo só diz `Decrypt`.
+const MIN_FILE_LEN: usize = 60 + 16;
+
+/// Um header válido seguido de menos que uma tag é arquivo cortado: `Corrupted`. O resto passa como veio.
+fn truncated_is_corrupted(file: &[u8], e: CryptoError) -> FfiError {
+    match e {
+        CryptoError::Decrypt if file.len() < MIN_FILE_LEN => FfiError::Corrupted,
+        other => other.into(),
+    }
+}
+
+fn opened(plaintext: &[u8], inner: SessionKey) -> Opened {
+    Opened { plaintext: plaintext.to_vec(), session: Arc::new(Session { inner }) }
+}
+
+/// Os parâmetros padrão do Argon2id (64 MiB, 3 iterações, 1 lane): os mesmos do desktop.
+#[uniffi::export]
+pub fn default_kdf_params() -> KdfParamsFfi {
+    KdfParams::default().into()
+}
+
+/// Cria um cofre novo com a `password` e o `plaintext` inicial.
+#[uniffi::export]
+pub fn create_vault(password: String, plaintext: Vec<u8>, params: KdfParamsFfi) -> Result<Created, FfiError> {
+    let (file, inner) = crypto::create_vault_with(&password, &plaintext, params.into())?;
+    Ok(Created { file, session: Arc::new(Session { inner }) })
+}
+
+/// Abre um `.tkeys` com a senha: valida o header, deriva a chave (Argon2id) e decifra.
+#[uniffi::export]
+pub fn open_vault(password: String, file: Vec<u8>) -> Result<Opened, FfiError> {
+    let (plaintext, inner) = crypto::open_vault(&password, &file).map_err(|e| truncated_is_corrupted(&file, e))?;
+    Ok(opened(&plaintext, inner))
+}
+
+/// Abre um `.tkeys` com a **chave bruta** (desbloqueio por biometria; não roda o Argon2).
+#[uniffi::export]
+pub fn open_vault_with_key(key: Vec<u8>, file: Vec<u8>) -> Result<Opened, FfiError> {
+    let raw: [u8; 32] = key.as_slice().try_into().map_err(|_| FfiError::Corrupted)?;
+    let (plaintext, inner) = crypto::open_with_key(&raw, &file).map_err(|e| truncated_is_corrupted(&file, e))?;
+    Ok(opened(&plaintext, inner))
+}
+
+/// Lê os parâmetros do Argon2id de um `.tkeys` sem decifrar.
+#[uniffi::export]
+pub fn read_kdf_params(file: Vec<u8>) -> Result<KdfParamsFfi, FfiError> {
+    Ok(crypto::read_kdf_params(&file)?.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LIGHT: KdfParamsFfi = KdfParamsFfi { m_cost: 512, t_cost: 1, p_cost: 1 };
+
+    #[test]
+    fn criar_abrir_e_regravar_pela_ponte() {
+        let created = create_vault("senha".into(), b"{\"items\":[]}".to_vec(), LIGHT).unwrap();
+        assert_eq!(read_kdf_params(created.file.clone()).unwrap(), LIGHT);
+        let opened = open_vault("senha".into(), created.file.clone()).unwrap();
+        assert_eq!(opened.plaintext, b"{\"items\":[]}");
+
+        // Regravar com a sessão: nonce novo, mas abre com a mesma senha e com a chave bruta.
+        let again = opened.session.seal(b"{\"items\":[1]}".to_vec()).unwrap();
+        assert_ne!(again, created.file);
+        let key = opened.session.key_bytes();
+        assert_eq!(key.len(), 32);
+        assert_eq!(open_vault_with_key(key, again.clone()).unwrap().plaintext, b"{\"items\":[1]}");
+        assert_eq!(open_vault("senha".into(), again).unwrap().plaintext, b"{\"items\":[1]}");
+    }
+
+    #[test]
+    fn erros_chegam_tipados() {
+        let created = create_vault("senha".into(), b"{}".to_vec(), LIGHT).unwrap();
+        assert_eq!(open_vault("errada".into(), created.file.clone()).err(), Some(FfiError::Decrypt));
+        assert_eq!(open_vault("senha".into(), vec![0; 10]).err(), Some(FfiError::BadFormat));
+        let mut v2 = created.file.clone();
+        v2[6] = 2;
+        assert_eq!(open_vault("senha".into(), v2).err(), Some(FfiError::UnsupportedVersion { version: 2 }));
+        assert_eq!(open_vault_with_key(vec![0; 5], created.file.clone()).err(), Some(FfiError::Corrupted));
+        assert_eq!(open_vault_with_key(vec![0; 32], created.file.clone()).err(), Some(FfiError::Decrypt));
+        // Header válido e menos que uma tag depois: arquivo cortado, não senha errada.
+        let cut = created.file[..60 + 8].to_vec();
+        assert_eq!(open_vault("senha".into(), cut.clone()).err(), Some(FfiError::Corrupted));
+        assert_eq!(open_vault_with_key(vec![0; 32], cut).err(), Some(FfiError::Corrupted));
+    }
+
+    #[test]
+    fn os_parametros_padrao_sao_os_do_desktop() {
+        assert_eq!(default_kdf_params(), KdfParamsFfi { m_cost: 65_536, t_cost: 3, p_cost: 1 });
+    }
+}

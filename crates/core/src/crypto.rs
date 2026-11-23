@@ -203,7 +203,7 @@ pub fn create_vault(password: &str, plaintext: &[u8]) -> Result<(Vec<u8>, Sessio
     create_vault_with(password, plaintext, KdfParams::default())
 }
 
-fn create_vault_with(password: &str, plaintext: &[u8], params: KdfParams) -> Result<(Vec<u8>, SessionKey), CryptoError> {
+pub fn create_vault_with(password: &str, plaintext: &[u8], params: KdfParams) -> Result<(Vec<u8>, SessionKey), CryptoError> {
     let mut salt = [0u8; SALT_LEN];
     rand::rngs::OsRng.fill_bytes(&mut salt);
     let key = derive_key(password.as_bytes(), &salt, params)?;
