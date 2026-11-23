@@ -795,8 +795,10 @@ fn pasting_an_otpauth_link_fills_name_and_user() {
     app.open_add_form(NewKind::Login);
     let mut harness = harness(app);
     harness.run_steps(2);
-    // O campo TOTP do form (o rótulo "TOTP" também existe na lista de fundo — busca por papel+rótulo).
-    let campo = harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+    // O campo TOTP do form (o rótulo "TOTP" também existe na lista de fundo — busca por papel+rótulo;
+    // o campo nasce MASCARADO, então é PasswordInput).
+    let campo =
+        harness.get_all_by_role(Role::PasswordInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
     campo.click();
     harness.run_steps(1);
     harness.input_mut().events.push(egui::Event::Paste("otpauth://totp/GitHub:joao?secret=jbswy3dpehpk3pxp".into()));
@@ -809,11 +811,15 @@ fn pasting_an_otpauth_link_fills_name_and_user() {
     // Nome e usuário já preenchidos: o link não sobrescreve.
     harness.state_mut().add_name = "Meu GitHub".into();
     harness.state_mut().add_user = "joaozinho".into();
-    let campo = harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
-    campo.click();
+    let campo =
+        harness.get_all_by_role(Role::PasswordInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+    // O clique posiciona o cursor onde clica: na borda DIREITA, como quem cola no fim do campo (no
+    // meio, o paste entraria no meio da chave — comportamento normal de editor de texto).
+    let borda = egui::pos2(campo.rect().right() - 6.0, campo.rect().center().y);
+    click_at(&mut harness, borda);
     harness.run_steps(1);
     harness.input_mut().events.push(egui::Event::Paste("otpauth://totp/Binance:joao%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=Binance".into()));
-    harness.run_steps(2);
+    harness.run_steps(3);
     let app = harness.state();
     assert_eq!(app.add_name, "Meu GitHub", "nome preenchido fica");
     assert_eq!(app.add_user, "joaozinho", "usuário preenchido fica");
@@ -838,7 +844,7 @@ fn an_invalid_totp_link_shows_a_clear_error() {
     harness.run_steps(2);
     for (link, erro) in [("otpauth://hotp/X?secret=JBSWY3DP&counter=1", "not a TOTP link"), ("otpauth://totp/X?issuer=X", "no secret key")] {
         let campo =
-            harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+            harness.get_all_by_role(Role::PasswordInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
         campo.click();
         harness.run_steps(1);
         harness.input_mut().events.push(egui::Event::Paste(link.into()));
@@ -880,7 +886,8 @@ fn a_qr_image_fills_the_key_and_warns_on_non_default_params() {
     harness.run_steps(2);
     let texto = node_text(&harness.get_by_label_contains("codes may not match"));
     assert!(texto.contains("may not match"), "aviso visível: {texto}");
-    let campo = harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
+    let campo =
+        harness.get_all_by_role(Role::PasswordInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("campo TOTP");
     campo.click();
     harness.run_steps(1);
     harness.input_mut().events.push(egui::Event::Text("X".into()));
@@ -942,6 +949,40 @@ fn totp_shots() {
             shot(&mut harness, &format!("totp-warn-{name}-{label}"));
         }
     }
+}
+
+/// A chave TOTP é segredo de longo prazo: o campo nasce mascarado (PasswordInput) e o 👁 revela — o
+/// 👁 certo é o primeiro ABAIXO do campo (o da senha fica acima). Fechar o form volta a ocultar.
+#[test]
+fn the_totp_field_masks_the_key_until_revealed() {
+    let mut app = unlocked("totp-mask", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Login);
+    app.add_totp = "JBSWY3DPEHPK3PXP".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    // mascarado: PasswordInput pelo rótulo "TOTP"
+    let campo = harness
+        .get_all_by_role(Role::PasswordInput)
+        .find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP"))
+        .expect("campo TOTP mascarado");
+    let campo_rect = campo.rect();
+    // o 👁 do TOTP: o botão 👁 na mesma faixa vertical do campo (à direita dele — o da senha fica
+    // numa linha acima).
+    let olho = harness
+        .get_all_by_role(Role::Button)
+        .filter(|node| node_text(node) == "👁")
+        .map(|node| node.rect())
+        .filter(|rect| rect.min.y <= campo_rect.max.y && rect.max.y >= campo_rect.min.y)
+        .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
+        .expect("o 👁 do TOTP ao lado do campo");
+    click_at(&mut harness, olho.center());
+    harness.run_steps(2);
+    harness.get_all_by_role(Role::TextInput).find(|node| node.accesskit_node().label().is_some_and(|l| l == "TOTP")).expect("revelado (TextInput)");
+    // fechar o form volta a ocultar (o 👁 reseta como o da senha).
+    press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    assert!(!harness.state().form_open);
+    assert!(!harness.state().reveal_totp, "fecha ocultando de novo");
 }
 
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.

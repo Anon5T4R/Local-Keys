@@ -181,3 +181,4 @@
 	key saved, but the QR asks for {params}. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.	chave salva, mas o QR pede {params}. O Local Keys gera códigos de 6 dígitos a cada 30 s (SHA-1), então os códigos podem não bater.
 	{n} digits	{n} dígitos
 	current code: {code}	código atual: {code}
+	the image is too large (over 4096×4096)	a imagem é grande demais (mais de 4096×4096)

@@ -288,6 +288,13 @@ fn totp_error_text(reason: otpauth::Reason) -> Option<&'static str> {
     }
 }
 
+/// O pedaço de `text` a partir do `otpauth://` (sem diferenciar maiúsculas), se houver — o link colado
+/// pode entrar no fim de uma chave que já estava no campo.
+fn otpauth_tail(text: &str) -> Option<&str> {
+    let at = text.to_lowercase().find("otpauth://")?;
+    Some(&text[at..])
+}
+
 /// Um campo personalizado no formulário: `id` vazio = campo novo (o `set_custom_fields` gera o id ao
 /// gravar). `revealed` é estado só da UI (o 👁 do campo Oculto).
 struct FormCustomField {
@@ -782,6 +789,12 @@ struct KeysApp {
     /// Aviso de parâmetros fora do padrão (digits/period/algorithm ≠ 6/30 s/SHA-1) do último link/QR
     /// TOTP aplicado no form. Some quando o campo muda — a chave é gravada do mesmo jeito.
     totp_warn: Option<String>,
+    /// 👁 da chave TOTP do form — a chave base32 é segredo de longo prazo, o campo nasce mascarado.
+    reveal_totp: bool,
+    /// Link `otpauth://` colado no campo, esperando o próximo quadro para virar chave: aplicar dentro
+    /// do `changed` trocaria o buffer sob o TextEdit e quebraria o cursor (o paste seguinte entraria
+    /// no meio da chave). Fora do widget, o cursor só clampa — comportamento normal.
+    totp_pending: Option<String>,
     /// 👁 da senha do arquivo de import.
     reveal_import: bool,
     /// Exclusão esperando confirmação (um clique sem querer não apaga).
@@ -895,6 +908,8 @@ impl KeysApp {
             form_attachments: Vec::new(),
             reveal_form: false,
             totp_warn: None,
+            reveal_totp: false,
+            totp_pending: None,
             reveal_import: false,
             delete_ask: None,
             trash_open: false,
@@ -985,6 +1000,8 @@ impl KeysApp {
         self.form_attachments.clear();
         self.reveal_form = false;
         self.totp_warn = None;
+        self.reveal_totp = false;
+        self.totp_pending = None;
         self.delete_ask = None;
         self.trash_open = false;
         self.purge_ask = None;
@@ -1357,6 +1374,8 @@ impl KeysApp {
         self.form_custom.clear();
         self.reveal_form = false;
         self.totp_warn = None;
+        self.reveal_totp = false;
+        self.totp_pending = None;
     }
 
     // ── TOTP por link/QR (pedido 022, fase B) ─────────────────────────
@@ -1403,6 +1422,7 @@ impl KeysApp {
             Ok(text) => self.apply_totp_raw(&text),
             Err(qr::QrError::NotAnImage) => self.notice(tr("could not read the image file").to_string()),
             Err(qr::QrError::NoQr) => self.notice(tr("no QR code found in the image").to_string()),
+            Err(qr::QrError::TooBig) => self.notice(tr("the image is too large (over 4096×4096)").to_string()),
         }
     }
 
@@ -1442,6 +1462,7 @@ impl KeysApp {
             Ok(text) => self.apply_totp_raw(&text),
             Err(qr::QrError::NoQr) => self.notice(tr("no QR code found in the image").to_string()),
             Err(qr::QrError::NotAnImage) => self.notice(tr("could not read the image file").to_string()),
+            Err(qr::QrError::TooBig) => self.notice(tr("the image is too large (over 4096×4096)").to_string()),
         }
     }
 
@@ -1952,6 +1973,13 @@ impl KeysApp {
         if !self.form_open {
             return;
         }
+        // Colagem de otpauth:// aplicada FORA do TextEdit (trocar o buffer dentro do `changed` do
+        // campo quebra o cursor — o paste seguinte entraria no meio da chave).
+        if let Some(raw) = self.totp_pending.take()
+            && let otpauth::ParseResult::Ok(p) = otpauth::parse(&raw)
+        {
+            self.apply_parsed_totp(p);
+        }
         let kind = self.form_kind;
         let title = if self.form_edit_id.is_some() { tr("Edit") } else { tr("Add") };
         let mut cancel = false;
@@ -2000,18 +2028,31 @@ impl KeysApp {
 
                             let label = ui.label(tr("TOTP"));
                             ui.vertical(|ui| {
-                                let edit = ui.add(line(&mut self.add_totp).hint_text("base32 (opcional)").desired_width(field)).labelled_by(label.id);
-                                // Colar um otpauth:// aplica na hora: grava só a chave e preenche nome
-                                // e usuário VAZIOS (nunca sobrescreve) — o applyTotp do Android.
-                                if edit.changed() {
-                                    self.totp_warn = None;
-                                    let raw = self.add_totp.trim().to_string();
-                                    if raw.to_lowercase().starts_with("otpauth://")
-                                        && let otpauth::ParseResult::Ok(p) = otpauth::parse(&raw)
-                                    {
-                                        self.apply_parsed_totp(p);
+                                // A chave base32 é segredo de longo prazo: o campo nasce mascarado.
+                                ui.horizontal(|ui| {
+                                    let edit = ui
+                                        .add(
+                                            line(&mut self.add_totp)
+                                                .hint_text("base32 (opcional)")
+                                                .password(!self.reveal_totp)
+                                                .desired_width(field - 28.0),
+                                        )
+                                        .labelled_by(label.id);
+                                    if ghost(ui, if self.reveal_totp { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
+                                        self.reveal_totp = !self.reveal_totp;
                                     }
-                                }
+                                    // Colar um otpauth:// aplica no próximo quadro (fora do widget):
+                                    // grava só a chave e preenche nome e usuário VAZIOS (nunca
+                                    // sobrescreve) — o applyTotp do Android. O link vale de qualquer
+                                    // posição do campo: colar sobre uma chave antiga troca a chave.
+                                    if edit.changed() {
+                                        self.totp_warn = None;
+                                        self.totp_pending = None;
+                                        if let Some(link) = otpauth_tail(&self.add_totp) {
+                                            self.totp_pending = Some(link.to_string());
+                                        }
+                                    }
+                                });
                                 // Abaixo do campo: o motivo do erro, ou o código atual com contagem.
                                 let texto = self.add_totp.trim().to_string();
                                 if !texto.is_empty() {

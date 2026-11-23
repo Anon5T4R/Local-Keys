@@ -26,11 +26,12 @@ pub struct Parsed {
     pub unsupported: Option<Unsupported>,
 }
 
-/// O que o link pede fora do padrão (6 dígitos, 30 s, SHA-1).
+/// O que o link pede fora do padrão (6 dígitos, 30 s, SHA-1). `digits`/`period` com sinal: o
+/// `toIntOrNull` do Android aceita negativo, e qualquer valor ≠ 6/30 é sinalizado do mesmo jeito.
 #[derive(Debug, PartialEq)]
 pub struct Unsupported {
-    pub digits: Option<u32>,
-    pub period: Option<u64>,
+    pub digits: Option<i64>,
+    pub period: Option<i64>,
     pub algorithm: Option<String>,
 }
 
@@ -82,7 +83,8 @@ pub fn parse(raw: &str) -> ParseResult {
         let (key, value) = pair.split_once('=').map_or((pair, ""), |(k, v)| (k, v));
         params.push((decode(key).to_lowercase(), decode(value)));
     }
-    let param = |name: &str| params.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+    // Param DUPLICADO fica com o ÚLTIMO (o `associate` do Kotlin sobrescreve: `?secret=A&secret=B` → B).
+    let param = |name: &str| params.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
 
     let Some(secret_raw) = param("secret").filter(|s| !s.trim().is_empty()) else {
         return ParseResult::Invalid(Reason::NoSecret);
@@ -100,9 +102,10 @@ pub fn parse(raw: &str) -> ParseResult {
     let issuer_param = param("issuer").map(str::trim).filter(|s| !s.is_empty());
     let issuer = issuer_param.map(str::to_string).or(label_issuer);
 
-    // Fora do padrão? `parse` que falha não sinaliza (o `toIntOrNull` do Android vira null).
-    let digits = param("digits").and_then(|d| d.parse::<u32>().ok()).filter(|d| *d != DIGITS);
-    let period = param("period").and_then(|p| p.parse::<u64>().ok()).filter(|p| *p != PERIOD);
+    // Fora do padrão? `parse` que falha não sinaliza (o `toIntOrNull` do Android vira null) — mas
+    // NEGATIVO parseia e é sinalizado (o Android aceita sinal no Int).
+    let digits = param("digits").and_then(|d| d.parse::<i64>().ok()).filter(|d| *d != i64::from(DIGITS));
+    let period = param("period").and_then(|p| p.parse::<i64>().ok()).filter(|p| *p != PERIOD as i64);
     let algorithm = param("algorithm").map(|a| a.trim().to_uppercase()).filter(|a| !a.is_empty() && a != "SHA1");
     let unsupported =
         (digits.is_some() || period.is_some() || algorithm.is_some()).then(|| Unsupported { digits, period, algorithm: algorithm.clone() });
@@ -249,5 +252,27 @@ mod tests {
         // "A" está no alfabeto mas decodifica em nada — o Android exige byte não vazio.
         assert!(bare_key("A").is_none());
         assert!(bare_key("======").is_none());
+    }
+
+    #[test]
+    fn parametro_duplicado_fica_com_o_ultimo() {
+        // O associate do Kotlin sobrescreve: `?secret=A&secret=B` fica com B.
+        let p = ok("otpauth://totp/X:y?secret=JBSWY3DPEHPK3PXP&secret=MFRGGZDFMZTWQ2LK");
+        assert_eq!(p.secret, "MFRGGZDFMZTWQ2LK", "o último secret vence");
+        // issuer duplicado: o mesmo (e o da direita, não vazio, vale).
+        let p = ok("otpauth://totp/X:y?secret=JBSWY3DPEHPK3PXP&issuer=Um&issuer=Dois");
+        assert_eq!(p.issuer.as_deref(), Some("Dois"));
+    }
+
+    #[test]
+    fn digits_negativo_e_sinalizado() {
+        // O toIntOrNull do Android aceita sinal: -1 parseia e é ≠ 6, então SINALIZA (nosso u32 antigo
+        // ignorava em silêncio).
+        let p = ok("otpauth://totp/X:y?secret=JBSWY3DPEHPK3PXP&digits=-1");
+        let u = p.unsupported.expect("digits=-1 é não-padrão sinalizado");
+        assert_eq!(u.digits, Some(-1));
+        // period negativo, idem.
+        let p = ok("otpauth://totp/X:y?secret=JBSWY3DPEHPK3PXP&period=-5");
+        assert_eq!(p.unsupported.expect("period=-5 sinaliza").period, Some(-5));
     }
 }
