@@ -12,11 +12,18 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 /// Wordlist EFF "large" (7776 palavras, uma por linha no formato `12345\tword`).
-/// Domínio público (EFF). log2(7776) ≈ 12,9 bits de entropia por palavra.
+/// Domínio público (EFF). log2(7772) ≈ 12,9 bits por palavra (o pool sem hífen, ver `wordlist`).
 const EFF_LARGE_EN: &str = include_str!("wordlists/eff_large_en.txt");
 
+/// Total de palavras do arquivo da EFF.
+#[cfg(test)]
+const EFF_LARGE_TOTAL: usize = 7776;
+
+/// O pool do sorteio: as palavras da EFF **sem hífen**. A lista tem 4 com hífen (drop-down, felt-tip, t-shirt,
+/// yo-yo); com o separador padrão "-" a frase ficaria ambígua (a contagem de palavras mentiria). Tirá-las custa
+/// 0,0007 bit por palavra — a entropia continua ≈ log2(7772) por palavra. O Android faz o mesmo.
 fn wordlist() -> Vec<&'static str> {
-    EFF_LARGE_EN.lines().filter_map(|l| l.split_whitespace().last()).collect()
+    EFF_LARGE_EN.lines().filter_map(|l| l.split_whitespace().last()).filter(|w| !w.contains('-')).collect()
 }
 
 const LOWER: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
@@ -157,8 +164,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wordlist_tem_7776_palavras() {
-        assert_eq!(wordlist().len(), 7776, "EFF large deve ter 7776 palavras");
+    fn wordlist_tem_7776_palavras_e_o_pool_tira_as_4_com_hifen() {
+        let total = EFF_LARGE_EN.lines().filter_map(|l| l.split_whitespace().last()).count();
+        assert_eq!(total, EFF_LARGE_TOTAL, "EFF large deve ter 7776 palavras");
+        let pool = wordlist();
+        assert_eq!(pool.len(), 7772, "as 4 com hífen saem do sorteio");
+        assert!(pool.iter().all(|w| !w.contains('-')));
+        assert_eq!(pool.first().copied(), Some("abacus"));
+    }
+
+    #[test]
+    fn passphrase_com_hifen_tem_sempre_o_numero_de_palavras() {
+        // O separador padrão é "-": a contagem por split('-') precisa ser exata, sempre.
+        let opts = PassphraseOptions { words: 6, separator: "-".into(), capitalize: false, include_number: true };
+        for _ in 0..2000 {
+            let p = generate_passphrase(&opts).unwrap();
+            assert_eq!(p.split('-').count(), 6, "{p}");
+        }
     }
 
     #[test]
@@ -188,8 +210,6 @@ mod tests {
 
     #[test]
     fn passphrase_tem_o_numero_de_palavras() {
-        // Separador ".": a wordlist EFF tem 4 palavras com hífen (drop-down, felt-tip,
-        // t-shirt, yo-yo), então contar por split('-') fleca ~0,3% das execuções.
         let opts = PassphraseOptions { words: 5, separator: ".".into(), capitalize: true, include_number: false };
         let p = generate_passphrase(&opts).unwrap();
         assert_eq!(p.split('.').count(), 5);
