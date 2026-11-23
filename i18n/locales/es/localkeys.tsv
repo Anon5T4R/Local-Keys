@@ -194,14 +194,24 @@
 	The CPF check digits don't match. Check for a typo; you can still save.	Los dígitos de control del CPF no coinciden. Revisa si está bien escrito; se puede guardar igual.
 	Save a copy to a synced folder	Guardar una copia en una carpeta sincronizada
 	Sync with another copy	Sincronizar con otra copia
-	{n} items added from the other copy	{n} elementos añadidos de la otra copia
-	{n} items updated (the other copy was newer)	{n} elementos actualizados (la otra copia era más reciente)
-	{n} items moved to the trash by the other copy	{n} elementos fueron a la papelera por la otra copia
-	{n} items restored from the trash	{n} elementos restaurados de la papelera
-	{n} ties: this vault keeps its item	{n} empates: esta bóveda se queda con su elemento
-	{n} folders added	{n} carpetas añadidas
-	{n} items go to the other copy	{n} elementos van a la otra copia
-	{n} folders go to the other copy	{n} carpetas van a la otra copia
+@plural	{n} item added from the other copy|{n} items added from the other copy	{n} elemento añadido de la otra copia|{n} elementos añadidos de la otra copia
+@plural	{n} item updated (the other copy was newer)|{n} items updated (the other copy was newer)	{n} elemento actualizado (la otra copia era más reciente)|{n} elementos actualizados (la otra copia era más reciente)
+@plural	{n} item moved to the trash by the other copy|{n} items moved to the trash by the other copy	{n} elemento fue a la papelera por la otra copia|{n} elementos fueron a la papelera por la otra copia
+@plural	{n} item restored from the trash|{n} items restored from the trash	{n} elemento restaurado de la papelera|{n} elementos restaurados de la papelera
+@plural	{n} tie: this vault keeps its item|{n} ties: this vault keeps its item	{n} empate: esta bóveda se queda con su elemento|{n} empates: esta bóveda se queda con su elemento
+@plural	{n} folder added|{n} folders added	{n} carpeta añadida|{n} carpetas añadidas
+@plural	{n} item goes to the other copy|{n} items go to the other copy	{n} elemento va a la otra copia|{n} elementos van a la otra copia
+@plural	{n} folder goes to the other copy|{n} folders go to the other copy	{n} carpeta va a la otra copia|{n} carpetas van a la otra copia
+	Filter ({n})	Filtrar ({n})
+filter	All	Todos
+	Logins	Inicios de sesión
+	Cards	Tarjetas
+	Identities	Identidades
+	With TOTP	Con TOTP
+	With attachments	Con adjuntos
+	Favorites	Favoritos
+	Type	Tipo
+	Show only	Mostrar solo
 	After saving, both copies are identical.	Tras guardar, las dos copias quedan idénticas.
 	Nothing to sync: the copies are already identical.	Nada que sincronizar: las copias ya son idénticas.
 	Save to both copies	Guardar en ambas copias

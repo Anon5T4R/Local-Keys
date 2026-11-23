@@ -60,9 +60,21 @@ pub fn tr(source: &'static str) -> &'static str {
     I18N.t(current(), source)
 }
 
-/// [`tr`] com os `{nome}` preenchidos (`tr_fmt("version {version}", &[("version", "1.0")])`).
+/// `tr_fmt` com os `{nome}` preenchidos (`tr_fmt("version {version}", &[("version", "1.0")])`).
 pub fn tr_fmt(source: &'static str, args: &[(&str, &str)]) -> String {
     craft_i18n::fmt(tr(source), args)
+}
+
+/// Contagem no plural: escolhe a forma do idioma atual (linhas `@plural` do TSV) e preenche `{n}`
+/// (`tr_n(2, "{n} item", "{n} items")` → "2 itens" em pt-br).
+pub fn tr_n(n: u64, one: &'static str, other: &'static str) -> String {
+    I18N.trn(current(), n, one, other)
+}
+
+/// [`tr`] com contexto (a primeira coluna do TSV) — o mesmo texto com tradução diferente por lugar
+/// (`trc("filter", "All")` é "Todos" no popup de tipos, enquanto `tr("All")` é "Todas" nas pastas).
+pub fn trc(context: &'static str, source: &'static str) -> &'static str {
+    I18N.tc(current(), context, source)
 }
 
 /// O nome de um idioma no próprio idioma (a linha `@id language.name` do catálogo; senão, o código).
@@ -97,6 +109,30 @@ mod tests {
         assert_eq!(name_of("pt-br"), "Português (Brasil)");
         assert_eq!(name_of("es"), "Español");
         assert_eq!(name_of("en"), "English");
+    }
+
+    /// O plural escolhe a forma do idioma e preenche `{n}` — as linhas `@plural` do TSV.
+    #[test]
+    fn plural_escolhe_a_forma_do_idioma() {
+        set_language("en");
+        assert_eq!(tr_n(1, "{n} item added from the other copy", "{n} items added from the other copy"), "1 item added from the other copy");
+        assert_eq!(tr_n(2, "{n} item added from the other copy", "{n} items added from the other copy"), "2 items added from the other copy");
+        set_language("pt-br");
+        assert_eq!(tr_n(1, "{n} item added from the other copy", "{n} items added from the other copy"), "1 item adicionado da outra cópia");
+        assert_eq!(tr_n(2, "{n} item added from the other copy", "{n} items added from the other copy"), "2 itens adicionados da outra cópia");
+        set_language("es");
+        assert_eq!(tr_n(1, "{n} item added from the other copy", "{n} items added from the other copy"), "1 elemento añadido de la otra copia");
+        assert_eq!(tr_n(2, "{n} item added from the other copy", "{n} items added from the other copy"), "2 elementos añadidos de la otra copia");
+        set_language("en");
+    }
+
+    /// O contexto separa traduções do mesmo texto: "All" é "Todas" nas pastas e "Todos" nos tipos.
+    #[test]
+    fn contexto_separa_o_all_das_pastas_e_dos_tipos() {
+        set_language("pt-br");
+        assert_eq!(trc("filter", "All"), "Todos");
+        assert_eq!(tr("All"), "Todas", "o contexto não vaza para as pastas");
+        set_language("en");
     }
 
     /// Todo `tr("…")`/`tr_fmt("…"` do código tem tradução em pt-br e es (o lugar do antigo enum `Key`, que
@@ -137,6 +173,7 @@ mod tests {
                 | "CPF"
                 | "RG"
                 | "CNH"
+                | "Logins"
         )
     }
 
