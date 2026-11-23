@@ -29,6 +29,19 @@
 	No items match the search, folder and filters	Ningún elemento con esta búsqueda, carpeta y filtros
 	Remove filter {name}	Quitar filtro {name}
 	Done	Listo
+	the vault is not valid JSON	la bóveda no es un JSON válido
+	the master password cannot be empty	la contraseña maestra no puede estar vacía
+	the passwords do not match	las contraseñas no coinciden
+	item not found	elemento no encontrado
+	could not attach to the item	no se pudo adjuntar al elemento
+	could not save the vault	no se pudo serializar la bóveda
+	choose where to save the export	indica dónde guardar la exportación
+	choose the file to import	indica el archivo a importar
+	the new master password cannot be empty	la nueva contraseña maestra no puede estar vacía
+	choose the attachment file	indica el archivo adjunto
+	attachment not found	adjunto no encontrado
+	choose where to save the attachment	indica dónde guardar el adjunto
+	the operation ended without a result	la operación terminó sin resultado
 	Vault	Bóveda
 	Master password	Contraseña maestra
 	Unlock	Desbloquear

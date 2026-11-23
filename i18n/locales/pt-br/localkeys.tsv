@@ -29,9 +29,22 @@
 	No items match the search, folder and filters	Nenhum item com esta busca, pasta e filtros
 	Remove filter {name}	Remover filtro {name}
 	Done	Concluir
+	the vault is not valid JSON	o cofre não é um JSON válido
+	the master password cannot be empty	a senha-mestra não pode ser vazia
+	the passwords do not match	as senhas não conferem
+	item not found	item não encontrado
+	could not attach to the item	não foi possível anexar ao item
+	could not save the vault	não deu para serializar o cofre
+	choose where to save the export	informe o destino do export
+	choose the file to import	informe o arquivo a importar
+	the new master password cannot be empty	a nova senha-mestra não pode ser vazia
+	choose the attachment file	informe o arquivo do anexo
+	attachment not found	anexo não encontrado
+	choose where to save the attachment	informe o destino do anexo
+	the operation ended without a result	a operação terminou sem resultado
 	Vault	Cofre
-	Master password	Senha mestra
-	Unlock	Destrancar
+	Master password	Senha-mestra
+	Unlock	Desbloquear
 	New vault	Novo cofre
 	wrong password or corrupted/tampered file	senha incorreta ou arquivo corrompido/adulterado
 	Add	Adicionar
@@ -69,28 +82,28 @@
 	Generator	Gerador
 	Generate	Gerar
 	Use	Usar
-	Passphrase	Passphrase
+	Passphrase	Frase-senha
 	Words	Palavras
 	Separator	Separador
-	Capitalize	Capitalizar
-	Include number	Incluir número
-	Length	Comprimento
+	Capitalize	Primeira letra maiúscula
+	Include number	Incluir um número
+	Length	Tamanho
 	Lowercase	Minúsculas
 	Uppercase	Maiúsculas
-	Digits	Dígitos
+	Digits	Números
 	Symbols	Símbolos
 	terrible	péssima
 	weak	ruim
 	fair	razoável
 	strong	forte
 	excellent	ótima
-	Change master password	Trocar senha mestra
+	Change master password	Trocar senha-mestra
 	Current password	Senha atual
 	New password	Nova senha
 	Confirm new password	Confirmar nova senha
 	Confirm password	Confirmar senha
 	More actions	Mais ações
-	master password changed	senha mestra trocada
+	master password changed	senha-mestra trocada
 	Attachments	Anexos
 	Add attachment	Adicionar anexo
 	no attachments	sem anexos
@@ -101,10 +114,10 @@
 	press the keys…	pressione as teclas…
 	Closing minimizes to tray.	Fechar minimiza pra bandeja.
 	working…	trabalhando…
-	unlocking…	destrancando…
+	unlocking…	desbloqueando…
 	importing…	importando…
 	reading file…	lendo arquivo…
-	changing the master password…	trocando a senha mestra…
+	changing the master password…	trocando a senha-mestra…
 	attachment too large (max 10 MiB — the whole vault is rewritten on every save)	anexo grande demais (máx 10 MiB — o cofre inteiro é regravado a cada save)
 	URL	URL
 	Notes	Notas
@@ -152,7 +165,7 @@
 	Help	Ajuda
 	Choose file…	Escolher arquivo…
 	zxcvbn: 10^{guesses} guesses	zxcvbn: 10^{guesses} tentativas
-	Unlock vault	Destrancar o cofre
+	Unlock vault	Desbloquear o cofre
 	New item	Novo item
 	Login	Login
 	Note	Nota

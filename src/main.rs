@@ -1170,7 +1170,7 @@ impl KeysApp {
                     self.adopt(session, raw);
                     remember_last_path(&path);
                 }
-                Err(_) => self.err = Some("vault não é JSON válido".into()),
+                Err(_) => self.err = Some(tr("the vault is not valid JSON").into()),
             },
             Err(_) => {
                 // chave guardada não serve mais (senha trocada / arquivo outro)
@@ -1241,11 +1241,11 @@ impl KeysApp {
             return;
         }
         if self.master.is_empty() {
-            self.err = Some("a senha mestra não pode ser vazia".into());
+            self.err = Some(tr("the master password cannot be empty").into());
             return;
         }
         if self.master != self.confirm {
-            self.err = Some("as senhas não conferem".into());
+            self.err = Some(tr("the passwords do not match").into());
             return;
         }
         let password = Zeroizing::new(std::mem::take(&mut self.master));
@@ -1387,7 +1387,7 @@ impl KeysApp {
             }
         };
         if !ok {
-            self.err = Some("item não encontrado".into());
+            self.err = Some(tr("item not found").into());
             return;
         }
         // onda 24 — pasta do item: aplicar DEPOIS do add/edit (o `add_*`
@@ -1399,13 +1399,13 @@ impl KeysApp {
         if let Some(id) = alvo.as_deref() {
             for a in &self.form_attachments {
                 if !vault::add_attachment(&mut next, id, &a.name, a.mime, &a.data_b64) {
-                    self.err = Some("não foi possível anexar ao item".into());
+                    self.err = Some(tr("could not attach to the item").into());
                     return;
                 }
             }
             // Campos personalizados (todos os tipos): a lista do form substitui a do item.
             if !vault::set_custom_fields(&mut next, id, &custom) {
-                self.err = Some("item não encontrado".into());
+                self.err = Some(tr("item not found").into());
                 return;
             }
         }
@@ -1550,7 +1550,7 @@ impl KeysApp {
     fn carry_vault_to(&mut self, destino: &std::path::Path) {
         let Some(session) = self.session.as_ref() else { return };
         let Ok(bytes) = serde_json::to_vec(self.raw.as_ref().expect("cofre aberto")) else {
-            self.err = Some("cofre não serializa".into());
+            self.err = Some(tr("could not save the vault").into());
             return;
         };
         let sealed = match session.seal(&bytes) {
@@ -1637,7 +1637,7 @@ impl KeysApp {
         let Some(plan) = self.sync_plan.clone() else { return };
         let Some(session) = self.session.as_ref() else { return };
         let Ok(bytes) = serde_json::to_vec(&plan.merged) else {
-            self.err = Some("cofre não serializa".into());
+            self.err = Some(tr("could not save the vault").into());
             return;
         };
         let sealed = match session.seal(&bytes) {
@@ -1791,7 +1791,7 @@ impl KeysApp {
     fn run_export(&mut self, ctx: &egui::Context) {
         let target = self.export_path.trim().to_string();
         if target.is_empty() {
-            self.err = Some("informe o destino do export".into());
+            self.err = Some(tr("choose where to save the export").into());
             return;
         }
         let Some(raw) = self.raw.as_ref() else {
@@ -1813,7 +1813,7 @@ impl KeysApp {
     fn run_import(&mut self, ctx: &egui::Context) {
         let path = self.import_path.trim().to_string();
         if path.is_empty() {
-            self.err = Some("informe o arquivo a importar".into());
+            self.err = Some(tr("choose the file to import").into());
             return;
         }
         // A senha do arquivo FICA no campo (se o import falhar por caminho
@@ -1827,11 +1827,11 @@ impl KeysApp {
 
     fn change_master(&mut self, ctx: &egui::Context) {
         if self.chg_new.is_empty() {
-            self.err = Some("a nova senha mestra não pode ser vazia".into());
+            self.err = Some(tr("the new master password cannot be empty").into());
             return;
         }
         if self.chg_new != self.chg_confirm {
-            self.err = Some("as senhas não conferem".into());
+            self.err = Some(tr("the passwords do not match").into());
             return;
         }
         // Os campos ficam preenchidos (erro de digitação na senha atual é
@@ -1882,7 +1882,7 @@ impl KeysApp {
             sources = split_attachment_paths(&self.attach_path);
         }
         if sources.is_empty() {
-            self.err = Some("informe o arquivo do anexo".into());
+            self.err = Some(tr("choose the attachment file").into());
             return;
         }
         let primeiro = sources.remove(0);
@@ -1905,7 +1905,7 @@ impl KeysApp {
     /// (`fs::write` em pasta de rede tem a mesma lentidão da leitura).
     fn save_attachment(&mut self, item_id: &str, attachment_id: &str, ctx: &egui::Context) {
         let Some((name, b64)) = self.raw.as_ref().and_then(|r| vault::attachment_data(r, item_id, attachment_id)) else {
-            self.err = Some("anexo não encontrado".into());
+            self.err = Some(tr("attachment not found").into());
             return;
         };
         // Seletor nativo "salvar como" com o nome do anexo (src/pickers.rs);
@@ -1917,7 +1917,7 @@ impl KeysApp {
             Box::new(move |app, paths| {
                 let target = paths.first().map(|p| p.display().to_string()).unwrap_or_else(|| app.attach_path.trim().to_string());
                 if target.is_empty() {
-                    app.err = Some("informe o destino do anexo".into());
+                    app.err = Some(tr("choose where to save the attachment").into());
                     return;
                 }
                 app.start_job(&ctx2, tr("working…"), Job::SaveAttachment { target, data_b64: b64 });
@@ -2023,7 +2023,7 @@ impl KeysApp {
             // Thread terminou sem resultado (spawn falhou / panic): não deixa o
             // spinner girando pra sempre.
             if self.job_label.take().is_some() {
-                self.err = Some("operação interrompida sem resultado".into());
+                self.err = Some(tr("the operation ended without a result").into());
             }
         } else {
             self.job_rx = Some(rx);
@@ -2138,7 +2138,7 @@ impl KeysApp {
                 self.notice(msg);
             }
         } else {
-            self.err = Some("não foi possível anexar ao item".into());
+            self.err = Some(tr("could not attach to the item").into());
         }
     }
 
