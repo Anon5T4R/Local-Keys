@@ -66,7 +66,8 @@ jobs:
       - name: Build --locked
         run: cargo build --locked
       - name: Testes
-        run: cargo test --locked
+        # --workspace: cobre também o crates/core (default-members deixa só o app).
+        run: cargo test --locked --workspace
 
   git-sources:
     name: Sem dependências git remotas

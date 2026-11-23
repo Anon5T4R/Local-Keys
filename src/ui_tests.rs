@@ -653,6 +653,66 @@ fn the_list_shows_the_right_summary_per_kind() {
     harness.get_by_label_contains("joao");
 }
 
+/// As capturas da fase A (pedido 022): seletor de tipo, formulários de cada tipo e a lista com os
+/// quatro tipos — claro e escuro, na largura mínima (340) e numa larga (1100). Só renderiza com
+/// `LOCALKEYS_QA_RENDER=1` (o CI roda sem).
+#[test]
+fn kind_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            // seletor de tipo do "+"
+            let mut harness = harness_sized(unlocked("shots-kind", Prefs::new("en", appearance)), width);
+            harness.run_steps(2);
+            harness.get_by_label("Add").click();
+            harness.run_steps(2);
+            shot(&mut harness, &format!("kind-picker-{name}-{label}"));
+
+            // formulário de cartão (com campo personalizado oculto)
+            let mut app = unlocked("shots-kind", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Card);
+            app.add_name = "Nubank".into();
+            app.add_cardholder = "João da Silva".into();
+            app.add_brand = "Elo".into();
+            app.add_number = "6362970000457013".into();
+            app.add_exp = "01/2027".into();
+            app.form_custom.push(FormCustomField { id: String::new(), name: "PIN".into(), value: "1234".into(), hidden: true, revealed: false });
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("kind-form-card-{name}-{label}"));
+
+            // formulário de identidade
+            let mut app = unlocked("shots-kind", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Identity);
+            app.add_name = "Documentos".into();
+            app.add_first = "João".into();
+            app.add_last = "Silva".into();
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("kind-form-identity-{name}-{label}"));
+
+            // item livre (nota com o campo personalizado aberto) e nota
+            let mut app = unlocked("shots-kind", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::FreeItem);
+            app.add_name = "Keys of the apartment".into();
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("kind-form-free-{name}-{label}"));
+            let mut app = unlocked("shots-kind", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Note);
+            app.add_name = "Market list".into();
+            app.add_notes = "comprar pão".into();
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("kind-form-note-{name}-{label}"));
+
+            // a lista com um item de cada tipo (resumos por tipo)
+            let mut harness = harness_sized(unlocked_kinds("shots-kind", Prefs::new("en", appearance)), width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("kind-list-{name}-{label}"));
+        }
+    }
+}
+
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.
 #[test]
 fn review_shots() {

@@ -161,8 +161,10 @@ fn ci() -> Result<(), String> {
     c.args(["build", "--locked"]);
     run(c, "cargo build --locked")?;
     let mut c = cargo();
-    c.args(["test", "--locked"]);
-    run(c, "cargo test --locked")?;
+    // --workspace: o `default-members = ["."]` deixaria os testes do `crates/core` de fora (eles
+    // existem exatamente pra fase A do pedido 022 e não rodavam em lugar nenhum).
+    c.args(["test", "--locked", "--workspace"]);
+    run(c, "cargo test --locked --workspace")?;
     let mut c = cargo();
     c.args(["deny", "--version"]);
     if c.output().is_ok_and(|o| o.status.success()) {
