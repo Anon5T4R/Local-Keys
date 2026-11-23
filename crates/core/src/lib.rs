@@ -10,6 +10,7 @@ pub mod card;
 pub mod cpf;
 pub mod crypto;
 pub mod export;
+pub mod filters;
 pub mod generator;
 pub mod import;
 pub mod kdbx;
