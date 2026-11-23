@@ -272,7 +272,7 @@
     <string name="filter_section_type">Tipo</string>
     <string name="filter_section_only">Mostrar só</string>
     <string name="filter_clear">Limpar filtros</string>
-    <string name="filter_done">Pronto</string>
+    <string name="filter_done">Concluir</string>
     <string name="filter_remove">Remover filtro %1$s</string>
     <string name="badge_totp">Tem código TOTP</string>
     <string name="badge_passkey">Tem passkey</string>
