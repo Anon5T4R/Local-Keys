@@ -147,3 +147,26 @@
 	Choose file…	Elegir archivo…
 	zxcvbn: 10^{guesses} guesses	zxcvbn: 10^{guesses} intentos
 	Unlock vault	Desbloquear la bóveda
+	New item	Nuevo elemento
+	Login	Inicio de sesión
+	Note	Nota
+	Card	Tarjeta
+	Identity	Identidad
+	Free item	Elemento libre
+	Title	Título
+	Type: {kind}	Tipo: {kind}
+	Cardholder	Titular
+	Brand	Marca
+	Number	Número
+	Expiry (MM/YY)	Caducidad (MM/AA)
+	Security code	Código
+	First name	Nombre
+	Last name	Apellido
+	E-mail	Correo electrónico
+	Phone	Teléfono
+	Address	Dirección
+	Custom fields	Campos personalizados
+	Value	Valor
+	Hidden	Oculto
+	Add field	Añadir campo
+	Remove field	Quitar campo

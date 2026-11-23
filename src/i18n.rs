@@ -119,9 +119,14 @@ mod tests {
         assert!(missing.is_empty(), "sem tradução:\n{}", missing.join("\n"));
     }
 
-    /// Os textos iguais em todo idioma (siglas, nomes de formato).
+    /// Os textos iguais em todo idioma (siglas, nomes de formato) ou que o português adota como estão
+    /// (o teste de completude compararia a tradução com a chave e acharia que falta).
     fn untranslated_on_purpose(text: &str) -> bool {
-        matches!(text, "TOTP" | "URL" | "s" | "Error" | "Passphrase" | "CSV (Chrome/Edge/LastPass/1Password)" | "KeePass (.kdbx)" | "Local Keys")
+        matches!(
+            text,
+            "TOTP" | "URL" | "s" | "Error" | "Passphrase" | "CSV (Chrome/Edge/LastPass/1Password)" | "KeePass (.kdbx)" | "Local Keys"
+                | "Login" | "E-mail"
+        )
     }
 
     /// Os literais passados a `tr(` e `tr_fmt(` num arquivo-fonte.

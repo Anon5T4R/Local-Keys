@@ -147,3 +147,26 @@
 	Choose file…	Escolher arquivo…
 	zxcvbn: 10^{guesses} guesses	zxcvbn: 10^{guesses} tentativas
 	Unlock vault	Destrancar o cofre
+	New item	Novo item
+	Login	Login
+	Note	Nota
+	Card	Cartão
+	Identity	Identidade
+	Free item	Item livre
+	Title	Título
+	Type: {kind}	Tipo: {kind}
+	Cardholder	Titular
+	Brand	Bandeira
+	Number	Número
+	Expiry (MM/YY)	Validade (MM/AA)
+	Security code	Código
+	First name	Nome
+	Last name	Sobrenome
+	E-mail	E-mail
+	Phone	Telefone
+	Address	Endereço
+	Custom fields	Campos personalizados
+	Value	Valor
+	Hidden	Oculto
+	Add field	Adicionar campo
+	Remove field	Remover campo
