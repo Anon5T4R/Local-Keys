@@ -138,21 +138,15 @@ pub fn merge(current: &Value, other: &Value) -> MergeResult {
     let oth_folders = other.get("folders").and_then(Value::as_array).cloned().unwrap_or_default();
     let cur_folder_ids: std::collections::BTreeSet<String> =
         cur_folders.iter().filter_map(|f| f.get("id").and_then(Value::as_str).map(str::to_string)).collect();
-    let new_folders: Vec<Value> = oth_folders
-        .iter()
-        .filter(|f| f.get("id").and_then(Value::as_str).is_none_or(|id| !cur_folder_ids.contains(id)))
-        .cloned()
-        .collect();
+    let new_folders: Vec<Value> =
+        oth_folders.iter().filter(|f| f.get("id").and_then(Value::as_str).is_none_or(|id| !cur_folder_ids.contains(id))).cloned().collect();
     s.folders_added = new_folders.len() as u64;
     let mut folders = cur_folders;
     folders.extend(new_folders);
     // A outra cópia também ganha as pastas que só existiam aqui.
-    let other_folder_ids: std::collections::BTreeSet<&str> =
-        oth_folders.iter().filter_map(|f| f.get("id").and_then(Value::as_str)).collect();
-    s.folders_to_other = folders
-        .iter()
-        .filter(|f| f.get("id").and_then(Value::as_str).is_none_or(|id| !other_folder_ids.contains(id)))
-        .count() as u64;
+    let other_folder_ids: std::collections::BTreeSet<&str> = oth_folders.iter().filter_map(|f| f.get("id").and_then(Value::as_str)).collect();
+    s.folders_to_other =
+        folders.iter().filter(|f| f.get("id").and_then(Value::as_str).is_none_or(|id| !other_folder_ids.contains(id))).count() as u64;
 
     // O cofre juntado: o atual com `items` e `folders` novos — o resto (versão, chaves desconhecidas)
     // fica do atual.
@@ -244,7 +238,8 @@ mod tests {
     /// (as duas cópias ficam iguais).
     #[test]
     fn casos_compartilhados() {
-        let mut casos: Vec<_> = std::fs::read_dir(cases_dir()).expect("listar casos").filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        let mut casos: Vec<_> =
+            std::fs::read_dir(cases_dir()).expect("listar casos").filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
         casos.sort();
         assert!(casos.len() >= 10, "sem casos em {:?}", cases_dir());
         for case in casos {
