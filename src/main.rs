@@ -1170,18 +1170,27 @@ impl KeysApp {
         }
         // Owned antes: os campos do `form_modal` emprestam estes buffers e o
         // `persist` precisa de `&mut self`.
-        let username = self.add_user.clone();
+        //
+        // Trim como o `ItemEditorState.build` do Android: texto de formulário chega limpo ao cofre
+        // (titular, bandeira, usuário, os cinco da identidade). A senha NUNCA é trimada (espaço pode
+        // ser parte dela) e as notas só perdem o fim (`trimEnd`).
+        let username = self.add_user.trim().to_string();
         let password = self.add_pass.clone();
         let totp = self.add_totp.trim().to_string();
         let url = self.add_url.trim().to_string();
-        let notes = self.add_notes.clone();
-        let cardholder = self.add_cardholder.clone();
-        let brand = self.add_brand.clone();
+        let notes = self.add_notes.trim_end().to_string();
+        let cardholder = self.add_cardholder.trim().to_string();
+        let brand = self.add_brand.trim().to_string();
         let number = self.add_number.clone();
         let exp = self.add_exp.clone();
         let code = self.add_code.clone();
-        let (first, last, email, phone, address) =
-            (self.add_first.clone(), self.add_last.clone(), self.add_email.clone(), self.add_phone.clone(), self.add_address.clone());
+        let (first, last, email, phone, address) = (
+            self.add_first.trim().to_string(),
+            self.add_last.trim().to_string(),
+            self.add_email.trim().to_string(),
+            self.add_phone.trim().to_string(),
+            self.add_address.trim().to_string(),
+        );
         let custom: Vec<vault::CustomFieldView> = self
             .form_custom
             .iter()

@@ -396,16 +396,17 @@ fn every_dialog_fits_the_narrow_window() {
 #[test]
 fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
     type Open = fn(&mut KeysApp);
-    let forms: [(&str, Open); 7] = [
-        ("add", |app| app.open_add_form(NewKind::Login)),
-        ("add-with-attachments", |app| {
+    // (nome do print, rótulo do crachá do tipo — o teste roda em pt-br)
+    let forms: [(&str, &str, Open); 7] = [
+        ("add", "Tipo: Login", |app| app.open_add_form(NewKind::Login)),
+        ("add-with-attachments", "Tipo: Login", |app| {
             app.open_add_form(NewKind::Login);
             for name in ["contrato-assinado-2026.pdf", "chave-de-recuperacao.txt"] {
                 app.form_attachments.push(pending(name));
             }
         }),
-        ("card", |app| app.open_add_form(NewKind::Card)),
-        ("card-custom", |app| {
+        ("card", "Tipo: Cartão", |app| app.open_add_form(NewKind::Card)),
+        ("card-custom", "Tipo: Cartão", |app| {
             app.open_add_form(NewKind::Card);
             app.add_number = "6362970000457013".into();
             app.add_exp = "01/2027".into();
@@ -417,13 +418,13 @@ fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
                 revealed: false,
             });
         }),
-        ("identity", |app| app.open_add_form(NewKind::Identity)),
-        ("note", |app| app.open_add_form(NewKind::Note)),
-        ("free-item", |app| app.open_add_form(NewKind::FreeItem)),
+        ("identity", "Tipo: Identidade", |app| app.open_add_form(NewKind::Identity)),
+        ("note", "Tipo: Nota", |app| app.open_add_form(NewKind::Note)),
+        ("free-item", "Tipo: Nota", |app| app.open_add_form(NewKind::FreeItem)),
     ];
     const WIDTH: f64 = 340.0;
     const HEIGHT: f64 = 640.0;
-    for (name, open) in forms {
+    for (name, badge_label, open) in forms {
         let mut app = unlocked("forms", Prefs::new("pt-br", ThemeMode::Dark));
         open(&mut app);
         let mut harness = harness_sized(app, WIDTH as f32);
@@ -435,15 +436,17 @@ fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
                 assert!(rect.x0 >= 0.0 && rect.x1 <= WIDTH, "{name}: nó fora da largura: {rect:?}");
             }
         }
-        // O que fica fora da rolagem (título, Salvar, Cancelar) cabe na altura — o conteúdo além da
-        // dobra é que rola (só existe além da borda no layout, invisível). Valem TODOS os nós com
-        // esses rótulos (o "Adicionar" da barra de fundo entra junto, e também precisa caber).
+        // O que fica fora da rolagem (título, crachá do tipo, Salvar, Cancelar) cabe na altura — o
+        // conteúdo além da dobra é que rola (só existe além da borda no layout, invisível). Valem TODOS
+        // os nós com esses rótulos (o "Adicionar" da barra de fundo entra junto, e também precisa caber).
         for label in ["Adicionar", "Salvar", "Cancelar"] {
             for node in harness.get_all_by_label(label) {
                 let rect = node.rect();
                 assert!(rect.min.y >= 0.0 && rect.max.y <= HEIGHT as f32, "{name}: {label} fora da janela: {rect:?}");
             }
         }
+        let badge = harness.get_by_label_contains(badge_label).rect();
+        assert!(badge.min.y >= 0.0 && badge.max.y <= HEIGHT as f32, "{name}: crachá {badge_label} fora da janela: {badge:?}");
     }
 }
 
@@ -597,7 +600,8 @@ fn editing_shows_the_type_fixed_and_keeps_it() {
     assert_eq!(it["card"]["number"], "6362970000457013");
 }
 
-/// Campo personalizado com a chave "Oculto": o valor sai mascarado (👁 revela) e salvar grava `hidden: true`.
+/// Campo personalizado com a chave "Oculto": o valor sai mascarado (👁 revela), o botão de copiar
+/// leva o valor real para a área de transferência e salvar grava `hidden: true`.
 #[test]
 fn a_hidden_custom_field_masks_reveals_and_copies() {
     let mut app = unlocked("custom-hidden", Prefs::new("en", ThemeMode::Dark));
@@ -614,11 +618,20 @@ fn a_hidden_custom_field_masks_reveals_and_copies() {
     harness.run_steps(2);
     // oculto: o valor sai mascarado, com 👁 para revelar e cópia ao lado
     assert_eq!(harness.get_by_label("Value").accesskit_node().role(), Role::PasswordInput);
-    harness.get_by_label("Copy");
     harness.get_by_label("👁").click();
     harness.run_steps(2);
     assert_eq!(harness.get_by_label("Value").accesskit_node().role(), Role::TextInput, "revelado");
     harness.get_by_label("Hidden");
+    // copiar de verdade: o valor oculto (mascarado ou revelado) vai para a área de transferência.
+    // O app copia direto no clipboard do SO (o harness não intercepta); no Windows dá para conferir
+    // o conteúdo — no Linux de CI, sem clipboard, o clique roda e a cópia falha em silêncio.
+    harness.get_by_label("Copy").click();
+    harness.run_steps(2);
+    #[cfg(windows)]
+    {
+        let copied = clipboard_win::get_clipboard_string().unwrap_or_default();
+        assert_eq!(copied, "1234", "o valor oculto copiado para a área de transferência");
+    }
     // salvar grava o campo como oculto no cofre
     harness.get_by_label("Save").click();
     harness.run_steps(2);
@@ -631,6 +644,56 @@ fn a_hidden_custom_field_masks_reveals_and_copies() {
     assert_eq!(campos[0]["name"], "pin");
     assert_eq!(campos[0]["value"], "1234");
     assert_eq!(campos[0]["hidden"], true);
+}
+
+/// Espaço sobrando nos campos não chega ao cofre: o save trima o que o Android trima (usuário, titular,
+/// bandeira, os cinco da identidade; notas só o fim) e NUNCA a senha.
+#[test]
+fn saving_trims_the_fields_like_the_android() {
+    let mut app = unlocked("trims", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("trims");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+
+    app.open_add_form(NewKind::Card);
+    app.add_name = "  Itaú  ".into();
+    app.add_cardholder = "  João da Silva  ".into();
+    app.add_brand = "  Mastercard  ".into();
+    app.add_number = "5555555555554444".into();
+    app.save_form();
+
+    app.open_add_form(NewKind::Identity);
+    app.add_name = "Passaporte".into();
+    app.add_first = "  Ana  ".into();
+    app.add_last = "  Souza  ".into();
+    app.add_email = "  ana@exemplo.com  ".into();
+    app.add_phone = "  11 91234-5678  ".into();
+    app.add_address = "  Rua B, 45  ".into();
+    app.add_notes = "  recado  \n  segunda linha  \n\n".into();
+    app.save_form();
+
+    app.open_add_form(NewKind::Login);
+    app.add_name = "Gmail 2".into();
+    app.add_user = "  joao  ".into();
+    app.add_pass = "  senha com espaços  ".into();
+    app.save_form();
+
+    let raw = app.raw.as_ref().expect("cofre");
+    let acha = |nome: &str| raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == nome).expect(nome);
+    let card = acha("Itaú");
+    assert_eq!(card["card"]["cardholder"], "João da Silva");
+    assert_eq!(card["card"]["brand"], "Mastercard");
+    let ident = acha("Passaporte");
+    assert_eq!(ident["identity"]["firstName"], "Ana");
+    assert_eq!(ident["identity"]["lastName"], "Souza");
+    assert_eq!(ident["identity"]["email"], "ana@exemplo.com");
+    assert_eq!(ident["identity"]["phone"], "11 91234-5678");
+    assert_eq!(ident["identity"]["address"], "Rua B, 45");
+    // notas: só o fim (o começo fica como digitado, o `trimEnd` do Android)
+    assert_eq!(ident["notes"], "  recado  \n  segunda linha");
+    let login = acha("Gmail 2");
+    assert_eq!(login["login"]["username"], "joao");
+    assert_eq!(login["login"]["password"], "  senha com espaços  ", "a senha nunca é trimada");
 }
 
 /// A linha da lista mostra o resumo do tipo: usuário, bandeira e `•••• 1234`, nome completo, começo da
