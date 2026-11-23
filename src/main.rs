@@ -29,7 +29,7 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, card, crypto, export, generator, import, kdbx, otpauth, totp, vault};
+use localkeys_core::{bwdecrypt, card, cpf, crypto, export, generator, import, kdbx, otpauth, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -293,6 +293,20 @@ fn totp_error_text(reason: otpauth::Reason) -> Option<&'static str> {
 fn otpauth_tail(text: &str) -> Option<&str> {
     let at = text.to_lowercase().find("otpauth://")?;
     Some(&text[at..])
+}
+
+/// Reposiciona o cursor de um `TextEdit` formatado-enquanto-digita: quem digitava no FIM do texto cru
+/// (o caso comum) continua no fim do texto formatado; quem edita no meio fica como o egui deixar
+/// (clampado). Sem isso, o formato que insere separadores deixa o cursor atrás deles e o próximo
+/// dígito entra no meio.
+fn cursor_do_fim(ctx: &egui::Context, id: egui::Id, cru_len: usize, novo_len: usize) {
+    if let Some(mut st) = egui::text_edit::TextEditState::load(ctx, id)
+        && let Some(range) = st.cursor.char_range()
+        && range.primary.index.0 >= cru_len
+    {
+        st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::one(egui::epaint::text::cursor::CCursor::new(novo_len))));
+        st.store(ctx, id);
+    }
 }
 
 /// Um campo personalizado no formulário: `id` vazio = campo novo (o `set_custom_fields` gera o id ao
@@ -774,6 +788,11 @@ struct KeysApp {
     add_number: String,
     add_exp: String,
     add_code: String,
+    /// A bandeira atual foi preenchida pela DETECÇÃO do número (então o número pode trocá-la);
+    /// digitada pela pessoa, fica (o `brandAuto` do Android).
+    brand_auto: bool,
+    /// 👁 do código de segurança do cartão (CVV oculto, como a senha).
+    reveal_code: bool,
     /// Campos da identidade no form.
     add_first: String,
     add_last: String,
@@ -898,6 +917,8 @@ impl KeysApp {
             add_number: String::new(),
             add_exp: String::new(),
             add_code: String::new(),
+            brand_auto: true,
+            reveal_code: false,
             add_first: String::new(),
             add_last: String::new(),
             add_email: String::new(),
@@ -991,6 +1012,8 @@ impl KeysApp {
         self.add_number.clear();
         self.add_exp.clear();
         self.add_code.clear();
+        self.brand_auto = true;
+        self.reveal_code = false;
         self.add_first.clear();
         self.add_last.clear();
         self.add_email.clear();
@@ -1364,6 +1387,8 @@ impl KeysApp {
         self.add_number.clear();
         self.add_exp.clear();
         self.add_code.clear();
+        self.brand_auto = true;
+        self.reveal_code = false;
         self.add_first.clear();
         self.add_last.clear();
         self.add_email.clear();
@@ -1500,10 +1525,14 @@ impl KeysApp {
         self.add_url = login.url.clone();
         if let Some(c) = full.card {
             self.add_cardholder = c.cardholder;
-            self.add_brand = c.brand;
-            self.add_number = c.number;
+            self.add_brand = c.brand.clone();
+            self.add_number = c.number.clone();
             self.add_exp = c.exp;
             self.add_code = c.code;
+            // A bandeira é "automática" se veio vazia ou se é a que a detecção daria (o número pode
+            // trocá-la); digitada de outro jeito, fica (o `brandAuto` do Android no load).
+            let detectada = card::brand_of(&c.number).map(|b| b.label());
+            self.brand_auto = c.brand.trim().is_empty() || detectada == Some(c.brand.trim());
         }
         if let Some(i) = full.identity {
             self.add_first = i.first_name;
@@ -1987,6 +2016,7 @@ impl KeysApp {
         let mut ask_qr_file = false;
         let mut paste_qr_image = false;
         let mut add_field = false;
+        let mut add_doc: Option<String> = None;
         let mut remove_field: Option<usize> = None;
         let mut copy_value: Option<(String, String)> = None;
         let resp = egui::Modal::new(egui::Id::unique("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
@@ -2097,31 +2127,63 @@ impl KeysApp {
                             ui.add(line(&mut self.add_cardholder).desired_width(field)).labelled_by(label.id);
                             ui.end_row();
 
+                            // Bandeira: a detecção pelo número só preenche campo vazio ou preenchido
+                            // por ela mesma; digitada pela pessoa, fica.
                             let label = ui.label(tr("Brand"));
-                            ui.add(line(&mut self.add_brand).desired_width(field)).labelled_by(label.id);
+                            let edit = ui
+                                .add(line(&mut self.add_brand).hint_text(tr("Detected from the number; type to change it.")).desired_width(field))
+                                .labelled_by(label.id);
+                            if edit.changed() {
+                                self.brand_auto = self.add_brand.trim().is_empty();
+                            }
                             ui.end_row();
 
-                            // Número/validade/código: o campo ecoa o que vai ser gravado (só dígitos,
-                            // MM/AA — as regras do cofre, `card.rs`).
+                            // Número: o campo mostra blocos de 4 (Amex 4-6-5) — só exibição, o cofre
+                            // guarda só os dígitos (o core normaliza na gravação). O aviso de Luhn
+                            // aparece com 13+ dígitos e NÃO bloqueia o salvar.
                             let label = ui.label(tr("Number"));
-                            let edit = ui.add(line(&mut self.add_number).desired_width(field)).labelled_by(label.id);
-                            if edit.changed() {
-                                self.add_number = card::number(&self.add_number);
-                            }
+                            ui.vertical(|ui| {
+                                let edit = ui.add(line(&mut self.add_number).desired_width(field)).labelled_by(label.id);
+                                if edit.changed() {
+                                    let cru = self.add_number.chars().count();
+                                    self.add_number = card::group(&self.add_number);
+                                    cursor_do_fim(ui.ctx(), edit.id, cru, self.add_number.chars().count());
+                                    if self.brand_auto || self.add_brand.trim().is_empty() {
+                                        self.add_brand = card::brand_of(&self.add_number).map_or_else(String::new, |b| b.label().to_string());
+                                        self.brand_auto = true;
+                                    }
+                                }
+                                if card::luhn_warning(&self.add_number) {
+                                    ui.label(
+                                        egui::RichText::new(tr("This number fails the card check (Luhn). Check for a typo; you can still save."))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(230, 130, 40)),
+                                    );
+                                }
+                            });
                             ui.end_row();
 
                             let label = ui.label(tr("Expiry (MM/YY)"));
                             let edit = ui.add(line(&mut self.add_exp).desired_width(field)).labelled_by(label.id);
                             if edit.changed() {
+                                let cru = self.add_exp.chars().count();
                                 self.add_exp = card::expiry(&self.add_exp);
+                                cursor_do_fim(ui.ctx(), edit.id, cru, self.add_exp.chars().count());
                             }
                             ui.end_row();
 
+                            // CVV oculto, como a senha (👈 revela; o campo volta a ocultar ao fechar).
                             let label = ui.label(tr("Security code"));
-                            let edit = ui.add(line(&mut self.add_code).desired_width(field)).labelled_by(label.id);
-                            if edit.changed() {
-                                self.add_code = card::cvv(&self.add_code);
-                            }
+                            ui.horizontal(|ui| {
+                                let edit =
+                                    ui.add(line(&mut self.add_code).password(!self.reveal_code).desired_width(field - 28.0)).labelled_by(label.id);
+                                if edit.changed() {
+                                    self.add_code = card::cvv(&self.add_code);
+                                }
+                                if ghost(ui, if self.reveal_code { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
+                                    self.reveal_code = !self.reveal_code;
+                                }
+                            });
                             ui.end_row();
                         }
                         vault::ItemKind::Identity => {
@@ -2198,6 +2260,24 @@ impl KeysApp {
                     });
                     ui.end_row();
                 });
+                // Atalhos de documento da identidade (abaixo dos campos fixos): cada um cria um campo
+                // personalizado com o nome já posto e o valor livre; "Documento (outro)" deixa o nome
+                // vazio para a pessoa escrever (os chips do `DocumentShortcuts` do Android).
+                if kind == vault::ItemKind::Identity {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(tr("Add a document")).small().weak());
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for nome in [tr("CPF"), tr("RG"), tr("CNH"), tr("Date of birth"), tr("Passport")] {
+                            if ghost(ui, nome).clicked() {
+                                add_doc = Some(nome.to_string());
+                            }
+                        }
+                        if ghost(ui, tr("Document (other)")).clicked() {
+                            add_doc = Some(String::new());
+                        }
+                    });
+                }
                 // Força ao vivo (zxcvbn) — só no login (o único tipo com senha) e quando há uma.
                 if kind == vault::ItemKind::Login && !self.add_pass.is_empty() {
                     let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
@@ -2232,12 +2312,20 @@ impl KeysApp {
                             let label = ui.label(tr("Value"));
                             ui.horizontal(|ui| {
                                 // Oculto: o valor sai mascarado, com 👁 para revelar e cópia direta.
-                                ui.add(line(&mut f.value).password(f.hidden && !f.revealed).desired_width(if f.hidden {
-                                    field - 84.0
-                                } else {
-                                    field
-                                }))
-                                .labelled_by(label.id);
+                                // CPF (campo com esse nome): formata 000.000.000-00 ao digitar — outro
+                                // formato colado fica como veio (`cpf::format` devolve o cru).
+                                let edit = ui
+                                    .add(line(&mut f.value).password(f.hidden && !f.revealed).desired_width(if f.hidden {
+                                        field - 84.0
+                                    } else {
+                                        field
+                                    }))
+                                    .labelled_by(label.id);
+                                if edit.changed() && !f.hidden && cpf::is_cpf_field(&f.name) {
+                                    let cru = f.value.chars().count();
+                                    f.value = cpf::format(&f.value);
+                                    cursor_do_fim(ui.ctx(), edit.id, cru, f.value.chars().count());
+                                }
                                 if f.hidden {
                                     if ghost(ui, if f.revealed { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
                                         f.revealed = !f.revealed;
@@ -2247,6 +2335,13 @@ impl KeysApp {
                                     }
                                 }
                             });
+                            if !f.hidden && cpf::is_cpf_field(&f.name) && cpf::warning(&f.value) {
+                                ui.label(
+                                    egui::RichText::new(tr("The CPF check digits don't match. Check for a typo; you can still save."))
+                                        .small()
+                                        .color(egui::Color32::from_rgb(230, 130, 40)),
+                                );
+                            }
                             ui.add_space(2.0);
                             ui.horizontal(|ui| {
                                 ui.checkbox(&mut f.hidden, tr("Hidden"));
@@ -2295,6 +2390,9 @@ impl KeysApp {
         }
         if add_field {
             self.form_custom.push(FormCustomField { id: String::new(), name: String::new(), value: String::new(), hidden: false, revealed: false });
+        }
+        if let Some(nome) = add_doc {
+            self.form_custom.push(FormCustomField { id: String::new(), name: nome, value: String::new(), hidden: false, revealed: false });
         }
         if let Some((nome, valor)) = copy_value
             && clipboard::copy_secret(valor).is_ok()

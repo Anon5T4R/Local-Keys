@@ -985,6 +985,238 @@ fn the_totp_field_masks_the_key_until_revealed() {
     assert!(!harness.state().reveal_totp, "fecha ocultando de novo");
 }
 
+/// Digitando o número do cartão: blocos de 4 na tela, bandeira detectada sozinha, CVV oculto — e o
+/// cofre guarda só os dígitos.
+#[test]
+fn typing_a_card_number_shows_blocks_detects_brand_and_hides_the_code() {
+    let mut app = unlocked("card-typing", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("card-typing");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.open_add_form(NewKind::Card);
+    app.add_name = "Cartão".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let campo = harness.get_by_label("Number");
+    campo.click();
+    harness.run_steps(1);
+    for chunk in ["4111", "1111", "1111", "1111"] {
+        harness.input_mut().events.push(egui::Event::Text(chunk.into()));
+        harness.run_steps(1);
+    }
+    harness.run_steps(1);
+    assert_eq!(harness.state().add_number, "4111 1111 1111 1111", "o campo mostra blocos de 4");
+    assert_eq!(harness.state().add_brand, "Visa", "bandeira detectada pelo número");
+    // o CVV nasce oculto (PasswordInput), como a senha
+    assert!(
+        harness.get_all_by_role(Role::PasswordInput).any(|n| n.accesskit_node().label().is_some_and(|l| l == "Security code")),
+        "o código de segurança é oculto"
+    );
+    // salvar grava só os dígitos (blocos são só exibição)
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    let raw = harness.state().raw.as_ref().expect("cofre");
+    let it = raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == "Cartão").expect("item");
+    assert_eq!(it["card"]["number"], "4111111111111111");
+    assert_eq!(it["card"]["brand"], "Visa");
+}
+
+/// A bandeira digitada pela pessoa fica (a detecção não sobrescreve); apagar tudo devolve a detecção
+/// automática pelo número — o `brandAuto` do Android.
+#[test]
+fn the_detected_brand_follows_the_number_but_a_typed_one_stays() {
+    let mut app = unlocked("brand-auto", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Card);
+    app.add_name = "Cartão".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    // bandeira digitada à mão
+    let brand = harness.get_by_label("Brand");
+    brand.click();
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Text("Minha Loja".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().add_brand, "Minha Loja");
+    // o número detectaria Visa, mas a digitada fica
+    let campo = harness.get_by_label("Number");
+    campo.click();
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Text("4111".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().add_number, "4111");
+    assert_eq!(harness.state().add_brand, "Minha Loja", "bandeira digitada não é sobrescrita");
+    // apagar a bandeira devolve a detecção automática
+    let brand = harness.get_by_label("Brand");
+    let borda = egui::pos2(brand.rect().right() - 6.0, brand.rect().center().y);
+    click_at(&mut harness, borda);
+    harness.run_steps(1);
+    for _ in 0.."Minha Loja".len() {
+        press(&mut harness, egui::Key::Backspace, egui::Modifiers::NONE);
+    }
+    harness.run_steps(1);
+    assert_eq!(harness.state().add_brand, "", "apagada");
+    // voltar ao campo do número (o foco estava na bandeira) e digitar mais: a detecção volta
+    let campo = harness.get_by_label("Number");
+    let borda_num = egui::pos2(campo.rect().right() - 6.0, campo.rect().center().y);
+    click_at(&mut harness, borda_num);
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Text("11".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().add_brand, "Visa", "campo vazio volta a acompanhar o número");
+}
+
+/// O aviso de Luhn aparece com 13+ dígitos errados — e NÃO bloqueia o salvar.
+#[test]
+fn luhn_warns_but_does_not_block_saving() {
+    let mut app = unlocked("luhn", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("luhn");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.open_add_form(NewKind::Card);
+    app.add_name = "Quebrado".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let campo = harness.get_by_label("Number");
+    campo.click();
+    harness.run_steps(1);
+    for chunk in ["4111", "1111", "1111", "1112"] {
+        harness.input_mut().events.push(egui::Event::Text(chunk.into()));
+        harness.run_steps(1);
+    }
+    harness.run_steps(2);
+    let aviso = node_text(&harness.get_by_label_contains("fails the card check"));
+    assert!(aviso.contains("Luhn"), "aviso visível: {aviso}");
+    // sem 13 dígitos ainda não avisa
+    // (o aviso é derivado do número a cada quadro; salvar segue de livre)
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    assert!(!harness.state().form_open, "o aviso não bloqueia o salvar: {:?}", harness.state().err);
+    let raw = harness.state().raw.as_ref().expect("cofre");
+    let it = raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == "Quebrado").expect("item");
+    assert_eq!(it["card"]["number"], "4111111111111112", "salvo com o número que falha no Luhn");
+}
+
+/// Os atalhos de documento da identidade criam campos personalizados com o nome preenchido e o valor
+/// livre; "Documento (outro)" deixa o nome vazio.
+#[test]
+fn document_shortcuts_create_named_custom_fields() {
+    let mut app = unlocked("docs", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("docs");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.open_add_form(NewKind::Identity);
+    app.add_name = "Documentos".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("Add a document");
+    // click_accesskit: o clique comum só pega o que está no viewport do ScrollArea; o chip pode
+    // estar na dobra.
+    harness.get_by_label("CPF").click_accesskit();
+    harness.run_steps(1);
+    harness.get_by_label("RG").click_accesskit();
+    harness.run_steps(1);
+    harness.get_by_label("Document (other)").click_accesskit();
+    harness.run_steps(1);
+    let nomes: Vec<String> = harness.state().form_custom.iter().map(|f| f.name.clone()).collect();
+    assert_eq!(nomes, vec!["CPF", "RG", ""], "atalhos criam campos com o nome pronto; 'outro' fica vazio");
+    // o valor é livre
+    harness.state_mut().form_custom[0].value = "529.982.247-25".into();
+    harness.state_mut().form_custom[2].value = "carteira de motorista antiga".into();
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    let raw = harness.state().raw.as_ref().expect("cofre");
+    let it = raw["items"].as_array().expect("itens").iter().find(|i| i["name"] == "Documentos").expect("item");
+    let campos = it["customFields"].as_array().expect("campos");
+    assert_eq!(campos[0]["name"], "CPF");
+    assert_eq!(campos[0]["value"], "529.982.247-25");
+    assert_eq!(campos[2]["name"], "");
+}
+
+/// O campo CPF formata 000.000.000-00 enquanto digita, avisa quando o verificador não fecha (sem
+/// bloquear) e deixa formato colado diferente como veio.
+#[test]
+fn a_cpf_field_formats_digits_and_warns_on_check_digits() {
+    let mut app = unlocked("cpf", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Identity);
+    app.add_name = "Documentos".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("CPF").click_accesskit();
+    harness.run_steps(2);
+    // o campo novo fica abaixo da dobra do ScrollArea do form: o ponteiro precisa estar sobre ele
+    // para a roda rolar (egui rola o que está sob o cursor), e então o clique foca.
+    harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(170.0, 300.0)));
+    harness.run_steps(1);
+    for _ in 0..10 {
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -3.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.run_steps(1);
+    }
+    let valor = harness.get_by_label("Value");
+    valor.click();
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Text("52998224726".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().form_custom[0].value, "529.982.247-26", "formata enquanto digita");
+    let aviso = node_text(&harness.get_by_label_contains("CPF check digits"));
+    assert!(aviso.contains("don't match"), "aviso de verificador: {aviso}");
+    // corrigir o último dígito: o aviso some
+    press(&mut harness, egui::Key::Backspace, egui::Modifiers::NONE);
+    harness.input_mut().events.push(egui::Event::Text("5".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().form_custom[0].value, "529.982.247-25");
+    assert_eq!(harness.query_all_by_label_contains("CPF check digits").count(), 0, "correto: sem aviso");
+    // formato colado diferente fica como colado (mesmos dígitos, sem aviso)
+    for _ in 0.."529.982.247-25".len() {
+        press(&mut harness, egui::Key::Backspace, egui::Modifiers::NONE);
+    }
+    harness.input_mut().events.push(egui::Event::Paste("529982247/25".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().form_custom[0].value, "529982247/25", "colado em outro formato fica como veio");
+    assert_eq!(harness.query_all_by_label_contains("CPF check digits").count(), 0, "os dígitos conferem: sem aviso");
+}
+
+/// As capturas da fase C: formulário de cartão com blocos/bandeira/aviso de Luhn e o de identidade com
+/// os atalhos de documento e o aviso de CPF — claro e escuro, 340 e 1100.
+#[test]
+fn smart_shots() {
+    for (width, label) in [(340.0, "340"), (1100.0, "1100")] {
+        for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+            let mut app = unlocked("shots-c", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Card);
+            app.add_name = "Visa".into();
+            app.add_cardholder = "João da Silva".into();
+            app.add_number = "4111 1111 1111 1112".into();
+            app.add_exp = "01/2027".into();
+            app.add_code = "123".into();
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("smart-card-form-{name}-{label}"));
+
+            let mut app = unlocked("shots-c", Prefs::new("en", appearance));
+            app.open_add_form(NewKind::Identity);
+            app.add_name = "Documentos".into();
+            app.add_first = "João".into();
+            app.add_last = "Silva".into();
+            app.form_custom.push(FormCustomField {
+                id: String::new(),
+                name: "CPF".into(),
+                value: "529.982.247-26".into(),
+                hidden: false,
+                revealed: false,
+            });
+            let mut harness = harness_sized(app, width);
+            harness.run_steps(2);
+            shot(&mut harness, &format!("smart-identity-form-{name}-{label}"));
+        }
+    }
+}
+
 /// As larguras das capturas de revisão (mínima e média), com a barra de cima à mostra nos dois temas.
 #[test]
 fn review_shots() {
