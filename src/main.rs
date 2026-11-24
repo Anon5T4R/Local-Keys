@@ -31,7 +31,7 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, card, cpf, crypto, export, filters, generator, import, kdbx, merge, otpauth, totp, vault};
+use localkeys_core::{bwdecrypt, card, change_kind, cpf, crypto, export, filters, generator, import, kdbx, merge, otpauth, totp, vault};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -268,6 +268,41 @@ fn filter_kind_label(kind: filters::KindFilter) -> &'static str {
     }
 }
 
+/// Os rótulos dos campos que a mudança de tipo gera (a regra do núcleo): as MESMAS chaves que o formulário
+/// já mostra para esses campos, para o campo extra nascer com o nome que a pessoa conhece.
+fn field_labels() -> change_kind::FieldLabels {
+    change_kind::FieldLabels {
+        username: tr("Username").into(),
+        password: tr("Password").into(),
+        website: tr("URL").into(),
+        totp: tr("TOTP").into(),
+        cardholder: tr("Cardholder").into(),
+        brand: tr("Brand").into(),
+        card_number: tr("Number").into(),
+        expiry: tr("Expiry (MM/YY)").into(),
+        security_code: tr("Security code").into(),
+        first_name: tr("First name").into(),
+        last_name: tr("Last name").into(),
+        email: tr("E-mail").into(),
+        phone: tr("Phone").into(),
+        address: tr("Address").into(),
+    }
+}
+
+/// O motivo da conversão recusada no idioma da interface. O `Display` do núcleo é diagnóstico em inglês e
+/// não chega à tela; o nome cru do campo/objeto também não (o usuário vê só a explicação).
+fn change_kind_error_text(error: &change_kind::ChangeKindError) -> String {
+    match error {
+        change_kind::ChangeKindError::NotAnObject => tr("This item cannot change type: it is not a valid vault item."),
+        change_kind::ChangeKindError::UnknownKind => tr("This item cannot change type: its current type is unknown."),
+        change_kind::ChangeKindError::UnknownField { .. } => tr("This item cannot change type: it has a field this app cannot convert."),
+        change_kind::ChangeKindError::UnexpectedValue { .. } => tr("This item cannot change type: one of its fields has an unexpected value."),
+        change_kind::ChangeKindError::MalformedCustomFields => tr("This item cannot change type: its custom fields are not a valid list."),
+        change_kind::ChangeKindError::InvalidJson(_) => tr("This item cannot change type: its data is not valid JSON."),
+    }
+    .to_string()
+}
+
 /// O texto do aviso de parâmetros fora do padrão (por exemplo "8 dígitos, 60 s, SHA-256").
 fn unsupported_text(u: &otpauth::Unsupported) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -400,6 +435,17 @@ fn item_name(raw: &serde_json::Value, id: &str) -> String {
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_string()
+}
+
+/// O `kind` CRU do item no cofre, sem o mapeamento para nota do `item_full`: `None` quando falta ou é
+/// desconhecido — nesse caso o formulário não oferece o seletor de tipo (o tipo fica fixo, como antes).
+fn item_wire_kind(raw: &serde_json::Value, id: &str) -> Option<vault::ItemKind> {
+    raw.get("items")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arr| arr.iter().find(|it| it.get("id").and_then(serde_json::Value::as_str) == Some(id)))
+        .and_then(|it| it.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(vault::ItemKind::from_wire)
 }
 
 /// Ids (String) de TODOS os itens do vault — a lista "antes" do add.
@@ -827,9 +873,17 @@ struct KeysApp {
     folder_filter: Option<String>,
     // formulário de adição/edição
     form_open: bool,
-    /// O tipo do item no formulário — escolhido no seletor do "+" (novo) ou do próprio item (edição);
-    /// não troca dentro do form.
+    /// O tipo do item no formulário — escolhido no seletor do "+" (novo) ou o do próprio item (edição); é
+    /// ele que decide os campos mostrados e o `edit_*` da gravação. A troca de tipo na edição passa por
+    /// [`Self::form_target_kind`].
     form_kind: vault::ItemKind,
+    /// Na edição de um item de tipo CONHECIDO, o tipo escolhido no seletor (começa no atual); a conversão
+    /// acontece ao salvar. `None` = sem seletor: item novo (o tipo veio do "+") ou `kind` desconhecido no
+    /// arquivo, que fica fixo como antes.
+    form_target_kind: Option<vault::ItemKind>,
+    /// Erro da última gravação do formulário (conversão de tipo recusada pelo núcleo): aparece DENTRO do
+    /// modal, que continua aberto — a tela de trás fica coberta por ele.
+    form_err: Option<String>,
     /// Seletor de tipo do "+" (Login, Cartão, Identidade, Nota, Item livre) antes de abrir o form.
     new_kind_open: bool,
     /// Anexos escolhidos no formulário, gravados junto com o item ao salvar (o item novo ainda
@@ -969,6 +1023,8 @@ impl KeysApp {
             folder_filter: None,
             form_open: false,
             form_kind: vault::ItemKind::Login,
+            form_target_kind: None,
+            form_err: None,
             new_kind_open: false,
             form_edit_id: None,
             add_name: String::new(),
@@ -1071,6 +1127,8 @@ impl KeysApp {
         self.add_pass.clear();
         self.form_open = false;
         self.form_edit_id = None;
+        self.form_target_kind = None;
+        self.form_err = None;
         self.new_kind_open = false;
         self.add_url.clear();
         self.add_notes.clear();
@@ -1446,6 +1504,25 @@ impl KeysApp {
                 vault::set_item_folder(&mut next, &id, self.add_folder_id.as_deref());
             }
         }
+        // Mudança de tipo (unidade 4, peça 2): as edições acima já estão no clone `next`; a regra do núcleo
+        // converte o item por cima. `persist` é a ÚNICA gravação — se a conversão recusar, `next` é
+        // descartado (memória e disco intactos) e o formulário continua aberto no tipo original.
+        if let (Some(id), Some(target)) = (edit_id.as_deref(), self.form_target_kind)
+            && target != self.form_kind
+        {
+            match change_kind::change_item_kind(&mut next, id, target, &field_labels()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.form_err = Some(tr("item not found").into());
+                    return;
+                }
+                Err(error) => {
+                    self.form_err = Some(change_kind_error_text(&error));
+                    self.form_target_kind = Some(self.form_kind);
+                    return;
+                }
+            }
+        }
         if self.persist(next) {
             self.close_form_buffers();
             self.form_open = false;
@@ -1480,6 +1557,8 @@ impl KeysApp {
         self.totp_warn = None;
         self.reveal_totp = false;
         self.totp_pending = None;
+        self.form_target_kind = None;
+        self.form_err = None;
     }
 
     // ── TOTP por link/QR (pedido 022, fase B) ─────────────────────────
@@ -1711,7 +1790,8 @@ impl KeysApp {
         self.form_open = true;
     }
 
-    /// Abre o form carregando o item do tipo que ele tem — o tipo aparece FIXO no topo, sem troca.
+    /// Abre o form carregando o item do tipo que ele tem. O tipo vira um seletor quando o `kind` do arquivo
+    /// é conhecido (a conversão acontece ao salvar); com `kind` desconhecido fica o crachá fixo, como antes.
     fn open_edit_form(&mut self, id: &str) {
         let Some(full) = self.raw.as_ref().and_then(|r| vault::item_full(r, id)) else {
             return;
@@ -1719,6 +1799,9 @@ impl KeysApp {
         self.form_kind = full.kind;
         self.form_edit_id = Some(id.to_string());
         self.close_form_buffers();
+        // O `item_full` mapeia `kind` desconhecido para nota; o tipo CRU decide se há seletor (e é o alvo
+        // inicial dele).
+        self.form_target_kind = self.raw.as_ref().and_then(|raw| item_wire_kind(raw, id));
         self.add_folder_id = self.items.iter().find(|i| i.id == id).and_then(|i| i.folder_id.clone());
         self.add_name = self.items.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_default();
         self.add_notes = full.notes;
@@ -2201,9 +2284,10 @@ struct Row {
 impl KeysApp {
     // ── onda 23: diálogos ───────────────────────────────────────────────
 
-    /// Form de adição/edição por tipo: campos do tipo, notas, pasta, anexos e campos personalizados. O
-    /// tipo aparece FIXO no topo (ícone e nome) — a escolha acontece no seletor do "+", antes daqui, ou
-    /// veio do próprio item na edição; dentro do form não dá para trocar.
+    /// Form de adição/edição por tipo: campos do tipo, notas, pasta, anexos e campos personalizados. O tipo
+    /// do item novo vem do seletor do "+" (crachá fixo). Na edição de um item de tipo conhecido ele vira um
+    /// seletor — os campos mostrados continuam os do item e a conversão acontece ao salvar; com `kind`
+    /// desconhecido no arquivo, crachá fixo como antes.
     fn form_modal(&mut self, ctx: &egui::Context) {
         if !self.form_open {
             return;
@@ -2230,7 +2314,45 @@ impl KeysApp {
             dialog_width(ui, 400.0);
             ui.heading(title);
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("{} {}", kind_icon(kind), tr_fmt("Type: {kind}", &[("kind", kind_label(kind))]))).small().weak());
+            match self.form_target_kind {
+                // Item existente de tipo conhecido: o tipo pode ser trocado. Trocar aqui só marca o alvo —
+                // a conversão (regra do núcleo) acontece no Salvar, junto com as edições, numa gravação só.
+                Some(target) => {
+                    ui.horizontal(|ui| {
+                        let label = ui.label(tr("Type"));
+                        egui::ComboBox::from_id_salt("form-tipo")
+                            .width(220.0)
+                            .selected_text(format!("{} {}", kind_icon(target), kind_label(target)))
+                            .show_ui(ui, |ui| {
+                                for option in [vault::ItemKind::Login, vault::ItemKind::Note, vault::ItemKind::Card, vault::ItemKind::Identity] {
+                                    ui.selectable_value(
+                                        &mut self.form_target_kind,
+                                        Some(option),
+                                        format!("{} {}", kind_icon(option), kind_label(option)),
+                                    );
+                                }
+                            })
+                            .response
+                            .labelled_by(label.id);
+                    });
+                    // Nada some em silêncio: os campos que o tipo novo não tem viram campos personalizados.
+                    if target != kind {
+                        ui.label(
+                            egui::RichText::new(tr(
+                                "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden.",
+                            ))
+                            .small()
+                            .color(egui::Color32::from_rgb(230, 130, 40)),
+                        );
+                    }
+                }
+                // Item novo (o tipo veio do "+") ou `kind` desconhecido no arquivo: crachá fixo, como antes.
+                None => {
+                    ui.label(
+                        egui::RichText::new(format!("{} {}", kind_icon(kind), tr_fmt("Type: {kind}", &[("kind", kind_label(kind))]))).small().weak(),
+                    );
+                }
+            }
             ui.add_space(8.0);
             // Com os campos por tipo + campos personalizados o diálogo passa da altura mínima da
             // janela: a área central rola (os botões ficam fora dela, sempre visíveis).
@@ -2564,6 +2686,12 @@ impl KeysApp {
                     add_field = true;
                 }
             });
+            // A conversão recusada aparece aqui, no próprio modal — a linha de erro da tela de trás fica
+            // coberta enquanto o formulário está aberto.
+            if let Some(error) = &self.form_err {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(format!("{}: {error}", tr("Error"))).color(egui::Color32::LIGHT_RED));
+            }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 // Atalho pro gerador (abre por cima deste modal) — só no login, que tem senha.
@@ -2611,7 +2739,7 @@ impl KeysApp {
     }
 
     /// Seletor de tipo do "+": Login, Cartão, Identidade, Nota e Item livre (uma nota que abre com um
-    /// campo personalizado vazio). O formulário abre já com o tipo — lá ele é fixo.
+    /// campo personalizado vazio). O formulário abre já com o tipo escolhido.
     fn new_kind_modal(&mut self, ctx: &egui::Context) {
         if !self.new_kind_open {
             return;
