@@ -88,7 +88,6 @@ struct RawItem {
     id: String,
     name: String,
     favorite: bool,
-    deleted_at: Option<i64>,
     folder_id: Option<String>,
     login: Option<RawLogin>,
     attachments: Option<Vec<serde_json::Value>>,
@@ -101,6 +100,12 @@ struct RawLogin {
     totp: String,
 }
 
+/// Na lixeira? `deletedAt` presente, não nulo e diferente de `0` — a regra ÚNICA do app (o `0` do epoch é falsy no
+/// JS do oficial): a lista, a lixeira e o lote usam esta função, para o item nunca sumir dos dois lados.
+pub fn is_trashed(item: &Value) -> bool {
+    item.get("deletedAt").is_some_and(|deleted_at| !deleted_at.is_null() && deleted_at.as_i64() != Some(0))
+}
+
 /// Visão de lista do vault (lixeira — `deletedAt` — fica fora, como no oficial).
 pub fn items_view(raw: &Value) -> Vec<ItemView> {
     raw.get("items")
@@ -108,10 +113,10 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|it| {
-                    let ri: RawItem = serde_json::from_value(it.clone()).ok()?;
-                    if ri.deleted_at.is_some() {
+                    if is_trashed(it) {
                         return None;
                     }
+                    let ri: RawItem = serde_json::from_value(it.clone()).ok()?;
                     Some(ItemView {
                         id: ri.id,
                         name: ri.name,
@@ -694,15 +699,13 @@ pub fn trashed_items(raw: &Value) -> Vec<TrashRow> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|it| {
-                    // 0 é falsy no JS (`if (i.deletedAt)`) — mesma regra.
-                    let deleted_at = it.get("deletedAt")?.as_i64()?;
-                    if deleted_at == 0 {
+                    if !is_trashed(it) {
                         return None;
                     }
                     Some(TrashRow {
                         id: it.get("id")?.as_str()?.to_string(),
                         name: it.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
-                        deleted_at,
+                        deleted_at: it.get("deletedAt").and_then(Value::as_i64)?,
                     })
                 })
                 .collect()
@@ -955,6 +958,27 @@ mod tests {
         let mut v = vault_com_item();
         v["items"][0]["deletedAt"] = json!(1700000000000i64);
         assert!(items_view(&v).is_empty());
+    }
+
+    /// `deletedAt = 0` é falsy no JS do oficial e o resto do app o trata como FORA da lixeira: o item tem de
+    /// aparecer na lista e fora da lixeira — a mesma regra do lote (`batch::is_trashed`).
+    #[test]
+    fn deleted_at_zero_aparece_na_lista_e_nao_na_lixeira() {
+        let v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[
+                {"id":"zero","kind":"note","name":"Zero","deletedAt":0},
+                {"id":"trashed","kind":"note","name":"Na lixeira","deletedAt":1700000000000},
+                {"id":"live","kind":"note","name":"Vivo","deletedAt":null}
+            ]}"#,
+        )
+        .unwrap();
+
+        let view = items_view(&v);
+        let ids: Vec<&str> = view.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["zero", "live"], "o 0 não é lixeira: aparece na lista");
+        let trash = trashed_items(&v);
+        let trashed: Vec<&str> = trash.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(trashed, ["trashed"], "só o que tem data de verdade entra na lixeira");
     }
 
     #[test]

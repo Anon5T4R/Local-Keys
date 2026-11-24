@@ -4,10 +4,10 @@
 //! - sobre uma **lista de itens** ([`trash_items`], [`move_items`]) e sobre o **cofre** pelo id ([`trash_many`],
 //!   [`move_many`]) — o desktop usa as do cofre; a ponte UniFFI do Android usa as da lista, porque mandar o cofre
 //!   inteiro para a ponte custa caro em memória num cofre grande;
-//! - as mesmas duas com o array em JSON ([`trash_items_json`], [`move_items_json`]), para a ponte não ganhar
-//!   `serde_json` como dependência própria; mover pelo caminho da lista tem ainda a forma que valida a pasta de
-//!   destino contra os ids conhecidos ([`move_items_with_folders`]/[`move_items_json_with_folders`]), porque essa lista
-//!   não carrega o cofre inteiro.
+//! - as mesmas duas com o array em JSON ([`trash_items_json`] e a forma com as pastas
+//!   [`move_items_json_with_folders`]), para a ponte não ganhar `serde_json` como dependência própria; mover pelo
+//!   caminho da lista precisa da forma que valida a pasta de destino contra os ids conhecidos
+//!   ([`move_items_with_folders`]), porque essa lista não carrega o cofre inteiro.
 //!
 //! Decisões da regra:
 //! - **tudo ou nada**: o lote valida TODOS os itens antes de tocar em qualquer um. Um item sem `id`, um id que não
@@ -25,7 +25,6 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use crate::vault;
-
 /// Por que o lote não aconteceu. Mensagens em inglês (diagnóstico; a UI fala pelo i18n dela).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BatchError {
@@ -39,7 +38,7 @@ pub enum BatchError {
     UnknownFolder { id: String },
     /// O cofre bruto não tem `items` (ou `items` não é uma lista).
     MalformedVault,
-    /// A entrada em JSON não é uma lista de itens (só no caminho [`trash_items_json`]/[`move_items_json`]).
+    /// A entrada em JSON não é uma lista de itens (só no caminho [`trash_items_json`]/[`move_items_json_with_folders`]).
     InvalidJson(String),
 }
 
@@ -61,13 +60,6 @@ impl std::error::Error for BatchError {}
 /// O `id` do item; item que não é objeto ou sem `id` em texto é erro.
 fn item_id(item: &Value) -> Result<&str, BatchError> {
     item.get("id").and_then(Value::as_str).ok_or(BatchError::MissingId)
-}
-
-/// Na lixeira? `deletedAt` presente, não nulo e diferente de `0` — a MESMA regra do resto do app
-/// (`vault::trashed_items` no desktop, `Item.inTrash` no Android): o `0` do epoch é falsy no JS do oficial e um item
-/// com ele aparece na lista. Se o lote contasse o `0` como lixeira, esse item nunca poderia ser apagado.
-fn is_trashed(item: &Value) -> bool {
-    item.get("deletedAt").is_some_and(|deleted_at| !deleted_at.is_null() && deleted_at.as_i64() != Some(0))
 }
 
 /// O item já está no destino? `None` = "sem pasta", que é o mesmo que `folderId` ausente ou nulo.
@@ -134,7 +126,7 @@ fn parse_items(items_json: &str) -> Result<Vec<Value>, BatchError> {
 pub fn trash_items(items: &mut [Value], now: u64) -> Result<usize, BatchError> {
     for item in items.iter() {
         let id = item_id(item)?;
-        if is_trashed(item) {
+        if vault::is_trashed(item) {
             return Err(BatchError::AlreadyTrashed { id: id.to_string() });
         }
     }
@@ -188,7 +180,7 @@ pub fn trash_many(raw: &mut Value, ids: &[String], now: u64) -> Result<usize, Ba
     for index in &indices {
         let item = &items[*index];
         let id = item_id(item)?;
-        if is_trashed(item) {
+        if vault::is_trashed(item) {
             return Err(BatchError::AlreadyTrashed { id: id.to_string() });
         }
     }
@@ -226,16 +218,6 @@ pub fn move_many(raw: &mut Value, ids: &[String], folder_id: Option<&str>, now: 
 pub fn trash_items_json(items_json: &str, now: u64) -> Result<String, BatchError> {
     let mut items = parse_items(items_json)?;
     trash_items(&mut items, now)?;
-    serde_json::to_string(&items).map_err(|error| BatchError::InvalidJson(error.to_string()))
-}
-
-/// [`move_items`] com o array em JSON — o caminho da ponte UniFFI. Devolve o array atualizado.
-///
-/// # Errors
-/// [`BatchError::InvalidJson`] ou qualquer erro de [`move_items`].
-pub fn move_items_json(items_json: &str, folder_id: Option<&str>, now: u64) -> Result<String, BatchError> {
-    let mut items = parse_items(items_json)?;
-    move_items(&mut items, folder_id, now)?;
     serde_json::to_string(&items).map_err(|error| BatchError::InvalidJson(error.to_string()))
 }
 

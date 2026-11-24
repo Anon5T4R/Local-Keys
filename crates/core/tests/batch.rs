@@ -4,7 +4,9 @@
 //! existe e nada muda — nem nos outros itens), o lote inteiro carimba o MESMO `now`, apagar é ir para a lixeira
 //! (recuperável), mover para "sem pasta" é permitido, e a contagem devolvida é a dos itens que mudaram de fato.
 
-use localkeys_core::batch::{BatchError, move_items, move_items_json, move_items_with_folders, move_many, trash_items, trash_items_json, trash_many};
+use localkeys_core::batch::{
+    BatchError, move_items, move_items_json_with_folders, move_items_with_folders, move_many, trash_items, trash_items_json, trash_many,
+};
 use serde_json::{Value, json};
 
 /// O `now` do lote (um só para todos os itens).
@@ -241,7 +243,8 @@ fn json_do_lote_devolve_o_array_atualizado() {
     assert_eq!(out[0]["deletedAt"], json!(NOW));
     assert_eq!(out[1]["deletedAt"], json!(NOW));
 
-    let out = move_items_json(&items, Some("home"), NOW).unwrap_or_else(|e| panic!("JSON válido recusado: {e}"));
+    let folders = vec!["work".to_string(), "home".to_string()];
+    let out = move_items_json_with_folders(&items, Some("home"), &folders, NOW).unwrap_or_else(|e| panic!("JSON válido recusado: {e}"));
     let out: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(out[0]["folderId"], "home");
     assert_eq!(out[1]["folderId"], "home");
@@ -251,7 +254,7 @@ fn json_do_lote_devolve_o_array_atualizado() {
 fn json_invalido_e_erro() {
     for bad in ["não é json", "{}", "42"] {
         assert!(matches!(trash_items_json(bad, NOW), Err(BatchError::InvalidJson(_))), "{bad}");
-        assert!(matches!(move_items_json(bad, None, NOW), Err(BatchError::InvalidJson(_))), "{bad}");
+        assert!(matches!(move_items_json_with_folders(bad, None, &[], NOW), Err(BatchError::InvalidJson(_))), "{bad}");
     }
 }
 

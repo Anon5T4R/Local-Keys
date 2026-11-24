@@ -51,6 +51,7 @@ import com.localkeys.android.data.vault.Login
 import com.localkeys.android.data.vault.Vault
 import com.localkeys.android.data.vault.VaultAutofillCache
 import com.localkeys.android.data.vault.VaultRepository
+import com.localkeys.android.data.vault.VaultSaver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,12 +82,11 @@ fun writeDocument(resolver: ContentResolver, uri: Uri, bytes: ByteArray): ByteAr
 
 /**
  * O arquivo no disco mudou desde a última leitura/gravação conhecida (ex.: o
- * OneDrive/Google Drive sincronizou uma versão nova vinda do desktop). Lançada
- * por [VaultViewModel.writeAndVerify] ANTES de gravar, para nunca sobrescrever
- * em silêncio o trabalho do outro dispositivo. A UI oferece recarregar ou
- * sobrescrever.
+ * OneDrive/Google Drive sincronizou uma versão nova vinda do desktop). O
+ * `VaultSaver` a detecta ANTES de gravar ([VaultSaver.SaveFailure.ExternalChange])
+ * para nunca sobrescrever em silêncio o trabalho do outro dispositivo. A UI
+ * oferece recarregar ou sobrescrever.
  */
-class ExternalChangeException : IOException("o arquivo foi modificado fora do app")
 
 /**
  * Estado da UI + ponte entre telas, `.tkeys` e cofre biométrico do SO.
@@ -139,6 +139,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     private val crypto = TkeysCrypto()
     private val repository = VaultRepository(crypto)
+    private val saver = VaultSaver(repository)
     private val settings = SettingsStore(application)
     private val biometricKey = BiometricVaultKey()
 
@@ -154,11 +155,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Últimos bytes conhecidos do arquivo no disco. Serve tanto para o unlock
-     * (decifrar) quanto como **baseline da detecção de mudança externa**: antes
-     * de gravar, comparamos o disco atual com isto; depois de gravar, atualizamos
-     * para os bytes recém-gravados.
+     * (decifrar) quanto como **baseline da detecção de mudança externa**: o
+     * [VaultSaver] compara o disco atual com isto antes de gravar e atualiza
+     * para os bytes recém-gravados depois.
      */
-    private var cachedBlob: ByteArray? = null
+    private var cachedBlob: ByteArray?
+        get() = saver.known
+        set(value) {
+            saver.seed(value)
+        }
 
     /** Chaves biométricas por cofre (URI → hex). Só a do cofre atual é usada ([currentWrappedKey]). */
     @Volatile
@@ -342,12 +347,17 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-                writeAndVerify(resolver, uri, file)
+                withContext(Dispatchers.IO) { saver.write(file, repository.vault, ResolverDocument(resolver, uri)) }
                 settings.setVaultUri(uri.toString())
                 syncAutofillCache(repository.vault)
                 _state.update { it.copy(vault = repository.vault, screen = Screen.Vault, busy = false) }
             } catch (e: Exception) {
-                _state.update { it.copy(error = str(R.string.msg_create_failed, e.message ?: ""), busy = false) }
+                val detail = when (e) {
+                    is VaultSaver.SaveFailure -> saveFailureText(e)
+                    is TkeysError -> tkeysErrorMessage(e)
+                    else -> e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+                }
+                _state.update { it.copy(error = str(R.string.msg_create_failed, detail), busy = false) }
             }
         }
     }
@@ -358,7 +368,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * Sobrescreve o arquivo com o vault em memória mesmo havendo mudança externa
      * (usuário confirmou no diálogo de conflito). Como as edições pendentes já
      * estão no vault em memória, isto serve de "retry" para qualquer ação que
-     * tenha esbarrado no [ExternalChangeException].
+     * tenha esbarrado no [VaultSaver.SaveFailure.ExternalChange].
      */
     fun forceSave() {
         if (_state.value.vaultUri == null) return
@@ -717,7 +727,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(busy = false) }
                     return@launch
                 }
-                persistAndCommit(result.vault, notice = plural(R.plurals.msg_items_moved, ids.size, target))
+                persistAndCommit(result.vault, notice = plural(R.plurals.msg_items_moved, result.changed, target))
                 withContext(Dispatchers.Main) { selection.clear() }
             } catch (e: Exception) {
                 failSave(e, R.string.op_move_item)
@@ -793,63 +803,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * chamar daqui, continuam como sempre foram.
      */
     private suspend fun persistAndCommit(updated: Vault, notice: String?, force: Boolean = false) {
-        val file = repository.seal(updated)
-        repository.verifySaved(file, updated) // nunca grava um blob que não reabriria
         val uri = _state.value.vaultUri
             ?: throw IOException(str(R.string.err_no_file))
-        writeAndVerify(getApplication<Application>().contentResolver, Uri.parse(uri), file, force)
+        val resolver = getApplication<Application>().contentResolver
+        // Cifra + grava + confere contra o CANDIDATO + adota: o `VaultSaver` faz a sequência inteira na thread de IO.
+        withContext(Dispatchers.IO) {
+            saver.saveAndCommit(updated, ResolverDocument(resolver, Uri.parse(uri)), force)
+        }
         syncAutofillCache(updated)
-        repository.replace(updated)
         _state.update { it.copy(vault = updated, busy = false, notice = notice) }
-    }
-
-    /**
-     * Grava o blob no documento SAF e confere **relendo o que ficou gravado**
-     * (abre com a sessão e confere o conteúdo): se o provider truncou ou
-     * corrompeu, reescreve uma vez. Lança [IOException] se o arquivo gravado
-     * não reabre — o estado do chamador nunca é comitado nesse caso.
-     *
-     * Antes de gravar, **detecta mudança externa**: se o que está no disco
-     * difere do último estado conhecido ([cachedBlob]), outro dispositivo
-     * sincronizou uma versão nova → lança [ExternalChangeException] em vez de
-     * sobrescrever (a não ser com `force = true`, confirmado pelo usuário).
-     */
-    private suspend fun writeAndVerify(
-        resolver: ContentResolver,
-        document: Uri,
-        file: ByteArray,
-        force: Boolean = false,
-    ) {
-        // A gravação inteira (com o "w" de reserva) e a releitura: devolve o que ficou no disco.
-        suspend fun writeOnce(): ByteArray? = withContext(Dispatchers.IO) {
-            try {
-                writeDocument(resolver, document, file)
-            } catch (e: DocumentWriteException.NotTruncated) {
-                throw IOException(str(R.string.err_write_not_truncated, e.written, e.found), e)
-            } catch (e: DocumentWriteException.Failed) {
-                throw IOException(str(R.string.err_write_failed_cause, e.message ?: ""), e)
-            }
-        }
-        val known = cachedBlob
-        if (!force && known != null) {
-            val currentDisk = readDocumentBytes(resolver, document)
-            // Se não dá pra ler o disco não dá pra comparar; a verificação
-            // pós-gravação continua valendo.
-            if (currentDisk != null && !currentDisk.contentEquals(known)) {
-                throw ExternalChangeException()
-            }
-        }
-        if (writtenIsSane(writeOnce())) {
-            cachedBlob = file
-            return
-        }
-        val retry = try {
-            writeOnce()
-        } catch (e: IOException) {
-            throw IOException(str(R.string.err_write_retry_failed, e.message ?: describeCause(e)), e)
-        }
-        if (!writtenIsSane(retry)) throw IOException(str(R.string.err_write_unrecoverable))
-        cachedBlob = file
     }
 
     /** Lê os bytes do documento SAF (null se não der pra ler). */
@@ -863,19 +825,35 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
 
     /**
-     * Tratamento comum de falha de gravação: [ExternalChangeException] vira o
-     * diálogo de conflito; [TkeysError] vira a mensagem mapeada do erro; o
-     * resto vira "contexto: mensagem".
+     * Tratamento comum de falha de gravação: a mudança externa
+     * ([VaultSaver.SaveFailure.ExternalChange]) vira o diálogo de conflito;
+     * [TkeysError] e as demais variantes do [VaultSaver] viram a mensagem
+     * mapeada do erro; o resto vira "contexto: mensagem".
      */
     private fun failSave(e: Exception, @StringRes context: Int) {
-        if (e is ExternalChangeException) {
+        if (e is VaultSaver.SaveFailure.ExternalChange) {
             _state.update { it.copy(externalChange = true, busy = false) }
         } else {
-            val detail = if (e is TkeysError) tkeysErrorMessage(e) else (e.message?.takeIf { it.isNotBlank() } ?: describeCause(e))
+            val detail = when (e) {
+                is VaultSaver.SaveFailure -> saveFailureText(e)
+                is TkeysError -> tkeysErrorMessage(e)
+                else -> e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+            }
             _state.update {
                 it.copy(error = str(R.string.msg_op_failed, str(context), detail), busy = false)
             }
         }
+    }
+
+    /** Texto de uma falha do [VaultSaver]: as variantes não dependem de Android, o recurso é resolvido aqui. */
+    private fun saveFailureText(e: VaultSaver.SaveFailure): String = when (e) {
+        is VaultSaver.SaveFailure.NotTruncated -> str(R.string.err_write_not_truncated, e.written, e.found)
+        is VaultSaver.SaveFailure.WriteFailed ->
+            str(R.string.err_write_failed_cause, e.attempts.joinToString("; ") { (mode, cause) -> "$mode: ${describeCause(cause)}" })
+        is VaultSaver.SaveFailure.RetryFailed -> str(R.string.err_write_retry_failed, e.cause?.let(::describeCause) ?: "")
+        VaultSaver.SaveFailure.Unrecoverable -> str(R.string.err_write_unrecoverable)
+        // Tratada no `failSave` antes de chegar aqui (diálogo de conflito).
+        is VaultSaver.SaveFailure.ExternalChange -> str(R.string.err_write_unrecoverable)
     }
 
     /** Mensagem de erro do `.tkeys` mapeada por tipo (recursos, não o message interno). */
@@ -900,10 +878,6 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     /** O texto de um plural no idioma da interface; a contagem vai também nos argumentos (`%1$d`). */
     private fun plural(@PluralsRes id: Int, count: Int, vararg args: Any): String =
         getApplication<Application>().resources.getQuantityString(id, count, count, *args)
-
-    /** O que ficou gravado (relido) reabre com a sessão e bate com o vault atual? Null = não deu para reler. */
-    private fun writtenIsSane(blob: ByteArray?): Boolean =
-        blob != null && runCatching { repository.verifySaved(blob) }.isSuccess
 
     /** Mantém o cache do autofill em sincronia com o estado do cofre. */
     private fun syncAutofillCache(vault: Vault?) {
@@ -934,7 +908,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         try {
             once()
             null
-        } catch (_: ExternalChangeException) {
+        } catch (_: VaultSaver.SaveFailure.ExternalChange) {
             try {
                 val uri = _state.value.vaultUri ?: throw IOException(str(R.string.err_no_file))
                 val bytes = readDocumentBytes(getApplication<Application>().contentResolver, Uri.parse(uri))

@@ -92,6 +92,18 @@ class BatchVaultTest {
     }
 
     @Test
+    fun mover_em_lote_para_a_pasta_conta_so_os_que_mudaram() {
+        // O 'b' já está na pasta: a contagem do aviso é a dos que mudaram de fato (1), não a da seleção (2).
+        val repository = repository(item("a"), item("b", folderId = "work"))
+
+        val moved = repository.commit(repository.moveSelected(listOf("a", "b"), "work", now))
+
+        assertEquals(1, moved.changed)
+        assertEquals(now, moved.vault.items.first { it.id == "a" }.updatedAt)
+        assertEquals("o que já estava na pasta não é recarimbado", 2L, moved.vault.items.first { it.id == "b" }.updatedAt)
+    }
+
+    @Test
     fun mover_para_a_pasta_em_que_os_itens_ja_estao_nao_muda_nada() {
         val repository = repository(item("a"), item("b"))
         repository.commit(repository.moveSelected(listOf("a", "b"), "work", now))
