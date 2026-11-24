@@ -29,7 +29,10 @@ import com.localkeys.android.data.import.BwDecrypt
 import com.localkeys.android.data.import.ImportError
 import com.localkeys.android.data.import.ImportFormat
 import com.localkeys.android.data.import.Importers
+import com.localkeys.android.data.export.VaultExport
 import com.localkeys.android.data.export.VaultExporter
+import com.localkeys.android.data.export.exportPasswordProblem
+import com.localkeys.android.data.export.ExportPasswordProblem
 import com.localkeys.android.data.passkey.CxfImport
 import com.localkeys.android.data.store.DocumentIo
 import com.localkeys.android.data.store.DocumentWriteException
@@ -112,6 +115,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val source: ImportSource,
     )
 
+    /** O destino do cofre novo: a URI do "criar" do SAF e o nome que o sistema deu ao arquivo (é o nome do cofre). */
+    data class PendingExportVault(val uri: String, val name: String?)
+
     data class UiState(
         val screen: Screen = Screen.Unlock,
         val vault: Vault? = null,
@@ -123,6 +129,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val error: String? = null,
         val notice: String? = null,
         val pendingImport: PendingImport? = null,
+        /** Exportar a seleção para um cofre NOVO: destino escolhido no "criar" do sistema, esperando a senha. */
+        val exportVault: PendingExportVault? = null,
+        /** Erro de validação das senhas do cofre novo (aparece DENTRO do diálogo). */
+        val exportVaultError: String? = null,
         /** Arquivo mudou no disco fora do app → UI mostra o diálogo de conflito. */
         val externalChange: Boolean = false,
         /** Tema escolhido nas configurações ("system", "light" ou "dark"). */
@@ -140,6 +150,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     private val crypto = TkeysCrypto()
     private val repository = VaultRepository(crypto)
     private val saver = VaultSaver(repository)
+    private val exporter = VaultExport()
     private val settings = SettingsStore(application)
     private val biometricKey = BiometricVaultKey()
 
@@ -1198,6 +1209,66 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Exportar a seleção para um cofre NOVO (unidade 6) ────────────────
+
+    /** O "criar" do sistema devolveu o arquivo: o diálogo das senhas abre com o destino (o nome do cofre) à mostra. */
+    fun exportVaultUriChosen(uri: Uri) {
+        if (_state.value.vault == null || _state.value.busy || _state.value.exportVault != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val name = displayName(getApplication<Application>().contentResolver, uri)
+            // O cofre pode ter trancado enquanto o seletor estava aberto: aí o destino não vale mais.
+            if (_state.value.vault == null) return@launch
+            _state.update { it.copy(exportVault = PendingExportVault(uri.toString(), name), exportVaultError = null) }
+        }
+    }
+
+    /** Fechou o diálogo sem criar: nada é gerado e a seleção fica. */
+    fun cancelExportVault() {
+        _state.update { it.copy(exportVault = null, exportVaultError = null) }
+    }
+
+    /**
+     * Cria o cofre novo com a [password] (a [confirmation] só é comparada): a regra do núcleo e a cifra rodam fora
+     * da thread principal; a gravação vai para IO. O cofre aberto e a seleção não mudam — a exportação só lê.
+     */
+    fun exportVault(password: String, confirmation: String) {
+        val pending = _state.value.exportVault ?: return
+        if (_state.value.busy) return
+        when (exportPasswordProblem(password, confirmation)) {
+            ExportPasswordProblem.Empty -> {
+                _state.update { it.copy(exportVaultError = str(R.string.export_vault_password_empty)) }
+                return
+            }
+            ExportPasswordProblem.Mismatch -> {
+                _state.update { it.copy(exportVaultError = str(R.string.create_mismatch)) }
+                return
+            }
+            null -> Unit
+        }
+        val ids = selection.ids()
+        // Fecha o diálogo e marca o trabalho JÁ na thread da UI: um segundo toque não dispara outro cofre.
+        _state.update { it.copy(busy = true, exportVault = null, exportVaultError = null) }
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val file = exporter.build(repository.vault, ids, password)
+                val resolver = getApplication<Application>().contentResolver
+                withContext(Dispatchers.IO) {
+                    exporter.write(ResolverDocument(resolver, Uri.parse(pending.uri)), file)
+                }
+                _state.update {
+                    it.copy(busy = false, notice = str(R.string.msg_export_vault_saved, pending.name ?: pending.uri))
+                }
+            } catch (e: TkeysError) {
+                // A recusa do núcleo (seleção vazia ou id que sumiu do cofre) já tem o texto traduzido.
+                _state.update { it.copy(busy = false, error = tkeysErrorMessage(e)) }
+            } catch (e: VaultExport.Failure.Save) {
+                _state.update { it.copy(busy = false, error = str(R.string.msg_export_vault_failed, describeCause(e.cause ?: e))) }
+            } catch (e: Exception) {
+                _state.update { it.copy(busy = false, error = str(R.string.msg_export_vault_failed, describeCause(e))) }
+            }
+        }
+    }
+
     // ── Travar / limpar ──────────────────────────────────────────────────
 
     fun lock() {
@@ -1205,7 +1276,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         selection.clear()
         repository.lock()
         syncAutofillCache(null)
-        _state.update { it.copy(vault = null, screen = Screen.Unlock) }
+        _state.update { it.copy(vault = null, screen = Screen.Unlock, exportVault = null, exportVaultError = null) }
     }
 
     /** Tema do app ("system", "light" ou "dark"), gravado nas preferências. */

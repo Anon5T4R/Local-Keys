@@ -53,6 +53,8 @@ data class HostCallbacks(
     val onMoveVault: (String) -> Unit,
     /** Escolher a outra cópia para sincronizar. */
     val onSyncOther: () -> Unit,
+    /** Exportar a seleção para um cofre NOVO: abre o "criar" do sistema (`exported-vault.tkeys`). */
+    val onExportVault: () -> Unit,
 )
 
 /**
@@ -147,6 +149,7 @@ fun VaultHost(
                 onLock = viewModel::lock,
                 onMoveSelected = viewModel::moveSelected,
                 onTrashSelected = viewModel::trashSelected,
+                onExportSelected = callbacks.onExportVault,
                 banner = if (updateState.showBanner) {
                     { UpdateBanner(updateState, updateActions) }
                 } else {
@@ -319,6 +322,15 @@ fun VaultHost(
                 callbacks.onExport(format)
             },
             onDismiss = { exportOpen = false },
+        )
+    }
+    state.exportVault?.let { pending ->
+        ExportVaultDialog(
+            pending = pending,
+            busy = state.busy,
+            error = state.exportVaultError,
+            onConfirm = viewModel::exportVault,
+            onDismiss = viewModel::cancelExportVault,
         )
     }
     if (state.externalChange) {

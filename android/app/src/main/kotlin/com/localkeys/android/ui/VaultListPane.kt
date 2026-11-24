@@ -198,6 +198,8 @@ fun VaultListPane(
     onMoveSelected: (String?) -> Unit,
     /** Apagar a seleção (depois da confirmação): manda para a lixeira. */
     onTrashSelected: () -> Unit,
+    /** Exportar a seleção para um cofre NOVO: abre o "criar" do sistema e depois o diálogo das senhas. */
+    onExportSelected: () -> Unit,
     /** Cartão do atualizador no topo da lista (null = nada a mostrar). */
     banner: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -240,6 +242,7 @@ fun VaultListPane(
                         visibleIds = visible.map { it.id },
                         busy = busy,
                         onMove = onMoveSelected,
+                        onExport = onExportSelected,
                         onTrash = { confirmingTrash = true },
                     )
                 } else {
@@ -330,7 +333,7 @@ fun VaultListPane(
 
 /**
  * A barra de topo no modo de seleção: contagem, "selecionar tudo" (os visíveis), mover para pasta (com "sem
- * pasta") e apagar. Fechar é a seta/X da esquerda; o back do aparelho faz o mesmo.
+ * pasta"), exportar para um cofre novo e apagar. Fechar é a seta/X da esquerda; o back do aparelho faz o mesmo.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -340,6 +343,7 @@ private fun SelectionTopBar(
     visibleIds: List<String>,
     busy: Boolean,
     onMove: (String?) -> Unit,
+    onExport: () -> Unit,
     onTrash: () -> Unit,
 ) {
     var moveOpen by remember { mutableStateOf(false) }
@@ -384,6 +388,9 @@ private fun SelectionTopBar(
                         )
                     }
                 }
+            }
+            IconButton(onClick = onExport, enabled = !busy) {
+                Icon(Icons.Outlined.FileUpload, contentDescription = stringResource(R.string.selection_export_vault))
             }
             IconButton(onClick = onTrash, enabled = !busy) {
                 Icon(

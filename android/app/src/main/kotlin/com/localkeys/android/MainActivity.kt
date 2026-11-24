@@ -66,6 +66,12 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) viewModel.onExportUriChosen(uri)
         }
 
+    /** Exportar a seleção para um cofre NOVO: o sistema cria o arquivo e o diálogo das senhas vem depois. */
+    private val exportVaultLauncher: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri != null) viewModel.exportVaultUriChosen(uri)
+        }
+
     /** "json" ou "csv": prepara o conteúdo e abre o SAF para escolher o destino. */
     private fun startExport(format: String) {
         val name = if (format == "csv") "localkeys-export.csv" else "localkeys-export.json"
@@ -108,6 +114,7 @@ class MainActivity : AppCompatActivity() {
                         onOpenVault = { openVaultLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
                         onMoveVault = { name -> moveVaultLauncher.launch(name) },
                         onSyncOther = { syncOtherLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
+                        onExportVault = { exportVaultLauncher.launch("exported-vault.tkeys") },
                     ),
                 )
             }

@@ -210,6 +210,13 @@
     <string name="msg_export_prepare_failed">Could not prepare the export: %1$s</string>
     <string name="msg_export_saved">Export saved. Not encrypted — use it only to migrate.</string>
     <string name="msg_export_save_failed">Could not save the export: %1$s</string>
+    <string name="export_vault_title">Export to a new vault</string>
+    <string name="export_vault_message">The selected items go to a NEW encrypted vault (.tkeys). Only the folders they use go with them; attachments travel inside.</string>
+    <string name="export_vault_file">File: %1$s</string>
+    <string name="export_vault_password_empty">Enter a password for the new vault.</string>
+    <string name="export_vault_confirm">Export</string>
+    <string name="msg_export_vault_saved">New vault saved: %1$s</string>
+    <string name="msg_export_vault_failed">Could not save the new vault: %1$s</string>
     <string name="msg_reloaded">Vault reloaded from disk.</string>
     <string name="msg_reload_failed">Reload failed: %1$s</string>
 
@@ -376,6 +383,7 @@
     <string name="selection_all">Select all</string>
     <string name="selection_move">Move to folder…</string>
     <string name="selection_delete">Delete selected</string>
+    <string name="selection_export_vault">Export selected to a new vault</string>
     <string name="selection_delete_confirm">Delete</string>
     <plurals name="selection_delete_message">
         <item quantity="one">Move %1$d item to the trash?</item>

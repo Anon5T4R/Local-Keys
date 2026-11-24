@@ -19,6 +19,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -112,8 +113,66 @@ fun ImportPasswordDialog(
     )
 }
 
-/** O arquivo mudou fora do app: recarregar (adota o do disco) ou sobrescrever (grava o daqui). */
+/**
+ * Cofre NOVO a partir da seleção (unidade 6): o arquivo já foi criado no "criar" do sistema — aqui entram só a senha
+ * e a confirmação. O nome do cofre é o do arquivo; o cofre aberto não muda e a seleção continua.
+ *
+ * A senha mora em `remember` (e não `rememberSaveable`): ela não vai para o estado salvo do processo e some quando o
+ * diálogo fecha.
+ */
 @Composable
+fun ExportVaultDialog(
+    pending: VaultViewModel.PendingExportVault,
+    busy: Boolean,
+    error: String?,
+    onConfirm: (password: String, confirmation: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.export_vault_title)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(stringResource(R.string.export_vault_message), style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.export_vault_file, pending.name ?: pending.uri),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                PasswordField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = stringResource(R.string.field_password),
+                    enabled = !busy,
+                    isError = error != null,
+                    supportingText = error?.let { message -> { Text(message) } },
+                )
+                Spacer(Modifier.height(8.dp))
+                PasswordField(
+                    value = confirmation,
+                    onValueChange = { confirmation = it },
+                    label = stringResource(R.string.create_confirm),
+                    enabled = !busy,
+                    onImeAction = { if (!busy) onConfirm(password, confirmation) },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(password, confirmation) }, enabled = !busy) {
+                Text(stringResource(R.string.export_vault_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.editor_cancel)) }
+        },
+    )
+}
+
+/** O arquivo mudou fora do app: recarregar (adota o do disco) ou sobrescrever (grava o daqui). */@Composable
 fun ExternalChangeDialog(onReload: () -> Unit, onOverwrite: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,

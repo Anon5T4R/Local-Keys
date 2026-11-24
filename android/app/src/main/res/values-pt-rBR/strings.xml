@@ -209,6 +209,13 @@
     <string name="msg_export_prepare_failed">Falha ao preparar o export: %1$s</string>
     <string name="msg_export_saved">Export salvo. Sem cifra — use só para migrar.</string>
     <string name="msg_export_save_failed">Falha ao salvar o export: %1$s</string>
+    <string name="export_vault_title">Exportar para um cofre novo</string>
+    <string name="export_vault_message">Os itens selecionados vão para um cofre NOVO cifrado (.tkeys). Só as pastas que eles usam vão junto; os anexos viajam dentro.</string>
+    <string name="export_vault_file">Arquivo: %1$s</string>
+    <string name="export_vault_password_empty">Informe uma senha para o cofre novo.</string>
+    <string name="export_vault_confirm">Exportar</string>
+    <string name="msg_export_vault_saved">Cofre novo salvo: %1$s</string>
+    <string name="msg_export_vault_failed">Não foi possível salvar o cofre novo: %1$s</string>
     <string name="msg_reloaded">Cofre recarregado do disco.</string>
     <string name="msg_reload_failed">Falha ao recarregar: %1$s</string>
 
@@ -375,6 +382,7 @@
     <string name="selection_all">Selecionar tudo</string>
     <string name="selection_move">Mover para pasta…</string>
     <string name="selection_delete">Apagar selecionados</string>
+    <string name="selection_export_vault">Exportar selecionados para um cofre novo</string>
     <string name="selection_delete_confirm">Apagar</string>
     <plurals name="selection_delete_message">
         <item quantity="one">Mover %1$d item para a lixeira?</item>
