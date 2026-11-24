@@ -466,21 +466,24 @@ fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
     }
 }
 
-/// O painel de anexos de um item (aberto pela lista) com nome longo e anexos: na janela de 500 px
-/// e na mínima de 340, o título, cada nome de arquivo e os botões ficam inteiros e dentro da janela.
+/// O painel de anexos de um item (aberto pela lista) com nome longo, anexos vivos e apagados: na janela de
+/// 500 px e na mínima de 340, título, nomes, tamanho e todos os botões ficam inteiros e dentro da janela.
+/// Na janela larga, cada anexo continua numa linha só (nome ao lado dos botões).
 #[test]
 fn the_attachments_panel_fits_the_narrow_window() {
     const HEIGHT: f64 = 640.0;
     const ITEM: &str = "Intranet corporativa do grupo com um nome bem comprido";
     const NAMES: [&str; 2] = ["foto-do-documento-de-identidade-2026-frente.jpg", "nota.txt"];
-    for width in [500.0, 340.0] {
+    const TRASHED: &str = "relatorio-anual-assinado-e-carimbado-pelo-contador.pdf";
+    for width in [900.0, 500.0, 340.0] {
         let mut app = app("attachments", Prefs::new("en", ThemeMode::Dark));
         let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
         crate::vault::add_login(&mut raw, crate::vault::LoginForm { name: ITEM, username: "joao", password: "x", totp: "", url: "", notes: "" });
         let item = raw.get_mut("items").and_then(|i| i.get_mut(0)).expect("item");
         item["attachments"] = serde_json::json!([
             { "id": "a1", "name": NAMES[0], "size": 2048 },
-            { "id": "a2", "name": NAMES[1], "size": 12 }
+            { "id": "a2", "name": NAMES[1], "size": 12 },
+            { "id": "a3", "name": TRASHED, "size": 4096, "deletedAt": 10 }
         ]);
         app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
         app.adopt(crate::crypto::test_session(), raw);
@@ -489,20 +492,40 @@ fn the_attachments_panel_fits_the_narrow_window() {
         let mut harness = harness_sized(app, width as f32);
         harness.run_steps(3);
         shot(&mut harness, &format!("attachments-panel-{width}"));
-        let inside = |rect: egui::Rect| rect.min.x >= 0.0 && rect.max.x <= width as f32;
-        let title = harness.get_by_label_contains(&format!("Attachments — {ITEM}")).rect();
-        assert!(inside(title), "{width}: título cortado: {title:?}");
+        let inside = |what: &str, rect: egui::Rect| {
+            assert!(rect.min.x >= 0.0 && rect.max.x <= width as f32, "{width}: {what} cortado: {rect:?}");
+        };
+        inside("título", harness.get_by_label_contains(&format!("Attachments — {ITEM}")).rect());
         for name in NAMES {
             let nodes: Vec<_> = harness.get_all_by_label(name).collect();
             assert!(!nodes.is_empty(), "{width}: nome {name} sumiu (truncado demais)");
             for node in &nodes {
-                let rect = node.rect();
-                assert!(inside(rect), "{width}: nome {name} cortado: {rect:?}");
+                inside(&format!("nome {name}"), node.rect());
+            }
+        }
+        inside(&format!("nome {TRASHED}"), harness.get_by_label(TRASHED).rect());
+        // Um botão por anexo vivo, mais um por anexo na lixeira.
+        for (label, expected) in [("Save", 2), ("Delete attachment", 2), ("Restore", 1), ("Delete forever", 1)] {
+            let nodes: Vec<_> = harness.get_all_by_label(label).collect();
+            assert_eq!(nodes.len(), expected, "{width}: quantidade de botões {label}");
+            for node in &nodes {
+                inside(&format!("botão {label}"), node.rect());
             }
         }
         let add = harness.get_by_label("Add attachment").rect();
-        assert!(inside(add), "{width}: Add attachment cortado: {add:?}");
-        assert!(title.min.y >= 0.0 && add.max.y <= HEIGHT as f32, "{width}: fora da altura");
+        inside("Add attachment", add);
+        assert!(add.max.y <= HEIGHT as f32, "{width}: fora da altura");
+        if width > 500.0 {
+            // Janela larga: nome e botões dividem a mesma linha (o tamanho é só para a ordem).
+            for (index, name, label) in [(0, NAMES[0], "Save"), (1, NAMES[1], "Delete attachment"), (0, TRASHED, "Restore")] {
+                let text = harness.get_by_label(name).rect();
+                let button = harness.get_all_by_label(label).nth(index).expect("botão").rect();
+                assert!(
+                    text.top() <= button.bottom() && button.top() <= text.bottom(),
+                    "{width}: {name} e {label} não estão na mesma linha: {text:?} {button:?}"
+                );
+            }
+        }
     }
 }
 

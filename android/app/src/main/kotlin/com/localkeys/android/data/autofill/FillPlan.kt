@@ -5,7 +5,7 @@ sealed interface FillPlan {
     /** Nada desta tela serve para o item (ex.: só há campo de código e o item não tem TOTP). */
     data object Skip : FillPlan
 
-    /** Valores direto no dataset (usuário/senha, sem TOTP envolvido). */
+    /** Usuário e senha, sem TOTP envolvido (nada a copiar depois de preencher). */
     data object Direct : FillPlan
 
     /** Montado na hora da escolha (código TOTP fresco); [copyTotp] = copiar o código depois. */

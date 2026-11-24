@@ -110,14 +110,18 @@ mod tests {
     #[test]
     fn spawn_tray_goes_through_the_policy() {
         // `spawn_tray` é `#[cfg(windows)]`; conferir o texto é o que dá para
-        // testar no Linux.
+        // testar no Linux. Por isso o corpo precisa casar até o fim: um
+        // comentário com a frase, ou um `with_menu_on_left_click` depois do
+        // `configure`, não passam.
         let main = include_str!("main.rs");
         let start = main.find("fn spawn_tray()").expect("spawn_tray");
         let rest = &main[start..];
-        let body = &rest[..rest.find("fn tray_icon()").expect("tray_icon, que vem depois")];
-        let builders = body.matches("TrayIconBuilder::new()").count();
+        let body = rest.split_once("fn tray_icon()").expect("tray_icon, que vem depois").0;
+        let code: String = body.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
+        let builders = code.matches("TrayIconBuilder::new()").count();
         assert_eq!(builders, 1, "spawn_tray monta a bandeja num builder só");
-        assert!(body.contains("tray::configure(TrayIconBuilder::new())"), "o builder da bandeja sai sem a política");
+        assert!(!code.contains("with_menu_on_left_click("), "o menu foi religado por fora da política");
+        assert!(code.contains("tray::configure(TrayIconBuilder::new())"), "o builder da bandeja sai sem a política");
     }
 
     #[test]

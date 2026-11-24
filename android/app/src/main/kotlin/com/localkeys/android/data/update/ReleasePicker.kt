@@ -5,6 +5,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.net.MalformedURLException
 import java.net.URL
+import java.net.URLDecoder
 
 /** Uma release do Keys Android publicada no GitHub, com o APK que a atualização baixa. */
 data class AndroidRelease(
@@ -92,10 +93,20 @@ object ReleasePicker {
             return false
         }
         if (parsed.protocol != "https" || parsed.host != "github.com" || parsed.port != -1) return false
-        // Sem `.`/`..` no caminho: o GitHub resolveria para outro repositório.
-        val path = parsed.path
-        if (path.split('/').any { it == "." || it == ".." }) return false
-        return DOWNLOAD_ROOTS.any { path.startsWith(it) && path.length > it.length }
+        // Sem `.`/`..` no caminho, nem codificados (%2e%2e): o GitHub decodifica antes de resolver e cairia em
+        // outro repositório. O mesmo vale para barra ou barra invertida codificada dentro de um segmento.
+        if (parsed.path.split('/').any { !safeSegment(it) }) return false
+        return DOWNLOAD_ROOTS.any { parsed.path.startsWith(it) && parsed.path.length > it.length }
+    }
+
+    /** Um segmento do caminho, já decodificado em UTF-8, não pode ser `.`/`..` nem esconder uma barra. */
+    private fun safeSegment(raw: String): Boolean {
+        val decoded = try {
+            URLDecoder.decode(raw, "UTF-8")
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        return decoded != "." && decoded != ".." && !decoded.contains('/') && !decoded.contains('\\')
     }
 
     private fun parseRelease(o: JSONObject): AndroidRelease? {

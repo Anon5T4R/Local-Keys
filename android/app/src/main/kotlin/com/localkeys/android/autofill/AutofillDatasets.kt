@@ -45,8 +45,9 @@ internal object AutofillDatasets {
     }
 
     /**
-     * O dataset de um login com TOTP: os valores só são montados quando o usuário escolhe a entrada, pela
-     * [AutofillTotpActivity] (código fresco e, se [copy], cópia do código). [requestCode] distingue as entradas
+     * A entrada de qualquer login escolhido: os valores só são montados quando o usuário a escolhe, pela
+     * [AutofillTotpActivity] (que registra o último uso; com TOTP, código fresco e, se [copy], cópia do código).
+     * [requestCode] distingue as entradas
      * da mesma lista (senão o sistema reaproveitaria o mesmo PendingIntent para todas).
      */
     @Suppress("DEPRECATION")

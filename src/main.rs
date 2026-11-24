@@ -586,6 +586,27 @@ fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::
     resp
 }
 
+/// Largura ocupada por um texto num estilo (para reservar espaço antes de desenhar).
+fn text_width(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> f32 {
+    let font = style.resolve(ui.style());
+    ui.painter().layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER).size().x
+}
+
+/// Uma linha de anexo: o nome à esquerda e, ao lado, o tamanho e os botões ([actions], que ocupam
+/// [actions_width]). Enquanto o nome cabe ao lado deles, fica numa linha só; quando não cabe, o nome
+/// quebra dentro do espaço que sobra — em vez de alargar o diálogo para fora da janela.
+fn attachment_row(ui: &mut egui::Ui, name: &str, weak: bool, actions_width: f32, actions: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        let wanted = text_width(ui, name, egui::TextStyle::Body) + 1.0;
+        let width = wanted.min((ui.available_width() - actions_width).max(80.0));
+        let text = if weak { egui::RichText::new(name).weak() } else { egui::RichText::new(name) };
+        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add(egui::Label::new(text).wrap());
+        });
+        actions(ui);
+    });
+}
+
 /// Ação de linha: transparente até o hover (o "ghost button" do local-pdf).
 fn ghost(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ghost_ink(ui, label, Skin::of(ui).muted)
@@ -2921,21 +2942,26 @@ impl KeysApp {
                 ui.label(egui::RichText::new(tr("no attachments")).weak());
             } else {
                 for (att_id, name, size) in &atts {
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width());
-                        ui.add(egui::Label::new(name).wrap());
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(human_size(*size as usize)).small().weak());
-                            if ui.add_enabled_ui(ready, |ui| pill(ui, tr("Save"), false)).inner.clicked() {
-                                save = Some(att_id.clone());
-                            }
-                            // onda 24 — excluir anexo: sem confirmação (o
-                            // arquivo original continua no disco), mas com o
-                            // mesmo gate do resto (nenhum persist durante job).
-                            if ui.add_enabled_ui(ready, |ui| craft_icons::ui::button(ui, Icon::Delete, tr("Delete attachment"))).inner.clicked() {
-                                del = Some(att_id.clone());
-                            }
-                        });
+                    let size_text = human_size(*size as usize);
+                    let save_label = tr("Save");
+                    // Tamanho + Salvar + excluir, com o espaço entre eles e uma folga para o botão de ícone.
+                    let actions_width = text_width(ui, &size_text, egui::TextStyle::Small)
+                        + text_width(ui, save_label, egui::TextStyle::Button)
+                        + 28.0
+                        + ui.spacing().interact_size.x
+                        + ui.spacing().item_spacing.x * 3.0
+                        + 8.0;
+                    attachment_row(ui, name, false, actions_width, |ui| {
+                        ui.label(egui::RichText::new(size_text).small().weak());
+                        if ui.add_enabled_ui(ready, |ui| pill(ui, save_label, false)).inner.clicked() {
+                            save = Some(att_id.clone());
+                        }
+                        // onda 24 — excluir anexo: sem confirmação (o
+                        // arquivo original continua no disco), mas com o
+                        // mesmo gate do resto (nenhum persist durante job).
+                        if ui.add_enabled_ui(ready, |ui| craft_icons::ui::button(ui, Icon::Delete, tr("Delete attachment"))).inner.clicked() {
+                            del = Some(att_id.clone());
+                        }
                     });
                     ui.add_space(4.0);
                 }
@@ -2949,18 +2975,22 @@ impl KeysApp {
                 ui.label(egui::RichText::new(format!("🗑 {}", tr("Trash"))).small().weak());
                 ui.add_space(4.0);
                 for (att_id, name, size) in &trashed {
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width());
-                        ui.add(egui::Label::new(egui::RichText::new(name).weak()).wrap());
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(human_size(*size as usize)).small().weak());
-                            if ui.add_enabled_ui(ready, |ui| ghost(ui, tr("Restore"))).inner.clicked() {
-                                restore = Some(att_id.clone());
-                            }
-                            if ui.add_enabled_ui(ready, |ui| craft_icons::ui::button(ui, Icon::Delete, tr("Delete forever"))).inner.clicked() {
-                                del_forever = Some(att_id.clone());
-                            }
-                        });
+                    let size_text = human_size(*size as usize);
+                    let restore_label = tr("Restore");
+                    // Tamanho + Restaurar + excluir para sempre, com o espaço entre eles e uma folga.
+                    let actions_width = text_width(ui, &size_text, egui::TextStyle::Small)
+                        + text_width(ui, restore_label, egui::TextStyle::Body)
+                        + ui.spacing().interact_size.x * 2.0
+                        + ui.spacing().item_spacing.x * 3.0
+                        + 8.0;
+                    attachment_row(ui, name, true, actions_width, |ui| {
+                        ui.label(egui::RichText::new(size_text).small().weak());
+                        if ui.add_enabled_ui(ready, |ui| ghost(ui, restore_label)).inner.clicked() {
+                            restore = Some(att_id.clone());
+                        }
+                        if ui.add_enabled_ui(ready, |ui| craft_icons::ui::button(ui, Icon::Delete, tr("Delete forever"))).inner.clicked() {
+                            del_forever = Some(att_id.clone());
+                        }
                     });
                 }
             }
@@ -2972,7 +3002,7 @@ impl KeysApp {
             #[cfg(not(windows))]
             ui.horizontal(|ui| {
                 ui.label(tr("File"));
-                ui.add(line(&mut self.attach_path).hint_text("C:\\...\\arquivo1;arquivo2").desired_width((ui.available_width() - 60.0).max(120.0)));
+                ui.add(line(&mut self.attach_path).hint_text("C:\\...\\arquivo1;arquivo2").desired_width(ui.available_width().max(120.0)));
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {

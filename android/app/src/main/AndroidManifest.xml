@@ -63,8 +63,8 @@
                 android:resource="@xml/autofill_service_config" />
         </service>
 
-        <!-- Escolher no autofill um login com TOTP: monta o código na hora (e o copia, se ligado). Invisível;
-             só o PendingIntent do próprio serviço a abre. -->
+        <!-- Escolher no autofill qualquer login: registra o último uso e, com TOTP, monta o código na hora (e o
+             copia, se ligado). Invisível; só o PendingIntent do próprio serviço a abre. -->
         <activity
             android:name=".autofill.AutofillTotpActivity"
             android:exported="false"

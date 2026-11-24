@@ -32,8 +32,9 @@ import com.localkeys.android.data.vault.VaultAutofillCache
 
 /**
  * Autofill nativo do Android (API do SO, zero Play Services) para login, senha e o código TOTP (campo de
- * código de uso único: o código atual do login casado; ver [FieldClassifier] e [FillPlan]). Escolher um login
- * com TOTP passa pela [AutofillTotpActivity], que monta o código na hora e, se ligado, o copia.
+ * código de uso único: o código atual do login casado; ver [FieldClassifier] e [FillPlan]). Escolher qualquer
+ * entrada passa pela [AutofillTotpActivity], que registra o último uso, monta o código TOTP na hora (quando o
+ * login tem) e, se ligado, o copia.
  * Roda no processo do app: enquanto o cofre está destrancado o [VaultAutofillCache]
  * tem o vault em memória e os campos são preenchidos direto; se estiver trancado,
  * o picker oferece "Desbloquear o LocalKeys" (abre o app).
@@ -86,17 +87,12 @@ class LocalKeysAutofillService : AutofillService() {
                 itemHasTotp = AutofillDatasets.hasTotp(item),
                 copySetting = AutofillPrefs.copyTotp,
             )
-            // Todas as entradas passam pela AutofillTotpActivity: é lá que o último uso é registrado (e,
-            // com TOTP, o código sai fresco).
-            val dataset = when (plan) {
-                FillPlan.Skip -> null
-                FillPlan.Direct -> AutofillDatasets.deferred(this, item, fields, copy = false, REQUEST_BASE + index)
-                is FillPlan.Deferred -> AutofillDatasets.deferred(this, item, fields, plan.copyTotp, REQUEST_BASE + index)
-            }
-            if (dataset != null) {
-                response.addDataset(dataset)
-                count++
-            }
+            // Toda entrada passa pela AutofillTotpActivity, que registra o último uso: sem TOTP ([FillPlan.Direct]),
+            // só usuário e senha; com TOTP, o código sai fresco e é copiado se o plano manda.
+            if (plan == FillPlan.Skip) return@forEachIndexed
+            val copyTotp = (plan as? FillPlan.Deferred)?.copyTotp == true
+            response.addDataset(AutofillDatasets.deferred(this, item, fields, copyTotp, REQUEST_BASE + index))
+            count++
         }
         if (suggestions.hasMore) {
             response.addDataset(AutofillDatasets.more(this, fields, suggestions.hidden, REQUEST_MORE))
@@ -176,10 +172,10 @@ class LocalKeysAutofillService : AutofillService() {
         private const val NOTIF_CHANNEL = "autofill_save"
         private const val NOTIF_ID = 1001
 
-        /** Base dos requestCodes dos PendingIntents das entradas com TOTP (um por entrada da lista). */
+        /** Base dos requestCodes dos PendingIntents das entradas da lista (um por entrada). */
         private const val REQUEST_BASE = 100
 
-        /** requestCode da linha "+N mais" (fora da faixa das entradas com TOTP). */
+        /** requestCode da linha "+N mais" (fora da faixa das entradas da lista). */
         private const val REQUEST_MORE = 1000
     }
 

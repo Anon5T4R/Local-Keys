@@ -162,6 +162,8 @@ class ReleasePickerTest {
         listOf("Styx-Studios/Local-Keys", "Anon5T4R/Local-Keys").forEach { repo ->
             assertTrue(repo, ReleasePicker.isAllowedDownload("https://github.com/$repo$download"))
         }
+        // O nome do arquivo codificado normalmente continua valendo.
+        assertTrue(ReleasePicker.isAllowedDownload("https://github.com/Styx-Studios/Local-Keys/releases/download/android-v0.8.0/Local%20Keys%200.8.0.apk"))
         listOf(
             "http://github.com/Styx-Studios/Local-Keys$download",
             "https://github.com/Outro/Repo$download",
@@ -169,6 +171,11 @@ class ReleasePickerTest {
             "https://github.com/Styx-Studios/Local-Keys-evil$download",
             "https://github.com/Styx-Studios/Local-Keys/other$download",
             "https://github.com/Styx-Studios/Local-Keys/releases/download/../../Outro/Repo$download",
+            "https://github.com/Styx-Studios/Local-Keys/releases/download/%2e%2e/%2e%2e/Outro/Repo$download",
+            "https://github.com/Styx-Studios/Local-Keys/releases/download/%2e./.%2e/Outro/Repo$download",
+            "https://github.com/Styx-Studios/Local-Keys/releases/download/a%2fb.apk",
+            "https://github.com/Styx-Studios/Local-Keys/releases/download/a%5cb.apk",
+            "https://github.com/Styx-Studios/Local-Keys/releases/download/a%zz.apk",
             "https://github.com.evil/Styx-Studios/Local-Keys$download",
             "https://github.com@evil.com/Styx-Studios/Local-Keys$download",
             "https://evil.com/?https://github.com/Styx-Studios/Local-Keys$download",
