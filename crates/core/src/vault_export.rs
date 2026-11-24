@@ -5,12 +5,15 @@
 //! `.tkeys` comum, que nasce cifrado pelo chamador (`crypto::create_vault`). Nenhuma chave nova no formato.
 //!
 //! Decisões da regra:
-//! - os itens vão **inteiros e na ordem dada**: id, datas, lixeira, anexos, histórico de senha, passkeys, campos
-//!   extras e chaves desconhecidas atravessam idênticos — nada é reescrito nem recarimbado (um merge futuro trata o
+//! - os itens vão **inteiros e na ordem dada** (id repetido conta uma vez: fica a primeira ocorrência): id, datas,
+//!   lixeira, anexos, histórico de senha, passkeys, campos extras e chaves desconhecidas atravessam
+//!   **semanticamente idênticos** — o `serde_json` da crate não usa `preserve_order`, então a ordem das chaves é
+//!   normalizada; valores, listas e aninhamento não mudam. Nada é reescrito nem recarimbado (um merge futuro trata o
 //!   mesmo id como o mesmo item);
 //! - só as pastas **referenciadas** pela `folderId` de algum item vão, na ordem do cofre de origem e também elas
 //!   inteiras; pasta sem item fica de fora, e nada mais da raiz do cofre original (preferências, chaves
-//!   desconhecidas da raiz) entra;
+//!   desconhecidas da raiz) entra. `folderId` que não aponta para pasta nenhuma do cofre de origem atravessa como
+//!   está, sem criar pasta;
 //! - **tudo ou nada**: item que não é objeto, item sem `id` ou id que não existe no cofre e nada é gerado; lista de
 //!   itens vazia também é erro (não existe cofre novo sem seleção);
 //! - o cofre novo nasce com a `version` do cofre de origem ([`vault_from_items`]) ou com a semente do app
@@ -76,6 +79,12 @@ fn folder_values(raw: &Value) -> &[Value] {
     raw.get("folders").and_then(Value::as_array).map_or(&[][..], Vec::as_slice)
 }
 
+/// Os itens sem repetir `id`, na ordem de entrada (a primeira ocorrência fica). Só chamar depois de validar os itens.
+fn unique_items(items: &[Value]) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    items.iter().filter(|item| item.get("id").and_then(Value::as_str).is_some_and(|id| seen.insert(id.to_string()))).cloned().collect()
+}
+
 /// Monta o JSON do cofre novo: `version`, as pastas referenciadas por algum item (na ordem de `folders`) e os itens.
 fn build(version: u64, folders: &[Value], items: &[Value]) -> Result<String, ExportVaultError> {
     let referenced: HashSet<&str> = items.iter().filter_map(|item| item.get("folderId").and_then(Value::as_str)).collect();
@@ -88,8 +97,12 @@ fn build(version: u64, folders: &[Value], items: &[Value]) -> Result<String, Exp
     serde_json::to_string(&Value::Object(vault)).map_err(|error| ExportVaultError::Serialize(error.to_string()))
 }
 
-/// A regra pura: o JSON do cofre novo com as `folders` referenciadas pelos `items` e os `items` na ordem dada,
-/// intactos, com a semente do app (`version: 1`).
+/// A regra pura: o JSON do cofre novo com as `folders` referenciadas pelos `items` e os `items` na ordem dada
+/// (id repetido conta uma vez: fica a PRIMEIRA ocorrência), com a semente do app (`version: 1`). Um `folderId` que
+/// não aponta para nenhuma pasta do cofre de origem atravessa como está, sem criar pasta.
+///
+/// Os itens são **semanticamente idênticos** aos da entrada: o `serde_json` da crate não usa `preserve_order`, então
+/// a ordem das chaves muda (é normalizada alfabeticamente). Valores, listas e aninhamento não mudam.
 ///
 /// # Errors
 /// [`ExportVaultError::NoItems`] (seleção vazia), [`ExportVaultError::NotAnObject`] ou
@@ -101,7 +114,7 @@ pub fn subset_vault(folders: &[Value], items: &[Value]) -> Result<String, Export
     for item in items {
         item_id(item)?;
     }
-    build(1, folders, items)
+    build(1, folders, &unique_items(items))
 }
 
 /// A regra sobre o cofre de origem, pelo id (o caminho do desktop): seleciona os itens pedidos, junta as pastas do
@@ -112,17 +125,17 @@ pub fn subset_vault(folders: &[Value], items: &[Value]) -> Result<String, Export
 /// existe) ou [`ExportVaultError::NoItems`] (nenhum id) — e aí nada é gerado.
 pub fn vault_from_items(raw: &Value, ids: &[String]) -> Result<String, ExportVaultError> {
     let items = raw.get("items").and_then(Value::as_array).ok_or(ExportVaultError::MalformedVault)?;
+    // Um índice só: "selecionar tudo" num cofre grande não pode virar O(n·m).
+    let by_id: std::collections::HashMap<&str, &Value> =
+        items.iter().filter_map(|item| item.get("id").and_then(Value::as_str).map(|id| (id, item))).collect();
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     for id in ids {
         if !seen.insert(id.as_str()) {
             continue;
         }
-        let item = items
-            .iter()
-            .find(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
-            .ok_or_else(|| ExportVaultError::UnknownId { id: id.clone() })?;
-        selected.push(item.clone());
+        let item = by_id.get(id.as_str()).ok_or_else(|| ExportVaultError::UnknownId { id: id.clone() })?;
+        selected.push((*item).clone());
     }
     if selected.is_empty() {
         return Err(ExportVaultError::NoItems);

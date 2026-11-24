@@ -119,6 +119,22 @@ class VaultExportTest {
         assertArrayEquals(file, document.stored)
     }
 
+    /** Documento que grava e devolve outra coisa na releitura (ou não deixa reler): o sucesso não pode ser anunciado. */
+    private class TamperingDocument(private val readBack: ByteArray?) : DocumentIo {
+        override fun openOutput(mode: String): OutputStream = ByteArrayOutputStream()
+
+        override fun openInput(): InputStream? = readBack?.inputStream()
+    }
+
+    @Test
+    fun a_gravacao_falha_quando_o_provedor_nao_devolve_os_bytes_gravados() {
+        val file = exporter.build(vault, listOf("a"), password, light)
+        val tampered = file.copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 1).toByte() }
+
+        assertThrows(VaultExport.Failure.Save::class.java) { exporter.write(TamperingDocument(tampered), file) }
+        assertThrows(VaultExport.Failure.Save::class.java) { exporter.write(TamperingDocument(null), file) }
+    }
+
     @Test
     fun falha_de_gravacao_vira_erro_tipado() {
         val document = MemoryDocument(IOException("provider refused"))

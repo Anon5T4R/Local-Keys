@@ -76,6 +76,62 @@ class VaultSaverTest {
     }
 
     @Test
+    fun a_mudanca_externa_bloqueia_a_gravacao_sem_adotar_nem_reescrever() {
+        setup()
+        val before = repository.vault
+        val candidate = repository.trashSelected(listOf("a"), now).vault
+        // O disco mudou fora do app: não é o conteúdo conhecido.
+        val changedOnDisk = byteArrayOf(9, 9, 9)
+        document.stored = changedOnDisk
+
+        assertThrows(VaultSaver.SaveFailure.ExternalChange::class.java) { saver.saveAndCommit(candidate, document) }
+
+        assertEquals("nada foi adotado", before, repository.vault)
+        assertArrayEquals("o conteúdo conhecido não muda", initialFile, saver.known)
+        assertArrayEquals("o documento não foi reescrito", changedOnDisk, document.stored)
+    }
+
+    @Test
+    fun o_force_grava_por_cima_da_mudanca_externa() {
+        setup()
+        val candidate = repository.trashSelected(listOf("a"), now).vault
+        document.stored = byteArrayOf(9, 9, 9)
+
+        saver.saveAndCommit(candidate, document, force = true)
+
+        assertEquals("o cofre foi adotado", candidate, repository.vault)
+        assertArrayEquals("o arquivo ficou com o candidato", document.stored, saver.known)
+        val reopened = Vault.parse(String(crypto.openVault(password, document.stored!!).plaintext))
+        assertEquals("o arquivo tem o lote", now, reopened.items.first { it.id == "a" }.deletedAt)
+    }
+
+    /** Provedor que grava por cima sem truncar: sempre sobra um rabo depois dos bytes novos. */
+    private class NoTruncateDocument(var stored: ByteArray) : DocumentIo {
+        override fun openOutput(mode: String): OutputStream = object : ByteArrayOutputStream() {
+            override fun close() {
+                stored = toByteArray() + ByteArray(16)
+                super.close()
+            }
+        }
+
+        override fun openInput(): InputStream = stored.inputStream()
+    }
+
+    @Test
+    fun provedor_que_nao_trunca_vira_not_truncated_e_nao_adota() {
+        setup()
+        val before = repository.vault
+        val candidate = repository.trashSelected(listOf("a"), now).vault
+        val noTruncate = NoTruncateDocument(initialFile)
+
+        val failure = assertThrows(VaultSaver.SaveFailure.NotTruncated::class.java) { saver.saveAndCommit(candidate, noTruncate) }
+
+        assertTrue("sobrou conteúdo depois do que foi gravado: $failure", failure.found > failure.written)
+        assertEquals("nada foi adotado", before, repository.vault)
+        assertArrayEquals("o conteúdo conhecido não muda", initialFile, saver.known)
+    }
+
+    @Test
     fun uma_gravacao_que_falha_nao_adota_nem_contamina_o_conhecido() {
         setup()
         val before = repository.vault

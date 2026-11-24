@@ -213,8 +213,8 @@
     <string name="export_vault_title">Export to a new vault</string>
     <string name="export_vault_message">The selected items go to a NEW encrypted vault (.tkeys). Only the folders they use go with them; attachments travel inside.</string>
     <string name="export_vault_file">File: %1$s</string>
-    <string name="export_vault_password_empty">Enter a password for the new vault.</string>
-    <string name="export_vault_confirm">Export</string>
+    <string name="export_vault_password_empty">the password cannot be empty</string>
+    <string name="export_vault_confirm">Create vault</string>
     <string name="msg_export_vault_saved">New vault saved: %1$s</string>
     <string name="msg_export_vault_failed">Could not save the new vault: %1$s</string>
     <string name="msg_reloaded">Vault reloaded from disk.</string>
@@ -234,7 +234,7 @@
     <string name="tkeys_corrupted">corrupted file (invalid structure)</string>
     <string name="tkeys_not_convertible">this item cannot be converted to the selected type; nothing was saved</string>
     <string name="tkeys_invalid_items">the selected items could not be changed; nothing was saved</string>
-    <string name="tkeys_cannot_export">the selected items could not be exported; nothing was saved</string>
+    <string name="tkeys_cannot_export">the selected items could not be exported; nothing was exported</string>
     <string name="tkeys_cannot_merge">the vaults could not be merged; nothing was changed</string>
 
     <!-- Conflito de sincronização (arquivo mudou fora do app) -->

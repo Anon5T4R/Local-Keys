@@ -35,7 +35,7 @@ mod winctl;
 mod ui_tests;
 
 use localkeys_core::{
-    bwdecrypt, card, change_kind, cpf, crypto, export, filters, generator, import, kdbx, merge, otpauth, totp, vault, vault_export,
+    bwdecrypt, card, change_kind, cpf, crypto, export, filters, generator, import, kdbx, merge, merge_other, otpauth, totp, vault, vault_export,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -313,6 +313,22 @@ fn export_vault_error_text(error: &vault_export::ExportVaultError) -> String {
     .to_string()
 }
 
+/// O motivo da junção de outro cofre recusada, no idioma da interface. O `Display` do núcleo é diagnóstico em
+/// inglês e não chega à tela; o id cru do item não aparece.
+fn merge_other_error_text(error: &merge_other::MergeOtherError) -> String {
+    match error {
+        merge_other::MergeOtherError::MalformedVault { .. } => tr("one of the vaults has no valid item list; nothing was merged"),
+        merge_other::MergeOtherError::ItemNotObject { .. } => tr("an item in one of the vaults is not valid; nothing was merged"),
+        merge_other::MergeOtherError::ItemWithoutId { .. } => tr("an item in one of the vaults has no id; nothing was merged"),
+        merge_other::MergeOtherError::FolderNotObject { .. } => tr("a folder in one of the vaults is not valid; nothing was merged"),
+        merge_other::MergeOtherError::FolderWithoutId { .. } => tr("a folder in one of the vaults has no id; nothing was merged"),
+        merge_other::MergeOtherError::InvalidJson { .. } | merge_other::MergeOtherError::Serialize(_) => {
+            tr("the vaults could not be merged; nothing was merged")
+        }
+    }
+    .to_string()
+}
+
 /// O motivo da conversão recusada no idioma da interface. O `Display` do núcleo é diagnóstico em inglês e
 /// não chega à tela; o nome cru do campo/objeto também não (o usuário vê só a explicação).
 fn change_kind_error_text(error: &change_kind::ChangeKindError) -> String {
@@ -393,6 +409,29 @@ fn shape_de_cofre(v: &serde_json::Value) -> bool {
     v.is_object() && v.get("items").is_none_or(serde_json::Value::is_array) && v.get("folders").is_none_or(serde_json::Value::is_array)
 }
 
+/// Os dois caminhos apontam para o MESMO arquivo? Compara canonicalizado quando os dois existem; senão, o texto
+/// normalizado (barras do SO e, no Windows, sem diferenciar maiúsculas). Usado para recusar exportar por cima do
+/// cofre aberto e para recusar juntar o cofre com ele mesmo.
+fn same_path(first: &str, second: &str) -> bool {
+    let first = std::path::Path::new(first.trim());
+    let second = std::path::Path::new(second.trim());
+    if first.as_os_str().is_empty() || second.as_os_str().is_empty() {
+        return false;
+    }
+    match (first.canonicalize(), second.canonicalize()) {
+        (Ok(first), Ok(second)) => first == second,
+        _ => {
+            let normalize = |path: &std::path::Path| {
+                let text = path.to_string_lossy().replace('/', std::path::MAIN_SEPARATOR_STR);
+                #[cfg(windows)]
+                let text = text.to_lowercase();
+                text
+            };
+            normalize(first) == normalize(second)
+        }
+    }
+}
+
 /// Um campo personalizado no formulário: `id` vazio = campo novo (o `set_custom_fields` gera o id ao
 /// gravar). `revealed` é estado só da UI (o 👁 do campo Oculto).
 struct FormCustomField {
@@ -412,6 +451,17 @@ struct SyncPlan {
     merged: serde_json::Value,
     /// O resumo que a tela mostra.
     summary: merge::MergeSummary,
+}
+
+/// A junção de um cofre DIFERENTE calculada, esperando a confirmação (o resumo aparece ANTES de gravar).
+#[derive(Clone)]
+struct MergePlan {
+    /// O caminho do outro cofre (só leitura: nunca é gravado).
+    other_path: String,
+    /// O cofre juntado (`merge_other::merge_other` do core).
+    merged: serde_json::Value,
+    /// O resumo que a tela mostra.
+    summary: merge_other::MergeSummary,
 }
 
 impl ExportKind {
@@ -1049,6 +1099,18 @@ struct KeysApp {
     sync_plan: Option<SyncPlan>,
     /// O modal de resumo da sincronização está aberto.
     sync_open: bool,
+    // unidade 7 — juntar outro cofre (o outro é só leitura; o resultado é o cofre aberto + o que entrou)
+    /// O diálogo da senha do outro cofre está aberto (a chave da sessão não abriu).
+    merge_open: bool,
+    /// Caminho do outro cofre escolhido (só leitura).
+    merge_path: String,
+    merge_password: String,
+    /// 👁 da senha do outro cofre (volta a ocultar ao fechar).
+    merge_reveal: bool,
+    /// Erro do diálogo da senha (senha errada/vazia) — aparece DENTRO dele.
+    merge_error: Option<String>,
+    /// A junção calculada, esperando a confirmação do resumo.
+    merge_plan: Option<MergePlan>,
     /// Paleta de comandos da suíte (lupa e Ctrl+K).
     palette: craft_palette::Palette,
     /// Onde o config.json é gravado (os testes apontam para uma pasta temporária).
@@ -1156,6 +1218,12 @@ impl KeysApp {
             settings_open: false,
             sync_plan: None,
             sync_open: false,
+            merge_open: false,
+            merge_path: String::new(),
+            merge_password: String::new(),
+            merge_reveal: false,
+            merge_error: None,
+            merge_plan: None,
             palette: craft_palette::Palette::default(),
             config_file: config_dir(APP_ID).join("config.json"),
             #[cfg(test)]
@@ -1224,8 +1292,8 @@ impl KeysApp {
         self.export_path.clear();
         self.export_vault_open = false;
         self.export_vault_path.clear();
-        self.export_vault_pass.clear();
-        self.export_vault_confirm.clear();
+        drop(Zeroizing::new(std::mem::take(&mut self.export_vault_pass)));
+        drop(Zeroizing::new(std::mem::take(&mut self.export_vault_confirm)));
         self.export_vault_reveal = false;
         self.export_vault_err = None;
         // Onda 6: nenhum segredo de import/gerador/senha mestra sobrevive ao
@@ -1253,6 +1321,12 @@ impl KeysApp {
         self.folder_edit_name.clear();
         self.sync_plan = None;
         self.sync_open = false;
+        self.merge_plan = None;
+        self.merge_open = false;
+        self.merge_path.clear();
+        drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
+        self.merge_reveal = false;
+        self.merge_error = None;
         // O cofre seguinte abre sem filtro nenhum ligado (como a pasta, zerada no `adopt`).
         self.filters.clear();
         self.clear_selection();
@@ -1889,6 +1963,103 @@ impl KeysApp {
         self.notice(tr("synced: both copies identical").to_string());
     }
 
+    // ── unidade 7: juntar outro cofre ───────────────────────────────────
+
+    /// Seletor nativo do outro `.tkeys` para juntar ao aberto.
+    fn pick_merge_other(&mut self, ctx: &egui::Context) {
+        if self.job_label.is_some() {
+            return;
+        }
+        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
+        let ctx2 = ctx.clone();
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::File(dialog),
+            Box::new(move |app, paths| {
+                if let Some(path) = paths.first() {
+                    app.merge_other_chosen(&ctx2, &path.display().to_string());
+                }
+            }),
+        );
+    }
+
+    /// Outro cofre escolhido: tenta abrir com a chave da sessão (mesma senha do aberto). Se a chave não servir, o
+    /// diálogo pede a senha do outro cofre. O arquivo é só LIDO: nada é gravado nele, nem no aberto.
+    fn merge_other_chosen(&mut self, ctx: &egui::Context, path: &str) {
+        if self.job_label.is_some() {
+            return;
+        }
+        if same_path(path, self.path.trim()) {
+            self.err = Some(tr("the other vault is the vault in use").to_string());
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let file = match std::fs::read(path) {
+            Ok(file) => file,
+            Err(_) => {
+                self.err = Some(tr("could not read the other vault").to_string());
+                return;
+            }
+        };
+        match crypto::open_with_key(&session.key_bytes(), &file) {
+            Ok((plain, _)) => match serde_json::from_slice::<serde_json::Value>(&plain) {
+                Ok(other) => self.start_merge(ctx, path, other),
+                Err(_) => self.err = Some(tr("the other vault is not a valid vault").to_string()),
+            },
+            // Pode ser outra senha (ou arquivo adulterado — indistinguíveis de propósito): o diálogo decide.
+            Err(crypto::CryptoError::Decrypt) => {
+                self.merge_path = path.to_string();
+                drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
+                self.merge_reveal = false;
+                self.merge_error = None;
+                self.merge_open = true;
+            }
+            Err(crypto::CryptoError::BadFormat) => self.err = Some(tr("the other vault is not a .tkeys vault").to_string()),
+            Err(crypto::CryptoError::UnsupportedVersion(_)) => self.err = Some(tr("the other vault uses a newer format version").to_string()),
+            Err(crypto::CryptoError::Kdf) => self.err = Some(tr("could not read the other vault").to_string()),
+        }
+    }
+
+    /// Abre o outro cofre com a senha digitada (Argon2id) fora da UI; a senha sai do estado e morre com o job.
+    fn merge_other_open(&mut self, ctx: &egui::Context) {
+        if self.merge_password.is_empty() {
+            self.merge_error = Some(tr("enter the other vault's password").into());
+            return;
+        }
+        let path = self.merge_path.trim().to_string();
+        let password = Zeroizing::new(std::mem::take(&mut self.merge_password));
+        self.merge_error = None;
+        self.merge_open = false;
+        self.start_job(ctx, tr("opening the other vault…"), Job::MergeOtherOpen { path, password });
+    }
+
+    /// Calcula a junção fora da UI: o cofre aberto vai clonado e o outro só para leitura. Nada é adotado até a
+    /// confirmação do resumo.
+    fn start_merge(&mut self, ctx: &egui::Context, path: &str, other: serde_json::Value) {
+        let Some(base) = self.raw.clone() else {
+            return;
+        };
+        self.start_job(ctx, tr("merging the other vault…"), Job::MergeOther { path: path.to_string(), base, other });
+    }
+
+    /// Aplica o plano no cofre ABERTO com UMA gravação; a seleção é limpa (a lista muda). O outro arquivo não é
+    /// tocado.
+    fn merge_apply(&mut self) {
+        let Some(plan) = self.merge_plan.clone() else {
+            return;
+        };
+        if self.persist(plan.merged) {
+            self.clear_selection();
+            self.merge_plan = None;
+            self.notice(tr("merged: the other vault's items are in this vault").to_string());
+        } else {
+            // `persist` já pôs o motivo em `err`; o plano não fica pendurado.
+            self.merge_plan = None;
+        }
+    }
+
     /// Abre o form em modo "novo item" já com o tipo escolhido no seletor do "+". Se há pasta
     /// selecionada nos chips, o item já nasce nela (como o oficial faz no filtro atual). O **item
     /// livre** é uma nota que abre com um campo personalizado vazio.
@@ -2025,6 +2196,10 @@ impl KeysApp {
             self.err = Some(tr("choose where to save the export").into());
             return;
         }
+        if same_path(&target, self.path.trim()) {
+            self.err = Some(tr("Do not save over the open vault; choose another file.").into());
+            return;
+        }
         let Some(raw) = self.raw.as_ref() else {
             return;
         };
@@ -2063,8 +2238,8 @@ impl KeysApp {
             return;
         }
         self.export_vault_path = path;
-        self.export_vault_pass.clear();
-        self.export_vault_confirm.clear();
+        drop(Zeroizing::new(std::mem::take(&mut self.export_vault_pass)));
+        drop(Zeroizing::new(std::mem::take(&mut self.export_vault_confirm)));
         self.export_vault_reveal = false;
         self.export_vault_err = None;
         self.export_vault_open = true;
@@ -2086,13 +2261,18 @@ impl KeysApp {
             self.export_vault_err = Some(tr("choose where to save the new vault").into());
             return;
         }
+        if same_path(&target, self.path.trim()) {
+            self.export_vault_err = Some(tr("Do not save over the open vault; choose another file.").into());
+            return;
+        }
         let Some(raw) = self.raw.clone() else {
             return;
         };
         let ids: Vec<String> = self.selection.ids().map(str::to_string).collect();
-        // A senha sai do estado já: o job recebe uma cópia que se apaga sozinha quando ele termina.
+        // A senha sai do estado já: o job recebe uma cópia que se apaga sozinha quando ele termina. A confirmação
+        // também sai do heap (o `clear` mantinha os bytes no buffer).
         let password = Zeroizing::new(std::mem::take(&mut self.export_vault_pass));
-        self.export_vault_confirm.clear();
+        let _confirmation = Zeroizing::new(std::mem::take(&mut self.export_vault_confirm));
         self.export_vault_reveal = false;
         self.export_vault_open = false;
         self.export_vault_err = None;
@@ -2315,11 +2495,13 @@ impl KeysApp {
         }
         if closed {
             // Thread terminou sem resultado (spawn falhou / panic): não deixa o
-            // spinner girando pra sempre.
-            if self.job_label.take().is_some() {
+            // spinner girando pra sempre. Um resultado que já disparou OUTRO job
+            // (fila de anexos, junção) deixou um canal novo — aí não há "sem resultado".
+            if self.job_rx.is_none() && self.job_label.take().is_some() {
                 self.err = Some(tr("the operation ended without a result").into());
             }
-        } else {
+        } else if self.job_rx.is_none() {
+            // Um `apply_job` pode ter começado o próximo job: o canal novo é dele, não este.
             self.job_rx = Some(rx);
         }
     }
@@ -2420,6 +2602,31 @@ impl KeysApp {
                 self.notice(msg);
             }
             JobResult::VaultExported(Err(e)) => self.err = Some(self.job_error(e)),
+            JobResult::MergeOtherOpened(Ok(opened)) => {
+                if self.raw.is_none() {
+                    return;
+                }
+                self.start_merge(ctx, &opened.path, opened.raw);
+            }
+            // A chave da sessão não serviu e a senha digitada também não: o diálogo continua com o motivo.
+            JobResult::MergeOtherOpened(Err(JobError::WrongPassword)) => {
+                if self.raw.is_none() {
+                    return;
+                }
+                drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
+                self.merge_error = Some(tr("wrong password or corrupted/tampered file").to_string());
+                self.merge_open = true;
+            }
+            JobResult::MergeOtherOpened(Err(e)) => self.err = Some(self.job_error(e)),
+            JobResult::MergeOtherReady(Ok(ready)) => {
+                // O cofre pode ter trancado enquanto a junção rodava: aí o plano não vale mais.
+                if self.raw.is_none() {
+                    return;
+                }
+                self.err = None;
+                self.merge_plan = Some(MergePlan { other_path: ready.path, merged: ready.merged, summary: ready.summary });
+            }
+            JobResult::MergeOtherReady(Err(e)) => self.err = Some(self.job_error(e)),
         }
     }
 
@@ -2452,6 +2659,10 @@ impl KeysApp {
                 format!("{name}: {}", tr("attachment too large (max 10 MiB — the whole vault is rewritten on every save)"))
             }
             JobError::VaultExport(error) => export_vault_error_text(&error),
+            JobError::OtherNotVault => tr("the other vault is not a .tkeys vault").to_string(),
+            JobError::OtherUnsupportedVersion => tr("the other vault uses a newer format version").to_string(),
+            JobError::OtherInvalid => tr("the other vault is not a valid vault").to_string(),
+            JobError::MergeOther(error) => merge_other_error_text(&error),
         }
     }
 }
@@ -3727,6 +3938,127 @@ impl KeysApp {
         }
     }
 
+    /// Diálogo da senha do OUTRO cofre (a chave da sessão não o abriu): campo oculto com 👁, erro dentro, Abrir.
+    fn merge_password_modal(&mut self, ctx: &egui::Context) {
+        if !self.merge_open {
+            return;
+        }
+        let busy = self.job_label.is_some();
+        let mut open = false;
+        let mut cancel = false;
+        let resp = egui::Modal::new(egui::Id::unique("merge-password")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            dialog_width(ui, 380.0);
+            ui.heading(tr("Open the other vault"));
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(egui::RichText::new(&self.merge_path).small().weak()).truncate());
+            ui.add_space(8.0);
+            let field = (ui.available_width() - 130.0).clamp(120.0, 220.0);
+            ui.horizontal(|ui| {
+                let label = ui.label(tr("Password"));
+                ui.add(line(&mut self.merge_password).password(!self.merge_reveal).desired_width(field - 28.0)).labelled_by(label.id);
+                if ghost(ui, if self.merge_reveal { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
+                    self.merge_reveal = !self.merge_reveal;
+                }
+            });
+            if let Some(error) = &self.merge_error {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(error).small().color(egui::Color32::LIGHT_RED));
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let ready = !busy && !self.merge_password.is_empty();
+                if ui.add_enabled_ui(ready, |ui| pill(ui, tr("Open"), true)).inner.clicked() {
+                    open = true;
+                }
+                if pill(ui, tr("Cancel"), false).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if open {
+            self.merge_other_open(ctx);
+        } else if cancel || resp.should_close() {
+            self.merge_open = false;
+            drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
+            self.merge_reveal = false;
+            self.merge_error = None;
+        }
+    }
+
+    /// Resumo da junção ANTES de gravar: itens que entram, duplicados (mesmo id), já presentes e pastas. O outro
+    /// arquivo nunca é gravado; confirmar grava o cofre aberto UMA vez.
+    fn merge_summary_modal(&mut self, ctx: &egui::Context) {
+        let Some(plan) = self.merge_plan.clone() else {
+            return;
+        };
+        let s = plan.summary;
+        // "Nada a juntar": o resultado é o próprio cofre aberto (itens já presentes não mudam nada; uma pasta
+        // "unida" que nenhum item usava também não).
+        let nothing = self.raw.as_ref() == Some(&plan.merged);
+        let mut merge = false;
+        let mut close = false;
+        let resp = egui::Modal::new(egui::Id::unique("merge-other")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            dialog_width(ui, 400.0);
+            ui.heading(tr("Merge another vault"));
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(egui::RichText::new(&plan.other_path).small().weak()).truncate());
+            ui.add_space(8.0);
+            if nothing {
+                ui.label(egui::RichText::new(tr("Nothing to merge: this vault already has everything from the other vault.")).weak());
+            } else {
+                let linhas = [
+                    (s.added as u64, tr_n(s.added as u64, "{n} item added from the other vault", "{n} items added from the other vault")),
+                    (
+                        s.collisions as u64,
+                        tr_n(s.collisions as u64, "{n} item kept as a duplicate (same id)", "{n} items kept as duplicates (same id)"),
+                    ),
+                    (s.already_present as u64, tr_n(s.already_present as u64, "{n} item was already here", "{n} items were already here")),
+                    (
+                        s.folders_added as u64,
+                        tr_n(s.folders_added as u64, "{n} folder added from the other vault", "{n} folders added from the other vault"),
+                    ),
+                    (
+                        s.folders_merged as u64,
+                        tr_n(
+                            s.folders_merged as u64,
+                            "{n} folder united with a folder of this vault",
+                            "{n} folders united with folders of this vault",
+                        ),
+                    ),
+                ];
+                for (n, texto) in linhas {
+                    if n > 0 {
+                        ui.label(texto);
+                    }
+                }
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(tr("The other vault is only read; this vault is saved once.")).small().weak());
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if nothing {
+                    if pill(ui, tr("Close"), true).clicked() {
+                        close = true;
+                    }
+                } else {
+                    if pill(ui, tr("Merge"), true).clicked() {
+                        merge = true;
+                    }
+                    if pill(ui, tr("Cancel"), false).clicked() {
+                        close = true;
+                    }
+                }
+            });
+        });
+        if merge {
+            self.merge_apply();
+        } else if close || resp.should_close() {
+            self.merge_plan = None;
+        }
+    }
+
     /// Export em claro (JSON/CSV) — aviso forte antes de gravar.
     fn export_modal(&mut self, ctx: &egui::Context) {
         if !self.export_open {
@@ -3853,8 +4185,8 @@ impl KeysApp {
             self.run_export_vault(ctx);
         } else if cancel || resp.should_close() {
             self.export_vault_open = false;
-            self.export_vault_pass.clear();
-            self.export_vault_confirm.clear();
+            drop(Zeroizing::new(std::mem::take(&mut self.export_vault_pass)));
+            drop(Zeroizing::new(std::mem::take(&mut self.export_vault_confirm)));
             self.export_vault_reveal = false;
             self.export_vault_err = None;
         }
@@ -3965,6 +4297,8 @@ impl KeysApp {
         self.export_modal(ctx);
         self.export_vault_modal(ctx);
         self.sync_modal(ctx);
+        self.merge_password_modal(ctx);
+        self.merge_summary_modal(ctx);
 
         self.settings_modal(ctx);
         self.palette_ui(ctx);
@@ -4138,6 +4472,9 @@ impl KeysApp {
                     }
                     if ui.button(format!("{}…", tr("Sync with another copy"))).clicked() {
                         self.pick_sync_other(ui.ctx());
+                    }
+                    if ui.button(format!("{}…", tr("Merge another vault"))).clicked() {
+                        self.pick_merge_other(ui.ctx());
                     }
                 });
                 response.on_hover_text(tr("More actions"));

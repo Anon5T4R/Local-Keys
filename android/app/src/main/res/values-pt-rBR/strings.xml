@@ -212,8 +212,8 @@
     <string name="export_vault_title">Exportar para um cofre novo</string>
     <string name="export_vault_message">Os itens selecionados vão para um cofre NOVO cifrado (.tkeys). Só as pastas que eles usam vão junto; os anexos viajam dentro.</string>
     <string name="export_vault_file">Arquivo: %1$s</string>
-    <string name="export_vault_password_empty">Informe uma senha para o cofre novo.</string>
-    <string name="export_vault_confirm">Exportar</string>
+    <string name="export_vault_password_empty">a senha não pode ser vazia</string>
+    <string name="export_vault_confirm">Criar cofre</string>
     <string name="msg_export_vault_saved">Cofre novo salvo: %1$s</string>
     <string name="msg_export_vault_failed">Não foi possível salvar o cofre novo: %1$s</string>
     <string name="msg_reloaded">Cofre recarregado do disco.</string>
@@ -233,7 +233,7 @@
     <string name="tkeys_corrupted">arquivo corrompido (estrutura inválida)</string>
     <string name="tkeys_not_convertible">este item não pode ser convertido para o tipo escolhido; nada foi salvo</string>
     <string name="tkeys_invalid_items">não foi possível alterar os itens selecionados; nada foi salvo</string>
-    <string name="tkeys_cannot_export">não foi possível exportar os itens selecionados; nada foi salvo</string>
+    <string name="tkeys_cannot_export">não foi possível exportar os itens selecionados; nada foi exportado</string>
     <string name="tkeys_cannot_merge">não foi possível juntar os cofres; nada foi alterado</string>
 
     <!-- Conflito de sincronização (arquivo mudou fora do app) -->

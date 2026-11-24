@@ -18,6 +18,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use zeroize::Zeroizing;
 
 use crate::{ImportKind, bitwarden_encrypted, bwdecrypt, crypto, import, kdbx, mime_by_ext, vault, vault_export};
+use localkeys_core::merge_other;
 
 /// Cap de anexo do app: 10 MiB. O cofre INTEIRO é regravado (e recifrado) a
 /// cada save e o anexo viaja em base64 dentro do JSON — um anexo grande infla
@@ -72,6 +73,19 @@ pub enum Job {
         password: Zeroizing<String>,
         params: crypto::KdfParams,
     },
+    /// Abre o cofre DIFERENTE (somente leitura) com a senha digitada, para juntá-lo ao aberto. O Argon2id roda fora
+    /// da UI; a senha viaja em `Zeroizing` e morre com o job.
+    MergeOtherOpen {
+        path: String,
+        password: Zeroizing<String>,
+    },
+    /// Calcula a junção de outro cofre no aberto (regra do núcleo em `merge_other`): num cofre grande o JSON inteiro
+    /// custa, então roda fora da UI. Nenhum arquivo é gravado nem alterado.
+    MergeOther {
+        path: String,
+        base: serde_json::Value,
+        other: serde_json::Value,
+    },
 }
 
 /// Cofre destrancado pronto pra `adopt` — nada de estado do app aqui.
@@ -112,6 +126,19 @@ pub struct AttachmentRead {
     pub data_b64: String,
 }
 
+/// O outro cofre decifrado, pronto para a junção (somente leitura).
+pub struct OpenedOther {
+    pub path: String,
+    pub raw: serde_json::Value,
+}
+
+/// O cofre juntado + o resumo (a gravação fica na UI, uma só).
+pub struct MergeReady {
+    pub path: String,
+    pub merged: serde_json::Value,
+    pub summary: merge_other::MergeSummary,
+}
+
 /// Erro de job. A thread não conhece o idioma: o que é traduzível volta como
 /// variante e a UI resolve com a chave i18n.
 pub enum JobError {
@@ -123,6 +150,14 @@ pub enum JobError {
     AttachmentTooBig { name: String },
     /// A seleção do export não virou cofre novo (regra do núcleo): a UI traduz por variante.
     VaultExport(vault_export::ExportVaultError),
+    /// O outro cofre escolhido para juntar não é um `.tkeys` (magic/estrutura).
+    OtherNotVault,
+    /// O outro cofre usa uma versão de formato que este build não conhece.
+    OtherUnsupportedVersion,
+    /// O outro cofre decifrou mas não é um cofre válido (JSON que não parseia).
+    OtherInvalid,
+    /// A junção foi recusada pela regra do núcleo; a UI traduz por variante.
+    MergeOther(merge_other::MergeOtherError),
 }
 
 impl From<String> for JobError {
@@ -144,6 +179,10 @@ pub enum JobResult {
     Exported(Result<String, JobError>),
     /// `Ok(destino)` quando o cofre NOVO (`.tkeys`) foi gravado.
     VaultExported(Result<String, JobError>),
+    /// O outro cofre abriu (somente leitura) e está pronto para a junção.
+    MergeOtherOpened(Result<OpenedOther, JobError>),
+    /// O cofre juntado + o resumo, prontos para a tela confirmar e gravar.
+    MergeOtherReady(Result<MergeReady, JobError>),
 }
 
 /// Sobe a thread do job. `ctx` é um clone do `egui::Context` (Send+Sync): o
@@ -184,6 +223,8 @@ fn run(job: Job) -> JobResult {
         Job::SaveAttachment { target, data_b64 } => JobResult::AttachmentSaved(save_attachment(target, &data_b64)),
         Job::WriteExport { target, text } => JobResult::Exported(write_export(target, &text)),
         Job::ExportVault { target, raw, ids, password, params } => JobResult::VaultExported(export_vault(target, &raw, &ids, &password, params)),
+        Job::MergeOtherOpen { path, password } => JobResult::MergeOtherOpened(open_other(&path, &password)),
+        Job::MergeOther { path, base, other } => JobResult::MergeOtherReady(join_other(path, &base, &other)),
     }
 }
 
@@ -278,6 +319,26 @@ fn export_vault(target: String, raw: &serde_json::Value, ids: &[String], passwor
     let (file, _session) = crypto::create_vault_with(password, json.as_bytes(), params).map_err(crypto_err)?;
     vault::atomic_write(std::path::Path::new(&target), &file).map_err(JobError::Msg)?;
     Ok(target)
+}
+
+/// Abre o outro cofre (junção da unidade 7) com a senha digitada: lê, roda o Argon2id e parseia. O arquivo não é
+/// alterado.
+fn open_other(path: &str, password: &str) -> Result<OpenedOther, JobError> {
+    let file = std::fs::read(path).map_err(|e| JobError::Msg(format!("falha ao ler '{path}': {e}")))?;
+    let plain = match crypto::open_vault(password, &file) {
+        Ok((plain, _)) => plain,
+        Err(crypto::CryptoError::BadFormat) => return Err(JobError::OtherNotVault),
+        Err(crypto::CryptoError::UnsupportedVersion(_)) => return Err(JobError::OtherUnsupportedVersion),
+        Err(error) => return Err(crypto_err(error)),
+    };
+    let raw = serde_json::from_slice(&plain).map_err(|_| JobError::OtherInvalid)?;
+    Ok(OpenedOther { path: path.to_string(), raw })
+}
+
+/// Junta o outro cofre no aberto pela regra do núcleo; devolve o cofre novo + o resumo. Nada é gravado.
+fn join_other(path: String, base: &serde_json::Value, other: &serde_json::Value) -> Result<MergeReady, JobError> {
+    let (merged, summary) = merge_other::merge_other(base, other).map_err(JobError::MergeOther)?;
+    Ok(MergeReady { path, merged, summary })
 }
 
 /// Nome do arquivo pro anexo (o caminho inteiro não vai pro cofre).

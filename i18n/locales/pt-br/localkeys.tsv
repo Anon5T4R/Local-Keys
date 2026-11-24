@@ -144,6 +144,7 @@
 	Create vault	Criar cofre
 	the password cannot be empty	a senha não pode ser vazia
 	choose where to save the new vault	informe o destino do cofre novo
+	Do not save over the open vault; choose another file.	Não salve por cima do cofre aberto; escolha outro arquivo.
 	creating the new vault…	criando o cofre novo…
 	new vault saved	cofre novo salvo
 	Select at least one item to export.	Selecione pelo menos um item para exportar.
@@ -247,6 +248,31 @@
 	The CPF check digits don't match. Check for a typo; you can still save.	Os dígitos verificadores do CPF não conferem. Confira se digitou certo; dá para salvar assim mesmo.
 	Save a copy to a synced folder	Salvar cópia em pasta sincronizada
 	Sync with another copy	Sincronizar com outra cópia
+	Merge another vault	Juntar outro cofre
+	Open the other vault	Abrir o outro cofre
+	enter the other vault's password	informe a senha do outro cofre
+	the other vault is the vault in use	o outro cofre é o cofre em uso
+	the other vault is not a .tkeys vault	o outro cofre não é um cofre .tkeys
+	the other vault uses a newer format version	o outro cofre usa uma versão de formato mais nova
+	the other vault is not a valid vault	o outro cofre não é um cofre válido
+	could not read the other vault	não foi possível ler o outro cofre
+	opening the other vault…	abrindo o outro cofre…
+	merging the other vault…	juntando o outro cofre…
+	merged: the other vault's items are in this vault	juntado: os itens do outro cofre estão neste cofre
+	Nothing to merge: this vault already has everything from the other vault.	Nada a juntar: este cofre já tem tudo o que vem do outro.
+	The other vault is only read; this vault is saved once.	O outro cofre só é lido; este cofre é gravado uma vez.
+	Merge	Juntar
+	one of the vaults has no valid item list; nothing was merged	um dos cofres não tem uma lista de itens válida; nada foi juntado
+	an item in one of the vaults is not valid; nothing was merged	um item de um dos cofres não é válido; nada foi juntado
+	an item in one of the vaults has no id; nothing was merged	um item de um dos cofres não tem id; nada foi juntado
+	a folder in one of the vaults is not valid; nothing was merged	uma pasta de um dos cofres não é válida; nada foi juntado
+	a folder in one of the vaults has no id; nothing was merged	uma pasta de um dos cofres não tem id; nada foi juntado
+	the vaults could not be merged; nothing was merged	não foi possível juntar os cofres; nada foi juntado
+@plural	{n} item added from the other vault|{n} items added from the other vault	{n} item adicionado do outro cofre|{n} itens adicionados do outro cofre
+@plural	{n} item kept as a duplicate (same id)|{n} items kept as duplicates (same id)	{n} item mantido em duplicidade (mesmo id)|{n} itens mantidos em duplicidade (mesmo id)
+@plural	{n} item was already here|{n} items were already here	{n} item já estava aqui|{n} itens já estavam aqui
+@plural	{n} folder added from the other vault|{n} folders added from the other vault	{n} pasta adicionada do outro cofre|{n} pastas adicionadas do outro cofre
+@plural	{n} folder united with a folder of this vault|{n} folders united with folders of this vault	{n} pasta unida a uma pasta deste cofre|{n} pastas unidas a pastas deste cofre
 @plural	{n} item added from the other copy|{n} items added from the other copy	{n} item adicionado da outra cópia|{n} itens adicionados da outra cópia
 @plural	{n} item updated (the other copy was newer)|{n} items updated (the other copy was newer)	{n} item atualizado (a outra cópia era mais nova)|{n} itens atualizados (a outra cópia era mais nova)
 @plural	{n} item moved to the trash by the other copy|{n} items moved to the trash by the other copy	{n} item foi para a lixeira pela outra cópia|{n} itens foram para a lixeira pela outra cópia

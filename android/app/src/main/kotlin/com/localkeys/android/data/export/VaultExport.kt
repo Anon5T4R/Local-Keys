@@ -8,6 +8,7 @@ import com.localkeys.android.data.crypto.subsetVault
 import com.localkeys.android.data.store.DocumentIo
 import com.localkeys.android.data.store.DocumentWriter
 import com.localkeys.android.data.vault.Vault
+import java.io.IOException
 
 /**
  * O cofre NOVO a partir da seleção (unidade 6): a regra do núcleo escolhe os itens e as pastas usadas
@@ -39,15 +40,18 @@ class VaultExport(private val crypto: TkeysCrypto = TkeysCrypto()) {
     }
 
     /**
-     * Grava o arquivo no documento escolhido no "criar" do sistema (ele já perguntou sobre sobrescrever). Qualquer
-     * falha do provedor vira [Failure.Save], com a causa para a mensagem da tela.
+     * Grava o arquivo no documento escolhido no "criar" do sistema (ele já perguntou sobre sobrescrever) e exige que
+     * o provedor devolva exatamente os bytes gravados — o aviso de sucesso promete um cofre que abre. Qualquer falha
+     * do provedor (ou releitura diferente/indisponível) vira [Failure.Save], com a causa para a mensagem da tela.
      */
     fun write(document: DocumentIo, file: ByteArray) {
-        try {
+        val readBack = try {
             DocumentWriter.write(document, file)
         } catch (e: Exception) {
             throw Failure.Save(e)
         }
+        if (readBack == null) throw Failure.Save(IOException("the provider did not allow reading the written file back"))
+        if (!readBack.contentEquals(file)) throw Failure.Save(IOException("the written file does not match what was saved"))
     }
 }
 

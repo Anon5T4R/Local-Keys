@@ -150,6 +150,18 @@ fn vault_from_items_id_repetido_conta_uma_vez() {
     assert_eq!(out["items"].as_array().expect("items").len(), 1);
 }
 
+/// A ponte manda a lista já pronta: id repetido também conta uma vez (a primeira ocorrência fica), como no caminho
+/// do desktop.
+#[test]
+fn subset_vault_id_repetido_conta_uma_vez() {
+    let items = vec![item("a", Some("work")), item("b", None), item("a", Some("work"))];
+
+    let out = parse(&subset_vault(&folders(), &items).unwrap_or_else(|e| panic!("seleção válida recusada: {e}")));
+
+    let ids: Vec<&str> = out["items"].as_array().expect("items").iter().filter_map(|it| it["id"].as_str()).collect();
+    assert_eq!(ids, ["a", "b"], "a primeira ocorrência fica; a repetida sai");
+}
+
 #[test]
 fn vault_from_items_sem_lista_de_itens_e_erro() {
     for malformed in [json!({}), json!({"items": null}), json!({"items": "nada"})] {

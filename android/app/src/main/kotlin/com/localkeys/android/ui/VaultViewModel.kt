@@ -6,6 +6,7 @@ import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
@@ -82,14 +83,6 @@ class ResolverDocument(private val resolver: ContentResolver, private val uri: U
  */
 fun writeDocument(resolver: ContentResolver, uri: Uri, bytes: ByteArray): ByteArray? =
     DocumentWriter.write(ResolverDocument(resolver, uri), bytes)
-
-/**
- * O arquivo no disco mudou desde a última leitura/gravação conhecida (ex.: o
- * OneDrive/Google Drive sincronizou uma versão nova vinda do desktop). O
- * `VaultSaver` a detecta ANTES de gravar ([VaultSaver.SaveFailure.ExternalChange])
- * para nunca sobrescrever em silêncio o trabalho do outro dispositivo. A UI
- * oferece recarregar ou sobrescrever.
- */
 
 /**
  * Estado da UI + ponte entre telas, `.tkeys` e cofre biométrico do SO.
@@ -863,8 +856,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             str(R.string.err_write_failed_cause, e.attempts.joinToString("; ") { (mode, cause) -> "$mode: ${describeCause(cause)}" })
         is VaultSaver.SaveFailure.RetryFailed -> str(R.string.err_write_retry_failed, e.cause?.let(::describeCause) ?: "")
         VaultSaver.SaveFailure.Unrecoverable -> str(R.string.err_write_unrecoverable)
-        // Tratada no `failSave` antes de chegar aqui (diálogo de conflito).
-        is VaultSaver.SaveFailure.ExternalChange -> str(R.string.err_write_unrecoverable)
+        // No `failSave` a mudança externa vira o diálogo de conflito; quando a falha chega por outro caminho (criar
+        // cofre), o texto é o de mudança externa, não o de "não reabre".
+        is VaultSaver.SaveFailure.ExternalChange -> str(R.string.external_change_title)
     }
 
     /** Mensagem de erro do `.tkeys` mapeada por tipo (recursos, não o message interno). */
@@ -1223,9 +1217,22 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Fechou o diálogo sem criar: nada é gerado e a seleção fica. */
+    /** Fechou o diálogo sem criar: o documento que o "criar" do sistema já criou (vazio) é apagado. */
     fun cancelExportVault() {
+        val pending = _state.value.exportVault
         _state.update { it.copy(exportVault = null, exportVaultError = null) }
+        pending?.let { discardExportDocument(it.uri) }
+    }
+
+    /**
+     * Apaga o documento que o "criar" do sistema deixou quando a criação do cofre não foi adiante (cancelou ou a
+     * gravação falhou). Melhor esforço: falha de exclusão é ignorada (o arquivo vazio fica e a pessoa apaga à mão) e
+     * não muda o fluxo nem a mensagem.
+     */
+    private fun discardExportDocument(uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, Uri.parse(uri)) }
+        }
     }
 
     /**
@@ -1259,13 +1266,16 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update {
                     it.copy(busy = false, notice = str(R.string.msg_export_vault_saved, pending.name ?: pending.uri))
                 }
-            } catch (e: TkeysError) {
-                // A recusa do núcleo (seleção vazia ou id que sumiu do cofre) já tem o texto traduzido.
-                _state.update { it.copy(busy = false, error = tkeysErrorMessage(e)) }
-            } catch (e: VaultExport.Failure.Save) {
-                _state.update { it.copy(busy = false, error = str(R.string.msg_export_vault_failed, describeCause(e.cause ?: e))) }
             } catch (e: Exception) {
-                _state.update { it.copy(busy = false, error = str(R.string.msg_export_vault_failed, describeCause(e))) }
+                // O documento vazio que o "criar" do sistema deixou não fica no disco quando a criação falha.
+                discardExportDocument(pending.uri)
+                val detail = when (e) {
+                    // A recusa do núcleo (seleção vazia ou id que sumiu do cofre) já tem o texto traduzido.
+                    is TkeysError -> tkeysErrorMessage(e)
+                    is VaultExport.Failure.Save -> str(R.string.msg_export_vault_failed, describeCause(e.cause ?: e))
+                    else -> str(R.string.msg_export_vault_failed, describeCause(e))
+                }
+                _state.update { it.copy(busy = false, error = detail) }
             }
         }
     }

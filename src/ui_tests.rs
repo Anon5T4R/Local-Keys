@@ -194,6 +194,18 @@ fn click_menu_item(harness: &mut Harness<'_, KeysApp>, label: &str) {
     harness.run_steps(2);
 }
 
+/// Clica no BOTÃO com esse rótulo (quando o mesmo texto também é título/heading, como no modal de exportar).
+fn click_labelled_button(harness: &mut Harness<'_, KeysApp>, label: &str) {
+    {
+        let node = harness
+            .get_all_by_label(label)
+            .find(|node| node.accesskit_node().role() == Role::Button)
+            .unwrap_or_else(|| panic!("botão '{label}' não encontrado"));
+        node.click();
+    }
+    harness.run_steps(2);
+}
+
 /// Grava o cofre do app no caminho de teste e devolve a contagem de gravações (a base do "uma gravação só").
 fn persist_now(app: &mut KeysApp) -> usize {
     let raw = app.raw.clone().expect("cofre aberto");
@@ -417,6 +429,7 @@ fn rare_vault_actions_live_in_the_more_menu() {
     click_more(&mut harness);
     harness.get_by_label("Import…");
     harness.get_by_label("Export…");
+    harness.get_by_label("Merge another vault…");
     harness.get_by_label("Change master password…").click();
     harness.run_steps(2);
     assert!(harness.state().change_open);
@@ -2691,4 +2704,216 @@ fn a_selection_that_no_longer_exists_reports_and_writes_nothing() {
     assert!(error.contains("no longer exists"), "mensagem traduzida da variante: {error}");
     assert!(!target.exists(), "nada é gerado quando a seleção é inválida");
     assert!(harness.state().job_label.is_none(), "o spinner sai depois da recusa");
+}
+
+/// Exportar por cima do cofre ABERTO é recusado nos dois exports (cofre novo e claro): nada roda e nada é escrito.
+#[test]
+fn exporting_over_the_open_vault_is_refused() {
+    let (mut app, item_id, _folder) = unlocked_for_vault_export("export-over", Prefs::new("en", ThemeMode::Dark));
+    app.export_vault_kdf = light_kdf();
+    let open_path = app.path.clone();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    // Cofre novo a partir da seleção: o caminho do cofre aberto no "Salvar como" não vira job.
+    harness.state_mut().selection.select_only(&item_id);
+    harness.state_mut().export_vault_chosen(open_path.clone());
+    harness.run_steps(2);
+    harness.state_mut().export_vault_pass = "senha".into();
+    harness.state_mut().export_vault_confirm = "senha".into();
+    click_labelled_button(&mut harness, "Create vault");
+    assert_eq!(harness.state().export_vault_err.as_deref(), Some("Do not save over the open vault; choose another file."));
+    assert!(harness.state().job_label.is_none(), "nada roda quando o destino é o cofre aberto");
+    assert!(harness.state().export_vault_open, "o diálogo fica aberto para escolher outro arquivo");
+    harness.state_mut().export_vault_open = false;
+
+    // Export em claro: o mesmo caminho também é recusado.
+    harness.state_mut().export_open = true;
+    harness.state_mut().export_path = open_path;
+    harness.run_steps(2);
+    click_labelled_button(&mut harness, "Export");
+    let err = harness.state().err.clone().expect("mensagem do export em claro");
+    assert!(err.contains("Do not save over the open vault"), "{err}");
+    assert!(harness.state().job_label.is_none(), "nada roda quando o destino é o cofre aberto");
+}
+
+// ── unidade 7: juntar outro cofre ──────────────────────────────────────
+
+/// Um cofre com a pasta "Work" (itens dentro) + um `outro.tkeys` sintético: um item igual, um em colisão (mesmo id,
+/// conteúdo diferente), dois novos e uma pasta com o mesmo nome ("Work", id diferente) e outra nova ("Nova").
+fn unlocked_for_merge(name: &str, prefs: Prefs) -> (KeysApp, std::path::PathBuf) {
+    let (app, _folder_id) = unlocked_in_folder(name, "Work", prefs);
+    let dir = scratch(name);
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    let target = dir.join("outro.tkeys");
+    let base = app.raw.clone().expect("cofre aberto");
+    let items = base["items"].as_array().expect("itens");
+    let equal = items.iter().find(|item| item["name"] == "1lib.sk").expect("item igual").clone();
+    let mut collision = items.iter().find(|item| item["name"] == "192.168.1.34").expect("item da colisão").clone();
+    collision["name"] = serde_json::json!("192.168.1.34 (outro)");
+    let note = |id: &str, name: &str, folder: &str| {
+        serde_json::json!({
+            "id": id, "kind": "note", "name": name, "favorite": false, "folderId": folder,
+            "notes": "", "createdAt": 1, "updatedAt": 2, "deletedAt": null
+        })
+    };
+    let other = serde_json::json!({
+        "version": 1,
+        "folders": [
+            {"id": "g1", "name": "Work"},
+            {"id": "g2", "name": "Nova"}
+        ],
+        "items": [equal, collision, note("novo-work", "Novo no Work", "g1"), note("novo-nova", "Novo na Nova", "g2")]
+    });
+    let bytes = serde_json::to_vec(&other).expect("json do outro");
+    let file = app.session.as_ref().expect("sessão viva").seal(&bytes).expect("sela o outro");
+    std::fs::write(&target, &file).expect("grava o outro");
+    (app, target)
+}
+
+/// Escreve um `outro.tkeys` com a senha PRÓPRIA (salt diferente): o cofre aberto não o abre pela chave da sessão.
+fn write_other_with_password(target: &std::path::Path, password: &str) {
+    let other = serde_json::json!({"version": 1, "folders": [], "items": []});
+    let bytes = serde_json::to_vec(&other).expect("json do outro");
+    let light = crate::crypto::KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 };
+    let (file, _session) = crate::crypto::create_vault_with(password, &bytes, light).expect("sela o outro");
+    std::fs::write(target, &file).expect("grava o outro");
+}
+
+fn merge_chosen(harness: &mut Harness<'_, KeysApp>, path: &std::path::Path) {
+    let ctx = harness.ctx.clone();
+    harness.state_mut().merge_other_chosen(&ctx, &path.display().to_string());
+}
+
+/// Fluxo completo: o resumo mostra as contagens certas, confirmar grava UMA vez o cofre aberto e o outro arquivo
+/// fica byte a byte igual.
+#[test]
+fn merging_another_vault_shows_the_summary_and_writes_once() {
+    let (mut app, other_path) = unlocked_for_merge("merge-other", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-other-apply");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let other_before = std::fs::read(&other_path).expect("outro em disco");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+
+    let plan = harness.state().merge_plan.clone().expect("o resumo da junção");
+    assert_eq!(
+        (plan.summary.added, plan.summary.collisions, plan.summary.already_present, plan.summary.folders_added, plan.summary.folders_merged),
+        (2, 1, 1, 1, 1)
+    );
+    harness.get_by_label("2 items added from the other vault");
+    harness.get_by_label("1 item kept as a duplicate (same id)");
+    harness.get_by_label("1 item was already here");
+    harness.get_by_label("1 folder added from the other vault");
+    harness.get_by_label("1 folder united with a folder of this vault");
+
+    click_labelled_button(&mut harness, "Merge");
+
+    assert!(harness.state().err.is_none(), "a junção não deu erro: {:?}", harness.state().err);
+    assert_eq!(harness.state().persist_count - baseline, 1, "uma gravação só");
+    assert!(harness.state().selection.is_empty(), "a seleção é limpa ao aplicar");
+    let raw = harness.state().raw.clone().expect("cofre aberto");
+    let items = raw["items"].as_array().expect("itens");
+    assert_eq!(items.len(), 6, "3 do cofre + 2 novos + a duplicata da colisão");
+    let work = raw["folders"].as_array().expect("pastas").iter().find(|folder| folder["name"] == "Work").expect("pasta Work").clone();
+    assert_eq!(raw["folders"].as_array().expect("pastas").len(), 2, "Work (unida) + Nova");
+    let novo = items.iter().find(|item| item["id"] == "novo-work").expect("o item novo entrou");
+    assert_eq!(novo["folderId"], work["id"], "o item da pasta unida repontou para a pasta do cofre aberto");
+    assert!(items.iter().any(|item| item["id"] == "novo-nova"));
+    assert!(items.iter().any(|item| item["name"] == "192.168.1.34 (outro)" && item["id"] != "novo-work"));
+    assert!(items.iter().any(|item| item["name"] == "1lib.sk"));
+
+    assert_eq!(std::fs::read(&other_path).expect("outro em disco"), other_before, "o outro arquivo fica intocado");
+}
+
+/// Cancelar no resumo não grava nem muda o cofre; o outro arquivo continua igual.
+#[test]
+fn cancelling_the_merge_summary_writes_nothing() {
+    let (mut app, other_path) = unlocked_for_merge("merge-cancel", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-cancel-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let before = app.raw.clone().expect("cofre aberto");
+    let other_before = std::fs::read(&other_path).expect("outro em disco");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+    assert!(harness.state().merge_plan.is_some());
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(2);
+
+    assert!(harness.state().merge_plan.is_none(), "o resumo fecha");
+    assert_eq!(harness.state().persist_count, baseline, "cancelar não grava");
+    assert_eq!(harness.state().raw.as_ref(), Some(&before), "o cofre aberto não muda");
+    assert_eq!(std::fs::read(&other_path).expect("outro em disco"), other_before);
+}
+
+/// O outro cofre com outra senha: sem a senha certa o resumo não abre; a mensagem aparece e nada é gravado.
+#[test]
+fn merging_the_other_vault_with_a_wrong_password_reports_and_writes_nothing() {
+    let (mut app, other_path) = unlocked_for_merge("merge-password", Prefs::new("en", ThemeMode::Dark));
+    write_other_with_password(&other_path, "senha-do-outro");
+    let dir = scratch("merge-password-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    harness.run_steps(2);
+    assert!(harness.state().merge_open, "a chave da sessão não abriu: pede a senha do outro cofre");
+    harness.get_by_label("Open the other vault");
+
+    harness.state_mut().merge_password = "senha-errada".into();
+    harness.run_steps(2);
+    click_labelled_button(&mut harness, "Open");
+    wait_for_job(&mut harness);
+    assert_eq!(harness.state().merge_error.as_deref(), Some("wrong password or corrupted/tampered file"));
+    assert!(harness.state().merge_open, "o diálogo fica aberto para tentar de novo");
+    assert!(harness.state().merge_plan.is_none(), "sem resumo");
+    assert_eq!(harness.state().persist_count, baseline);
+
+    // Com a senha certa o resumo abre (e nada é gravado até confirmar).
+    harness.state_mut().merge_password = "senha-do-outro".into();
+    harness.run_steps(2);
+    click_labelled_button(&mut harness, "Open");
+    wait_for_job(&mut harness);
+    assert!(harness.state().merge_plan.is_some(), "a senha certa calcula a junção");
+    assert_eq!(harness.state().persist_count, baseline, "nada gravado antes de confirmar");
+}
+
+/// Nada a juntar (o outro cofre já está inteiro aqui): o resumo diz isso e o único botão é Fechar.
+#[test]
+fn merging_a_vault_with_nothing_new_says_nothing_to_merge() {
+    let (mut app, other_path) = unlocked_for_merge("merge-nothing", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-nothing-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    // O outro cofre é o próprio cofre aberto: tudo já está aqui.
+    let bytes = serde_json::to_vec(app.raw.as_ref().expect("cofre aberto")).expect("json");
+    let file = app.session.as_ref().expect("sessão viva").seal(&bytes).expect("sela");
+    std::fs::write(&other_path, &file).expect("grava o outro");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+
+    assert!(harness.state().merge_plan.is_some());
+    harness.get_by_label("Nothing to merge: this vault already has everything from the other vault.");
+    assert!(harness.query_by_label("Merge").is_none(), "nada a juntar: sem botão de confirmar");
+    harness.get_by_label("Close").click();
+    harness.run_steps(2);
+    assert!(harness.state().merge_plan.is_none());
+    assert_eq!(harness.state().persist_count, baseline, "fechar não grava");
 }

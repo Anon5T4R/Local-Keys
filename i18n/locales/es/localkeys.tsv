@@ -144,6 +144,7 @@
 	Create vault	Crear bóveda
 	the password cannot be empty	la contraseña no puede estar vacía
 	choose where to save the new vault	indica dónde guardar la bóveda nueva
+	Do not save over the open vault; choose another file.	No guardes encima de la bóveda abierta; elige otro archivo.
 	creating the new vault…	creando la bóveda nueva…
 	new vault saved	bóveda nueva guardada
 	Select at least one item to export.	Selecciona al menos un elemento para exportar.
@@ -247,6 +248,31 @@
 	The CPF check digits don't match. Check for a typo; you can still save.	Los dígitos de control del CPF no coinciden. Revisa si está bien escrito; se puede guardar igual.
 	Save a copy to a synced folder	Guardar una copia en una carpeta sincronizada
 	Sync with another copy	Sincronizar con otra copia
+	Merge another vault	Juntar otra bóveda
+	Open the other vault	Abrir la otra bóveda
+	enter the other vault's password	indica la contraseña de la otra bóveda
+	the other vault is the vault in use	la otra bóveda es la bóveda en uso
+	the other vault is not a .tkeys vault	la otra bóveda no es una bóveda .tkeys
+	the other vault uses a newer format version	la otra bóveda usa una versión de formato más reciente
+	the other vault is not a valid vault	la otra bóveda no es una bóveda válida
+	could not read the other vault	no se pudo leer la otra bóveda
+	opening the other vault…	abriendo la otra bóveda…
+	merging the other vault…	juntando la otra bóveda…
+	merged: the other vault's items are in this vault	juntada: los elementos de la otra bóveda están en esta bóveda
+	Nothing to merge: this vault already has everything from the other vault.	No hay nada que juntar: esta bóveda ya tiene todo lo de la otra.
+	The other vault is only read; this vault is saved once.	La otra bóveda solo se lee; esta bóveda se guarda una vez.
+	Merge	Juntar
+	one of the vaults has no valid item list; nothing was merged	una de las bóvedas no tiene una lista de elementos válida; no se juntó nada
+	an item in one of the vaults is not valid; nothing was merged	un elemento de una de las bóvedas no es válido; no se juntó nada
+	an item in one of the vaults has no id; nothing was merged	un elemento de una de las bóvedas no tiene id; no se juntó nada
+	a folder in one of the vaults is not valid; nothing was merged	una carpeta de una de las bóvedas no es válida; no se juntó nada
+	a folder in one of the vaults has no id; nothing was merged	una carpeta de una de las bóvedas no tiene id; no se juntó nada
+	the vaults could not be merged; nothing was merged	no se pudieron juntar las bóvedas; no se juntó nada
+@plural	{n} item added from the other vault|{n} items added from the other vault	{n} elemento añadido de la otra bóveda|{n} elementos añadidos de la otra bóveda
+@plural	{n} item kept as a duplicate (same id)|{n} items kept as duplicates (same id)	{n} elemento mantenido como duplicado (mismo id)|{n} elementos mantenidos como duplicados (mismo id)
+@plural	{n} item was already here|{n} items were already here	{n} elemento ya estaba aquí|{n} elementos ya estaban aquí
+@plural	{n} folder added from the other vault|{n} folders added from the other vault	{n} carpeta añadida de la otra bóveda|{n} carpetas añadidas de la otra bóveda
+@plural	{n} folder united with a folder of this vault|{n} folders united with folders of this vault	{n} carpeta unida a una carpeta de esta bóveda|{n} carpetas unidas a carpetas de esta bóveda
 @plural	{n} item added from the other copy|{n} items added from the other copy	{n} elemento añadido de la otra copia|{n} elementos añadidos de la otra copia
 @plural	{n} item updated (the other copy was newer)|{n} items updated (the other copy was newer)	{n} elemento actualizado (la otra copia era más reciente)|{n} elementos actualizados (la otra copia era más reciente)
 @plural	{n} item moved to the trash by the other copy|{n} items moved to the trash by the other copy	{n} elemento fue a la papelera por la otra copia|{n} elementos fueron a la papelera por la otra copia

@@ -241,6 +241,8 @@ impl KeysApp {
             || self.export_open
             || self.export_vault_open
             || self.sync_open
+            || self.merge_open
+            || self.merge_plan.is_some()
             || self.settings_open
             // O prompt do atualizador (craft_update) é um modal do crate: enquanto ele está aberto, o teclado da
             // seleção não pode apagar por baixo dele.
