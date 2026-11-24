@@ -466,6 +466,46 @@ fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
     }
 }
 
+/// O painel de anexos de um item (aberto pela lista) com nome longo e anexos: na janela de 500 px
+/// e na mínima de 340, o título, cada nome de arquivo e os botões ficam inteiros e dentro da janela.
+#[test]
+fn the_attachments_panel_fits_the_narrow_window() {
+    const HEIGHT: f64 = 640.0;
+    const ITEM: &str = "Intranet corporativa do grupo com um nome bem comprido";
+    const NAMES: [&str; 2] = ["foto-do-documento-de-identidade-2026-frente.jpg", "nota.txt"];
+    for width in [500.0, 340.0] {
+        let mut app = app("attachments", Prefs::new("en", ThemeMode::Dark));
+        let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
+        crate::vault::add_login(&mut raw, crate::vault::LoginForm { name: ITEM, username: "joao", password: "x", totp: "", url: "", notes: "" });
+        let item = raw.get_mut("items").and_then(|i| i.get_mut(0)).expect("item");
+        item["attachments"] = serde_json::json!([
+            { "id": "a1", "name": NAMES[0], "size": 2048 },
+            { "id": "a2", "name": NAMES[1], "size": 12 }
+        ]);
+        app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
+        app.adopt(crate::crypto::test_session(), raw);
+        let id = item_id(&app, ITEM);
+        app.attach_item = Some(id);
+        let mut harness = harness_sized(app, width as f32);
+        harness.run_steps(3);
+        shot(&mut harness, &format!("attachments-panel-{width}"));
+        let inside = |rect: egui::Rect| rect.min.x >= 0.0 && rect.max.x <= width as f32;
+        let title = harness.get_by_label_contains(&format!("Attachments — {ITEM}")).rect();
+        assert!(inside(title), "{width}: título cortado: {title:?}");
+        for name in NAMES {
+            let nodes: Vec<_> = harness.get_all_by_label(name).collect();
+            assert!(!nodes.is_empty(), "{width}: nome {name} sumiu (truncado demais)");
+            for node in &nodes {
+                let rect = node.rect();
+                assert!(inside(rect), "{width}: nome {name} cortado: {rect:?}");
+            }
+        }
+        let add = harness.get_by_label("Add attachment").rect();
+        assert!(inside(add), "{width}: Add attachment cortado: {add:?}");
+        assert!(title.min.y >= 0.0 && add.max.y <= HEIGHT as f32, "{width}: fora da altura");
+    }
+}
+
 /// Um anexo já lido do disco, à espera no formulário.
 fn pending(name: &str) -> crate::jobs::AttachmentRead {
     crate::jobs::AttachmentRead { item_id: crate::FORM_ATTACH.into(), name: name.into(), mime: "text/plain", size: 1, data_b64: "QQ==".into() }
