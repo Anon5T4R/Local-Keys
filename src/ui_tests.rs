@@ -2488,3 +2488,53 @@ fn moving_the_selection_to_no_folder_takes_them_out_of_the_folder() {
         assert!(item_by_id(harness.state(), &id)["folderId"].is_null(), "{name} saiu da pasta");
     }
 }
+
+/// Um item marcado que sai da LISTA por outra via (o ★ desmarcado com o filtro "Favoritos" ligado) sai também da
+/// seleção: o rodapé não pode contar nem apagar às cegas um item que não está na tela.
+#[test]
+fn a_marked_row_that_leaves_the_list_drops_out_of_the_selection() {
+    let mut app = unlocked("select-prune", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-prune");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    // Só o favorito na lista: desfavoritá-lo tira a própria linha que está marcada. (O filtro entra direto no
+    // estado: o que este teste exercita é a poda da seleção, não o popup de filtros.)
+    harness.state_mut().filters.only.favorites = true;
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 1);
+    harness.get_by_label("1 selected");
+
+    let id = item_id(harness.state(), "192.168.1.34");
+    harness.state_mut().toggle_favorite(&id);
+    harness.run_steps(2);
+
+    assert!(harness.state().selection.is_empty(), "o item marcado saiu da lista: sai da seleção");
+    assert!(harness.query_by_label_contains("selected").is_none(), "o rodapé some junto");
+    assert!(harness.state().err.is_none(), "a poda não inventa erro: {:?}", harness.state().err);
+}
+
+/// O menu "Move to folder…" é um popup do egui: com ele aberto o teclado é dele — `Esc` fecha o menu em vez de
+/// limpar a seleção, e `Delete` não abre a confirmação por baixo.
+#[test]
+fn an_open_popup_keeps_the_selection_keys_off_the_list() {
+    let mut harness = harness(unlocked("select-popup", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 2);
+
+    harness.get_by_label("Move to folder…").click();
+    harness.run_steps(2);
+    assert!(harness.ctx.any_popup_open(), "o menu de mover está aberto como popup do egui");
+
+    press(&mut harness, egui::Key::Delete, egui::Modifiers::NONE);
+    assert!(harness.state().batch_delete_ask.is_none(), "o Delete não abre a confirmação por baixo do menu");
+    assert_eq!(harness.state().selection.len(), 2, "a seleção fica intacta");
+
+    press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    assert_eq!(harness.state().selection.len(), 2, "o Esc fecha o menu, não limpa a seleção");
+}

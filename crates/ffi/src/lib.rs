@@ -145,10 +145,12 @@ pub fn trash_items(items_json: String, now_ms: u64) -> Result<String, FfiError> 
 }
 
 /// Põe na pasta `folder_id` (`None` = sem pasta) os itens de um array JSON (só os SELECIONADOS) e devolve o array
-/// atualizado. Lote é tudo ou nada: um item inválido e nada muda.
+/// atualizado. `folder_ids` são os ids das pastas que o cofre conhece (a lista é barata; o cofre inteiro não atravessa
+/// a ponte): pasta de destino fora dela é recusa. Lote é tudo ou nada: um item inválido e nada muda.
 #[uniffi::export]
-pub fn move_items(items_json: String, folder_id: Option<String>, now_ms: u64) -> Result<String, FfiError> {
-    batch::move_items_json(&items_json, folder_id.as_deref(), now_ms).map_err(|error| FfiError::InvalidItems { reason: error.to_string() })
+pub fn move_items(items_json: String, folder_id: Option<String>, folder_ids: Vec<String>, now_ms: u64) -> Result<String, FfiError> {
+    batch::move_items_json_with_folders(&items_json, folder_id.as_deref(), &folder_ids, now_ms)
+        .map_err(|error| FfiError::InvalidItems { reason: error.to_string() })
 }
 
 /// Gera o JSON de um cofre NOVO (`{"version","folders","items"}`) com os itens SELECIONADOS e só as pastas que eles
@@ -367,12 +369,24 @@ mod tests {
 
     #[test]
     fn lote_move_para_uma_pasta_e_para_sem_pasta() {
-        let out = move_items(SELECTED.into(), Some("home".into()), 1_700).unwrap();
+        let folders = vec!["work".to_string(), "home".to_string()];
+        let out = move_items(SELECTED.into(), Some("home".into()), folders.clone(), 1_700).unwrap();
         assert_eq!(out.matches("\"folderId\":\"home\"").count(), 2, "{out}");
         assert_eq!(out.matches("\"updatedAt\":1700").count(), 2, "{out}");
 
-        let out = move_items(SELECTED.into(), None, 1_700).unwrap();
+        let out = move_items(SELECTED.into(), None, folders, 1_700).unwrap();
         assert_eq!(out.matches("\"folderId\":null").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn mover_para_uma_pasta_que_o_cofre_nao_tem_e_erro_e_nada_muda() {
+        let reason = |result: Result<String, FfiError>| match result {
+            Err(FfiError::InvalidItems { reason }) => reason,
+            other => panic!("esperava InvalidItems, veio {other:?}"),
+        };
+        let folders = vec!["work".to_string(), "home".to_string()];
+
+        assert_eq!(reason(move_items(SELECTED.into(), Some("sumiu".into()), folders, 1)), "folder `sumiu` does not exist");
     }
 
     #[test]
@@ -382,7 +396,7 @@ mod tests {
             other => panic!("esperava InvalidItems, veio {other:?}"),
         };
         assert!(reason(trash_items("não é json".into(), 1)).starts_with("invalid items JSON: "), "JSON inválido");
-        assert!(reason(move_items("{}".into(), None, 1)).starts_with("invalid items JSON: "), "JSON que não é array");
+        assert!(reason(move_items("{}".into(), None, Vec::new(), 1)).starts_with("invalid items JSON: "), "JSON que não é array");
         assert_eq!(reason(trash_items(r#"[{"name":"sem id"}]"#.into(), 1)), "item has no `id`");
         assert_eq!(reason(trash_items(r#"[{"id":"a","deletedAt":9}]"#.into(), 1)), "item `a` is already in the trash");
         assert_eq!(FfiError::InvalidItems { reason: "x".into() }.to_string(), "items cannot be changed: x");

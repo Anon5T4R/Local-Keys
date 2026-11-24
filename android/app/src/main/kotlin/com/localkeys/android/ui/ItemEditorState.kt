@@ -16,6 +16,7 @@ import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.data.vault.Login
 import com.localkeys.android.ffi.FieldLabelsFfi
+import org.json.JSONException
 import java.util.UUID
 
 /**
@@ -262,15 +263,21 @@ class ItemEditorState(
         val edited = build(now)
         val target = targetKind ?: return Save.Ready(edited)
         if (target == kind) return Save.Ready(edited)
+        // Qualquer outra exceção é erro de programação, não uma recusa da regra: sobe em vez de virar "nada foi
+        // gravado" com o `message` cru na tela.
         return try {
             Save.Ready(convert(edited, target, labels))
         } catch (e: TkeysError.NotConvertible) {
             // Como no desktop: o formulário continua aberto no tipo ORIGINAL, com o que a pessoa editou.
             targetKind = kind
             Save.Refused(e.reason)
-        } catch (e: Exception) {
-            // Uma saída inesperada da ponte (o item convertido não volta a ser um `Item` válido) também não pode
-            // derrubar o salvar: mesma recusa, nada é gravado e as edições ficam.
+        } catch (e: JSONException) {
+            // Saída da ponte que não é um JSON de item (contrato quebrado do lado de lá): mesma recusa, nada é
+            // gravado e as edições ficam. O `reason` é diagnóstico de log, não texto de tela.
+            targetKind = kind
+            Save.Refused(e.message?.takeIf { it.isNotBlank() } ?: "the converted item is not valid JSON")
+        } catch (e: IllegalArgumentException) {
+            // `Item.parse` com campo faltando/tipo desconhecido (`ItemKind.fromWire`): idem.
             targetKind = kind
             Save.Refused(e.message?.takeIf { it.isNotBlank() } ?: "the converted item could not be read")
         }

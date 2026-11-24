@@ -254,8 +254,12 @@ fun VaultListPane(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNew) {
-                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.vault_add))
+            // No modo de seleção o FAB de novo item sai: o foco é o lote, e um toque nele abriria o editor por cima
+            // da seleção.
+            if (!selection.active) {
+                FloatingActionButton(onClick = onNew) {
+                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.vault_add))
+                }
             }
         },
     ) { padding ->
@@ -294,9 +298,11 @@ fun VaultListPane(
                             detailSelected = item.id == selectedId,
                             showTotp = rowTotp,
                             totpClock = totpClock,
-                            // Fora do modo de seleção o toque abre o item; no modo ele alterna (regra do modo).
-                            onClick = { if (selection.onTap(item.id)) onOpen(item.id) },
-                            onLongClick = { selection.onLongPress(item.id) },
+                            // Fora do modo de seleção o toque abre o item; no modo ele alterna (regra do modo). Com
+                            // um lote em andamento (`busy`) a linha não responde: a seleção não pode mudar durante
+                            // a gravação que a está usando.
+                            onClick = { if (!busy && selection.onTap(item.id)) onOpen(item.id) },
+                            onLongClick = { if (!busy) selection.onLongPress(item.id) },
                             onToggleFavorite = { onToggleFavorite(item.id) },
                         )
                     }
@@ -560,7 +566,7 @@ private fun ItemRow(
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (hasTotp && showTotp) RowTotp(item.login?.totp.orEmpty(), totpClock)
+                if (hasTotp && showTotp) RowTotp(item.login?.totp.orEmpty(), totpClock, copyable = !inSelection)
                 // No modo de seleção o favorito sai da linha: um toque ali não pode mudar o cofre sem querer.
                 if (!inSelection) {
                     IconButton(onClick = onToggleFavorite) {
@@ -593,16 +599,22 @@ private fun Badges(item: Item, showTotpBadge: Boolean, modifier: Modifier = Modi
     }
 }
 
-/** Código TOTP vivo na linha; tocar copia. */
+/**
+ * Código TOTP vivo na linha; tocar copia — menos no modo de seleção ([copyable] falso), onde o toque pertence à
+ * linha (marcar/desmarcar) e não pode copiar o código por engano.
+ */
 @Composable
-private fun RowTotp(secret: String, clock: State<Long>) {
+private fun RowTotp(secret: String, clock: State<Long>, copyable: Boolean) {
     val code = rememberTotpCode(secret, clock) ?: return
     val context = LocalContext.current
     val label = stringResource(R.string.field_totp_code)
+    val tap = if (copyable) {
+        Modifier.clickable { copyToClipboard(context, label, code.code, sensitive = true) }
+    } else {
+        Modifier
+    }
     Row(
-        modifier = Modifier
-            .clickable { copyToClipboard(context, label, code.code, sensitive = true) }
-            .padding(horizontal = 4.dp, vertical = 4.dp),
+        modifier = tap.padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

@@ -45,6 +45,22 @@ impl KeysApp {
         self.batch_delete_ask = None;
     }
 
+    /// Poda a seleção contra a lista visível ATUAL — chamado depois de cada `persist`. Um item marcado que saiu da
+    /// tela por outra via (o ★ desmarcado com o filtro "Favoritos" ligado, pasta ou tipo trocados no editor, item
+    /// que foi para a lixeira) não pode continuar contando no rodapé nem ser apagado/movido às cegas.
+    pub(crate) fn prune_selection(&mut self) {
+        let visible = self.visible_ids();
+        let present: std::collections::HashSet<&str> = visible.iter().map(String::as_str).collect();
+        self.selection.retain_visible(|id| present.contains(id));
+        if self.selection_anchor.as_ref().is_some_and(|anchor| !present.contains(anchor.as_str())) {
+            self.selection_anchor = None;
+        }
+        if self.batch_delete_ask.is_some() {
+            // A confirmação aberta mostrava outra contagem; com a seleção podada ela acompanha (ou some vazia).
+            self.batch_delete_ask = if self.selection.is_empty() { None } else { Some(self.selection.len()) };
+        }
+    }
+
     /// Clique numa linha: Ctrl alterna, Shift pega o intervalo pela ordem visível. O clique simples continua
     /// como antes (não mexe na seleção — as ações da linha são os botões dela).
     pub(crate) fn row_click(&mut self, id: &str, visible: &[String], modifiers: egui::Modifiers) {
@@ -63,9 +79,11 @@ impl KeysApp {
     }
 
     /// Atalhos da seleção com a lista visível: Ctrl+A marca tudo, `Esc` limpa e `Delete` pede a confirmação
-    /// do apagar. Com um diálogo aberto, um campo de texto focado ou a paleta, o teclado é deles.
+    /// do apagar. Com um diálogo aberto, um campo de texto focado, a paleta ou um POPUP (menu "Move to folder…",
+    /// por exemplo) aberto, o teclado é deles — o `Esc` fecha o menu em vez de limpar a seleção, e o `Delete` não
+    /// abre a confirmação por baixo dele.
     pub(crate) fn selection_keys(&mut self, ctx: &egui::Context, visible: &[String]) {
-        if self.any_modal_open() || self.palette.is_open() || ctx.text_edit_focused() {
+        if self.any_modal_open() || self.palette.is_open() || ctx.text_edit_focused() || ctx.any_popup_open() {
             return;
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {

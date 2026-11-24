@@ -4,8 +4,10 @@
 //! - sobre uma **lista de itens** ([`trash_items`], [`move_items`]) e sobre o **cofre** pelo id ([`trash_many`],
 //!   [`move_many`]) — o desktop usa as do cofre; a ponte UniFFI do Android usa as da lista, porque mandar o cofre
 //!   inteiro para a ponte custa caro em memória num cofre grande;
-//! - e as mesmas duas com o array em JSON ([`trash_items_json`], [`move_items_json`]), para a ponte não ganhar
-//!   `serde_json` como dependência própria.
+//! - as mesmas duas com o array em JSON ([`trash_items_json`], [`move_items_json`]), para a ponte não ganhar
+//!   `serde_json` como dependência própria; mover pelo caminho da lista tem ainda a forma que valida a pasta de
+//!   destino contra os ids conhecidos ([`move_items_with_folders`]/[`move_items_json_with_folders`]), porque essa lista
+//!   não carrega o cofre inteiro.
 //!
 //! Decisões da regra:
 //! - **tudo ou nada**: o lote valida TODOS os itens antes de tocar em qualquer um. Um item sem `id`, um id que não
@@ -61,9 +63,11 @@ fn item_id(item: &Value) -> Result<&str, BatchError> {
     item.get("id").and_then(Value::as_str).ok_or(BatchError::MissingId)
 }
 
-/// Na lixeira? `deletedAt` presente e não nulo (mesma regra da lista do desktop, que esconde a lixeira).
+/// Na lixeira? `deletedAt` presente, não nulo e diferente de `0` — a MESMA regra do resto do app
+/// (`vault::trashed_items` no desktop, `Item.inTrash` no Android): o `0` do epoch é falsy no JS do oficial e um item
+/// com ele aparece na lista. Se o lote contasse o `0` como lixeira, esse item nunca poderia ser apagado.
 fn is_trashed(item: &Value) -> bool {
-    item.get("deletedAt").is_some_and(|deleted_at| !deleted_at.is_null())
+    item.get("deletedAt").is_some_and(|deleted_at| !deleted_at.is_null() && deleted_at.as_i64() != Some(0))
 }
 
 /// O item já está no destino? `None` = "sem pasta", que é o mesmo que `folderId` ausente ou nulo.
@@ -102,6 +106,15 @@ fn indices_of(items: &[Value], ids: &[String]) -> Result<Vec<usize>, BatchError>
     Ok(indices)
 }
 
+/// A pasta de destino existe? `None` (sem pasta) não precisa existir; pasta fora da lista conhecida é erro (o lote
+/// não inventa pasta).
+fn check_folder(folder_id: Option<&str>, folder_ids: &[String]) -> Result<(), BatchError> {
+    match folder_id {
+        Some(target) if !folder_ids.iter().any(|id| id == target) => Err(BatchError::UnknownFolder { id: target.to_string() }),
+        _ => Ok(()),
+    }
+}
+
 /// Os itens de um array JSON, ou [`BatchError::InvalidJson`].
 fn parse_items(items_json: &str) -> Result<Vec<Value>, BatchError> {
     match serde_json::from_str::<Value>(items_json).map_err(|error| BatchError::InvalidJson(error.to_string()))? {
@@ -136,6 +149,9 @@ pub fn trash_items(items: &mut [Value], now: u64) -> Result<usize, BatchError> {
 /// Põe os itens na pasta `folder_id` (`None` = sem pasta). Devolve quantos mudaram de fato — item que já estava no
 /// destino não ganha carimbo nem entra na contagem.
 ///
+/// Esta forma não conhece o cofre: quem chama a ponte do Android usa [`move_items_with_folders`], que valida a pasta
+/// de destino contra os ids conhecidos.
+///
 /// # Errors
 /// [`BatchError::MissingId`] — e aí a lista fica inteira como estava.
 pub fn move_items(items: &mut [Value], folder_id: Option<&str>, now: u64) -> Result<usize, BatchError> {
@@ -149,6 +165,17 @@ pub fn move_items(items: &mut [Value], folder_id: Option<&str>, now: u64) -> Res
         }
     }
     Ok(changed)
+}
+
+/// [`move_items`] com a validação da pasta de destino contra os ids que o cofre conhece — o caminho da ponte, que
+/// recebe só os itens selecionados e a lista (barata) de pastas, não o cofre inteiro. Pasta inexistente → erro e
+/// nada muda.
+///
+/// # Errors
+/// [`BatchError::UnknownFolder`] ou qualquer erro de [`move_items`].
+pub fn move_items_with_folders(items: &mut [Value], folder_id: Option<&str>, folder_ids: &[String], now: u64) -> Result<usize, BatchError> {
+    check_folder(folder_id, folder_ids)?;
+    move_items(items, folder_id, now)
 }
 
 /// [`trash_items`] no cofre bruto, pelos ids. Id inexistente → erro e o cofre não muda.
@@ -179,11 +206,8 @@ pub fn trash_many(raw: &mut Value, ids: &[String], now: u64) -> Result<usize, Ba
 /// # Errors
 /// [`BatchError::UnknownFolder`], [`BatchError::MalformedVault`] ou [`BatchError::UnknownId`].
 pub fn move_many(raw: &mut Value, ids: &[String], folder_id: Option<&str>, now: u64) -> Result<usize, BatchError> {
-    if let Some(target) = folder_id
-        && !vault::folders(raw).iter().any(|folder| folder.id == target)
-    {
-        return Err(BatchError::UnknownFolder { id: target.to_string() });
-    }
+    let folders: Vec<String> = vault::folders(raw).into_iter().map(|folder| folder.id).collect();
+    check_folder(folder_id, &folders)?;
     let items = raw.get_mut("items").and_then(Value::as_array_mut).ok_or(BatchError::MalformedVault)?;
     let indices = indices_of(items, ids)?;
     let mut changed = 0;
@@ -212,5 +236,16 @@ pub fn trash_items_json(items_json: &str, now: u64) -> Result<String, BatchError
 pub fn move_items_json(items_json: &str, folder_id: Option<&str>, now: u64) -> Result<String, BatchError> {
     let mut items = parse_items(items_json)?;
     move_items(&mut items, folder_id, now)?;
+    serde_json::to_string(&items).map_err(|error| BatchError::InvalidJson(error.to_string()))
+}
+
+/// [`move_items_with_folders`] com o array em JSON — o caminho da ponte UniFFI do Android, que manda também os ids
+/// das pastas conhecidas. Devolve o array atualizado.
+///
+/// # Errors
+/// [`BatchError::InvalidJson`] ou qualquer erro de [`move_items_with_folders`].
+pub fn move_items_json_with_folders(items_json: &str, folder_id: Option<&str>, folder_ids: &[String], now: u64) -> Result<String, BatchError> {
+    let mut items = parse_items(items_json)?;
+    move_items_with_folders(&mut items, folder_id, folder_ids, now)?;
     serde_json::to_string(&items).map_err(|error| BatchError::InvalidJson(error.to_string()))
 }

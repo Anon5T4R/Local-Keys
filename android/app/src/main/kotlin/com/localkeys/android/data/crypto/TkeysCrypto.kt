@@ -144,11 +144,12 @@ fun trashItems(items: List<Item>, now: Long): List<Item> =
     batchItems(items) { json -> ffiTrashItems(json, now.toULong()) }
 
 /**
- * Põe os [items] SELECIONADOS na pasta [folderId] (`null` = sem pasta) pela regra do núcleo. Lote é tudo ou nada
- * ([TkeysError.InvalidItems]); devolve os itens atualizados, na mesma ordem.
+ * Põe os [items] SELECIONADOS na pasta [folderId] (`null` = sem pasta) pela regra do núcleo, com os [folderIds] que
+ * o cofre conhece (pasta de destino fora deles é recusa: o núcleo valida, o Kotlin não reescreve a regra). Lote é
+ * tudo ou nada ([TkeysError.InvalidItems]); devolve os itens atualizados, na mesma ordem.
  */
-fun moveItems(items: List<Item>, folderId: String?, now: Long): List<Item> =
-    batchItems(items) { json -> ffiMoveItems(json, folderId, now.toULong()) }
+fun moveItems(items: List<Item>, folderId: String?, folderIds: List<String>, now: Long): List<Item> =
+    batchItems(items) { json -> ffiMoveItems(json, folderId, folderIds, now.toULong()) }
 
 /**
  * Gera o JSON de um cofre NOVO com os [items] SELECIONADOS e só as [folders] que eles referenciam, pela regra do

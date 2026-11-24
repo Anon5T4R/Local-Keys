@@ -1,5 +1,7 @@
 package com.localkeys.android.ui
 
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshots.Snapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -114,5 +116,37 @@ class ListSelectionModeTest {
         mode.syncFilter("busca=1lib;filtro=;pasta=")
         assertTrue(mode.isEmpty)
         assertFalse(mode.active)
+    }
+
+    /**
+     * O que a tela lê (`len`/`contains`) é ESTADO OBSERVÁVEL: um valor derivado do snapshot recálcula a cada
+     * mudança, então marcar/desmarcar, "selecionar tudo" e limpar recompõem a lista e a contagem do topo. Com um
+     * `mutableSetOf` comum o valor ficaria preso e a tela mostraria "1 selecionado" com N ids no lote.
+     */
+    @Test
+    fun `the selection state is observable`() {
+        val mode = ListSelectionMode()
+        var reads = 0
+        val marked = derivedStateOf {
+            reads += 1
+            mode.len
+        }
+        assertEquals(0, marked.value)
+        assertEquals("o valor derivado leu o estado uma vez", 1, reads)
+
+        mode.onLongPress("a")
+        Snapshot.sendApplyNotifications()
+        assertEquals(1, marked.value)
+        assertEquals("o toggle invalidou a leitura", 2, reads)
+
+        mode.selectAll(listOf("a", "b", "c"))
+        Snapshot.sendApplyNotifications()
+        assertEquals(3, marked.value)
+        assertEquals("selecionar tudo invalidou a leitura", 3, reads)
+
+        mode.clear()
+        Snapshot.sendApplyNotifications()
+        assertEquals(0, marked.value)
+        assertEquals("limpar invalidou a leitura", 4, reads)
     }
 }

@@ -61,7 +61,13 @@ class VaultRepository(private val crypto: TkeysCrypto) {
     }
 
     /** Recifra o vault atual com um nonce novo (mesmo salt/params). */
-    fun save(): ByteArray {
+    fun save(): ByteArray = seal(vault)
+
+    /**
+     * Cifra [vault] com a sessão atual, **sem adotá-lo em memória** — o caminho de quem só troca o cofre depois da
+     * gravação conferida (o lote da seleção no `VaultViewModel`).
+     */
+    fun seal(vault: Vault): ByteArray {
         val s = session ?: throw IllegalStateException("vault não está destrancado")
         return s.seal(vault.toJson().toByteArray())
     }
@@ -72,18 +78,20 @@ class VaultRepository(private val crypto: TkeysCrypto) {
      * vault atual. Garante que nunca gravamos um arquivo que não reabriria.
      * Lança [TkeysError.Corrupted] se o blob não reabrir ou divergir do vault.
      */
-    fun verifySaved(blob: ByteArray): Vault {
+    fun verifySaved(blob: ByteArray): Vault = verifySaved(blob, vault)
+
+    /** [`verifySaved`] contra um [vault] que ainda não foi adotado em memória (o candidato do lote). */
+    fun verifySaved(blob: ByteArray, vault: Vault): Vault {
         val s = session ?: throw IllegalStateException("vault não está destrancado")
-        val v = current ?: throw IllegalStateException("vault não está destrancado")
         val plaintext = try {
             crypto.openWithKey(s.keyBytes(), blob)
         } catch (e: TkeysError) {
             throw TkeysError.Corrupted
         }
-        // A decifração é autenticada: se o plaintext não for byte a byte o que o
-        // save() selou, o blob foi cifrado com outro conteúdo — nunca gravar.
-        if (!plaintext.contentEquals(v.toJson().toByteArray())) throw TkeysError.Corrupted
-        return v
+        // A decifração é autenticada: se o plaintext não for byte a byte o que
+        // o save() selou, o blob foi cifrado com outro conteúdo — nunca gravar.
+        if (!plaintext.contentEquals(vault.toJson().toByteArray())) throw TkeysError.Corrupted
+        return vault
     }
 
     /** Cópia da chave derivada (32 bytes) para o cofre biométrico. */
@@ -210,45 +218,41 @@ class VaultRepository(private val crypto: TkeysCrypto) {
     // ── Lote da seleção múltipla (lixeira e pasta) ───────────────────────
     //
     // A regra é a do núcleo (`batch.rs`, a mesma do desktop) pela ponte: tudo ou nada, um `now` só para o lote e
-    // só os itens selecionados atravessam. O cofre em memória só é trocado depois do Ok da regra; quem grava é o
-    // chamador (`VaultViewModel.persistAndCommit`), UMA vez.
+    // só os itens selecionados atravessam. **Nada é adotado em memória aqui**: o chamador grava o candidato e só
+    // depois chama `replace` (o `VaultViewModel.persistAndCommit` faz isso depois do OK da gravação) — uma gravação
+    // que falha não deixa o cofre em memória à frente do arquivo.
 
-    /** O que o lote fez no cofre em memória: o cofre novo e quantos itens mudaram de fato. */
+    /** O que o lote calculou: o cofre candidato (ainda NÃO adotado) e quantos itens mudaram de fato. */
     class BatchResult(val vault: Vault, val changed: Int)
 
     /**
-     * Manda os [ids] para a lixeira, pela regra do núcleo ([com.localkeys.android.data.crypto.trashItems]): tudo ou
-     * nada, um `now` só, `deletedAt` e `updatedAt` em todos. O cofre em memória só é trocado depois do Ok da regra;
-     * a gravação é do chamador. Id que não existe mais é recusa ([TkeysError.InvalidItems]), como no desktop.
+     * Calcula a lixeira dos [ids] pela regra do núcleo ([com.localkeys.android.data.crypto.trashItems]): tudo ou
+     * nada, um `now` só, `deletedAt` e `updatedAt` em todos. Id que não existe mais é recusa
+     * ([TkeysError.InvalidItems]), como no desktop. O cofre em memória não muda: quem grava e adota é o chamador.
      */
     fun trashSelected(ids: List<String>, now: Long = System.currentTimeMillis()): BatchResult {
         val currentVault = current ?: throw IllegalStateException("vault não está destrancado")
         val selected = selectedItems(currentVault, ids)
         if (selected.isEmpty()) return BatchResult(currentVault, 0)
         val updated = com.localkeys.android.data.crypto.trashItems(selected, now)
-        val result = replaceSelected(currentVault, updated)
-        current = result
-        return BatchResult(result, updated.size)
+        return BatchResult(replaceSelected(currentVault, updated), updated.size)
     }
 
     /**
-     * Põe os [ids] na pasta [folderId] (`null` = sem pasta), pela regra do núcleo
-     * ([com.localkeys.android.data.crypto.moveItems]). Item que já estava no destino não é recarimbado e não entra na
-     * contagem: com `changed == 0` o cofre (e o arquivo) fica como está.
+     * Calcula a mudança de pasta dos [ids] para [folderId] (`null` = sem pasta), pela regra do núcleo
+     * ([com.localkeys.android.data.crypto.moveItems]) com os ids das pastas que o cofre conhece — pasta de destino
+     * inexistente é recusa do núcleo, não uma checagem reescrita aqui. Item que já estava no destino não é
+     * recarimbado e não entra na contagem: com `changed == 0` nada há para gravar. O cofre em memória não muda.
      */
     fun moveSelected(ids: List<String>, folderId: String?, now: Long = System.currentTimeMillis()): BatchResult {
         val currentVault = current ?: throw IllegalStateException("vault não está destrancado")
-        if (folderId != null && currentVault.folders.none { it.id == folderId }) {
-            throw TkeysError.InvalidItems("folder `$folderId` does not exist")
-        }
         val selected = selectedItems(currentVault, ids)
         if (selected.isEmpty()) return BatchResult(currentVault, 0)
-        val updated = com.localkeys.android.data.crypto.moveItems(selected, folderId, now)
+        val folderIds = currentVault.folders.map { it.id }
+        val updated = com.localkeys.android.data.crypto.moveItems(selected, folderId, folderIds, now)
         val changed = updated.zip(selected).count { (after, before) -> after != before }
         if (changed == 0) return BatchResult(currentVault, 0)
-        val result = replaceSelected(currentVault, updated)
-        current = result
-        return BatchResult(result, changed)
+        return BatchResult(replaceSelected(currentVault, updated), changed)
     }
 
     /** Os itens do lote, na ordem pedida e sem repetir id; id que não existe no cofre é a recusa do lote. */

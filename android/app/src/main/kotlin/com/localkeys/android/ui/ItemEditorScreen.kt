@@ -3,6 +3,7 @@ package com.localkeys.android.ui
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -163,8 +164,12 @@ fun ItemEditorScreen(
                             when (val save = state.prepareSave(System.currentTimeMillis(), kindLabels)) {
                                 is ItemEditorState.Save.Ready -> onSave(save.item)
                                 // A conversão recusada não grava nada: o editor fica como está (tipo original e
-                                // as edições da pessoa) e o motivo aparece aqui.
-                                is ItemEditorState.Save.Refused -> kindError = true
+                                // as edições da pessoa) e a mensagem traduzida aparece aqui. A razão do núcleo é
+                                // diagnóstico em inglês: fica no log, não na tela.
+                                is ItemEditorState.Save.Refused -> {
+                                    Log.w("LocalKeysEditor", "conversão de tipo recusada: ${save.reason}")
+                                    kindError = true
+                                }
                             }
                         },
                         enabled = state.canSave && !busy,

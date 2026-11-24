@@ -59,6 +59,14 @@ impl Selection {
         self.clear();
     }
 
+    /// Mantém só os ids que passam em [visible] (a lista visível do desenho) e reconstrói o espelho. Item marcado que
+    /// saiu da tela — desmarcado no filtro "Favoritos", pasta ou tipo trocados no editor, lixeira — não pode ser
+    /// contado no rodapé nem apagado às cegas.
+    pub fn retain_visible(&mut self, visible: impl Fn(&str) -> bool) {
+        self.order.retain(|id| visible(id));
+        self.present = self.order.iter().cloned().collect();
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         self.present.contains(id)
     }
@@ -164,5 +172,24 @@ mod tests {
 
         selection.clear();
         assert!(selection.is_empty());
+    }
+
+    #[test]
+    fn retain_visible_tira_da_selecao_o_item_que_saiu_da_lista() {
+        let mut selection = Selection::new();
+        selection.toggle("a");
+        selection.toggle("b");
+        selection.toggle("c");
+
+        // O 'b' saiu da lista visível (o ★ caiu com o filtro "Favoritos" ligado, mudou de pasta no editor…).
+        let visible = visible(&["a", "c"]);
+        selection.retain_visible(|id| visible.iter().any(|visible_id| visible_id == id));
+
+        assert_eq!(selection.ids().collect::<Vec<_>>(), ["a", "c"]);
+        assert_eq!(selection.len(), 2);
+        assert!(!selection.contains("b"));
+        // O espelho acompanha: remarcar o que ficou desmarca como sempre.
+        selection.toggle("a");
+        assert_eq!(selection.ids().collect::<Vec<_>>(), ["c"]);
     }
 }

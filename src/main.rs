@@ -1396,6 +1396,9 @@ impl KeysApp {
             Ok(()) => {
                 self.err = None;
                 self.items = vault::items_view(&next);
+                // A lista pode ter mudado (o ★ com o filtro "Favoritos" ligado, pasta/tipo trocados): a seleção é da
+                // lista VISÍVEL, então item marcado que saiu da tela sai junto.
+                self.prune_selection();
                 self.raw = Some(next);
                 #[cfg(test)]
                 {
@@ -1408,6 +1411,20 @@ impl KeysApp {
                 false
             }
         }
+    }
+
+    /// O item aparece na lista com a busca, os filtros e a pasta ATUAIS? A mesma regra vale para o desenho da lista
+    /// e para a poda da seleção depois de um `persist` — uma linha marcada que sai da tela sai da seleção.
+    fn in_view(&self, item: &vault::ItemView) -> bool {
+        let needle = self.search.trim().to_lowercase();
+        filters::matches(&self.filters, item)
+            && (needle.is_empty() || item.name.to_lowercase().contains(&needle))
+            && (self.folder_filter.is_none() || item.folder_id.as_deref() == self.folder_filter.as_deref())
+    }
+
+    /// Os ids da lista visível (busca, filtros e pasta aplicados), na ordem do cofre.
+    fn visible_ids(&self) -> Vec<String> {
+        self.items.iter().filter(|item| self.in_view(item)).map(|item| item.id.clone()).collect()
     }
 
     /// Salva o item do formulário (novo ou edição), de qualquer tipo, e persiste.
@@ -2336,8 +2353,6 @@ struct Row {
     username: Option<String>,
     totp: Option<String>,
     favorite: bool,
-    /// Pasta do item (filtro por chips — "todas" é `None`).
-    folder_id: Option<String>,
 }
 
 impl KeysApp {
@@ -3897,7 +3912,7 @@ impl KeysApp {
         let mut rows: Vec<Row> = self
             .items
             .iter()
-            .filter(|i| filters::matches(&self.filters, i))
+            .filter(|i| self.in_view(i))
             .map(|i| Row {
                 id: i.id.clone(),
                 name: i.name.clone(),
@@ -3906,14 +3921,12 @@ impl KeysApp {
                 username: i.username.clone(),
                 totp: i.totp.clone(),
                 favorite: i.favorite,
-                folder_id: i.folder_id.clone(),
             })
             .collect();
         // Ordenação SÓ de renderização (não regrava nada): favoritos primeiro
         // e, dentro do grupo, nome ascendente — o mesmo sort do VaultScreen do
         // oficial (`Number(b.favorite) - Number(a.favorite) || nome`).
         rows.sort_by(|a, b| b.favorite.cmp(&a.favorite).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-        let needle = self.search.trim().to_lowercase();
 
         // Os botões primeiro (à direita); o caminho ocupa o que sobra e corta com "…" na janela estreita.
         ui.horizontal(|ui| {
@@ -4076,15 +4089,10 @@ impl KeysApp {
             ui.add_space(6.0);
         }
 
-        let view: Vec<&Row> = rows
-            .iter()
-            .filter(|r| needle.is_empty() || r.name.to_lowercase().contains(&needle))
-            // Pasta: `None` no filtro = todas; igualdade por id.
-            .filter(|r| self.folder_filter.is_none() || r.folder_id.as_deref() == self.folder_filter.as_deref())
-            .collect();
-        // A ordem visível é a da lista (filtro, busca e pasta aplicados): é ela que o Shift e o Ctrl+A usam.
+        // `rows` já é a lista visível (busca, filtros e pasta aplicados por `in_view`): a ordem dela é a que o Shift
+        // e o Ctrl+A usam.
+        let view: Vec<&Row> = rows.iter().collect();
         let visible_ids: Vec<String> = view.iter().map(|row| row.id.clone()).collect();
-        self.selection_keys(ctx, &visible_ids);
 
         if view.is_empty() {
             if self.items.is_empty() {
@@ -4213,8 +4221,9 @@ impl KeysApp {
                 self.selection_bar(ui);
             }
         });
-        // ctx fica no parâmetro pra manter a assinatura simétrica às outras telas.
-        let _ = ctx;
+        // O teclado da seleção é lido DEPOIS dos popups deste quadro (o ⋯, os filtros e o menu de mover do rodapé):
+        // o `any_popup_open` do egui só enxerga o popup que já se desenhou no pass atual.
+        self.selection_keys(ctx, &visible_ids);
     }
 }
 

@@ -56,14 +56,15 @@ class BatchTest {
     @Test
     fun mover_em_lote_para_uma_pasta_e_para_sem_pasta() {
         val json = JSONArray(selected.map { it.toJson() }).toString()
+        val folders = listOf("work", "home")
 
-        val moved = itemsOf(bridgeMoveItems(json, "home", 1700uL))
+        val moved = itemsOf(bridgeMoveItems(json, "home", folders, 1700uL))
         assertEquals(
             listOf(result("a", "A", "home", updatedAt = 1700, deletedAt = null), result("b", "B", "home", updatedAt = 1700, deletedAt = null)),
             moved,
         )
 
-        val cleared = itemsOf(bridgeMoveItems(json, null, 1700uL))
+        val cleared = itemsOf(bridgeMoveItems(json, null, folders, 1700uL))
         assertEquals(
             listOf(result("a", "A", null, updatedAt = 2, deletedAt = null), result("b", "B", null, updatedAt = 1700, deletedAt = null)),
             cleared,
@@ -83,7 +84,12 @@ class BatchTest {
         val refused = assertThrows(TkeysError.InvalidItems::class.java) { trashItems(alreadyTrashed, 1700) }
         assertEquals("item `c` is already in the trash", refused.reason)
 
-        val naoObjeto = assertThrows(FfiException.InvalidItems::class.java) { bridgeMoveItems("{}", null, 1uL) }
+        val naoObjeto = assertThrows(FfiException.InvalidItems::class.java) { bridgeMoveItems("{}", null, listOf("work"), 1uL) }
         assertTrue("JSON que não é lista: ${naoObjeto.reason}", naoObjeto.reason.startsWith("invalid items JSON: "))
+
+        // Pasta de destino que o cofre não tem: o núcleo recusa (a ponte recebe os ids conhecidos), nada muda.
+        val json = JSONArray(selected.map { it.toJson() }).toString()
+        val semPasta = assertThrows(FfiException.InvalidItems::class.java) { bridgeMoveItems(json, "sumiu", listOf("work"), 1uL) }
+        assertEquals("folder `sumiu` does not exist", semPasta.reason)
     }
 }

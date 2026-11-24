@@ -675,8 +675,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Manda a seleção para a lixeira com UMA gravação, pela regra do núcleo ([VaultRepository.trashSelected]).
-     * A recusa do lote (um item inválido, um item que já está na lixeira) ou a falha da gravação deixam o cofre
-     * como estava; nada muda no arquivo e a seleção continua para a pessoa tentar de novo.
+     * O repositório devolve o cofre CANDIDATO sem adotá-lo; a memória só é trocada pelo [persistAndCommit], depois
+     * da gravação conferida. A recusa do lote (um item inválido, um item que já está na lixeira) ou a falha da
+     * gravação deixam o cofre como estava — memória e arquivo — e a seleção continua para a pessoa tentar de novo.
      */
     fun trashSelected() {
         val ids = selection.ids()
@@ -695,8 +696,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Move a seleção para [folderId] (`null` = sem pasta) com UMA gravação. Os itens que já estavam na pasta não
-     * são recarimbados; se nenhum mudou de fato, não há gravação e a seleção fica (nada aconteceu).
+     * Move a seleção para [folderId] (`null` = sem pasta) com UMA gravação. O candidato só entra em memória depois
+     * do OK da gravação ([persistAndCommit]); os itens que já estavam na pasta não são recarimbados e, se nenhum
+     * mudou de fato, não há gravação e a seleção fica (nada aconteceu). Pasta inexistente é a recusa do núcleo.
      */
     fun moveSelected(folderId: String?) {
         val ids = selection.ids()
@@ -783,19 +785,21 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Recifra com nonce novo, **valida o blob antes de gravar** (decifra com a
-     * sessão e confere que reabre exatamente o vault atual) e, depois de gravar,
-     * **relê o documento** para conferir que o provider não truncou/embaralhou
-     * nada — se falhou, reescreve uma vez. O estado só é comitado se o arquivo
-     * gravado reabre de verdade.
+     * Recifra [updated] com nonce novo (sem depender de o repositório já o ter adotado), **valida o blob antes de
+     * gravar** (decifra com a sessão e confere que reabre exatamente aquele vault) e, depois de gravar, **relê o
+     * documento** para conferir que o provider não truncou/embaralhou nada — se falhou, reescreve uma vez. O cofre
+     * [updated] só é adotado em memória (repositório e estado) depois de o arquivo gravado reabrir: uma gravação que
+     * falha não deixa a memória à frente do disco. As operações de um item só, que já mutam o repositório antes de
+     * chamar daqui, continuam como sempre foram.
      */
     private suspend fun persistAndCommit(updated: Vault, notice: String?, force: Boolean = false) {
-        val file = repository.save()
-        repository.verifySaved(file) // nunca grava um blob que não reabriria
+        val file = repository.seal(updated)
+        repository.verifySaved(file, updated) // nunca grava um blob que não reabriria
         val uri = _state.value.vaultUri
             ?: throw IOException(str(R.string.err_no_file))
         writeAndVerify(getApplication<Application>().contentResolver, Uri.parse(uri), file, force)
         syncAutofillCache(updated)
+        repository.replace(updated)
         _state.update { it.copy(vault = updated, busy = false, notice = notice) }
     }
 

@@ -4,7 +4,7 @@
 //! existe e nada muda — nem nos outros itens), o lote inteiro carimba o MESMO `now`, apagar é ir para a lixeira
 //! (recuperável), mover para "sem pasta" é permitido, e a contagem devolvida é a dos itens que mudaram de fato.
 
-use localkeys_core::batch::{BatchError, move_items, move_items_json, move_many, trash_items, trash_items_json, trash_many};
+use localkeys_core::batch::{BatchError, move_items, move_items_json, move_items_with_folders, move_many, trash_items, trash_items_json, trash_many};
 use serde_json::{Value, json};
 
 /// O `now` do lote (um só para todos os itens).
@@ -71,6 +71,44 @@ fn trash_items_item_sem_id_e_erro_e_nada_muda() {
 
     assert_eq!(trash_items(&mut items, NOW), Err(BatchError::MissingId));
     assert_eq!(items, before);
+}
+
+/// `deletedAt = 0` é falsy no JS e o resto do app o trata como fora da lixeira (`trashed_items`/`inTrash`): o lote
+/// não pode recusar para sempre um item assim, que aparece na lista e pode ser selecionado.
+#[test]
+fn trash_items_trata_deleted_at_zero_como_fora_da_lixeira() {
+    let mut items = vec![item("a", None, Some(0))];
+
+    assert_eq!(trash_items(&mut items, NOW), Ok(1));
+    assert_eq!(items[0]["deletedAt"], json!(NOW));
+}
+
+#[test]
+fn move_items_with_folders_recusa_pasta_inexistente_e_nada_muda() {
+    let before = vec![item("a", Some("work"), None), item("b", Some("work"), None)];
+    let mut items = before.clone();
+    let folders = vec!["work".to_string(), "home".to_string()];
+
+    assert_eq!(move_items_with_folders(&mut items, Some("sumiu"), &folders, NOW), Err(BatchError::UnknownFolder { id: "sumiu".into() }));
+    assert_eq!(items, before, "a lista fica inteira como estava");
+}
+
+#[test]
+fn move_items_with_folders_move_para_pasta_conhecida_e_para_sem_pasta() {
+    let folders = vec!["work".to_string(), "home".to_string()];
+    let mut items = vec![item("a", Some("work"), None), item("b", Some("home"), None)];
+
+    assert_eq!(move_items_with_folders(&mut items, Some("home"), &folders, NOW), Ok(1));
+    assert_eq!(items[0]["folderId"], "home");
+    assert_eq!(items[0]["updatedAt"], json!(NOW));
+    assert_eq!(items[1]["updatedAt"], 2);
+
+    assert_eq!(move_items_with_folders(&mut items, None, &folders, NOW), Ok(2));
+    for it in &items {
+        assert_eq!(it["folderId"], Value::Null, "{it}");
+    }
+    // "Sem pasta" é operação válida mesmo com a lista de pastas conhecidas vazia.
+    assert_eq!(move_items_with_folders(&mut items, None, &[], NOW), Ok(0));
 }
 
 #[test]
