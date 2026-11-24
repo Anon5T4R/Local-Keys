@@ -23,6 +23,8 @@ import java.io.IOException
  *    decifrável, e a de um cofre nunca é usada em outro. (As chaves `wrapped_key_hex`/`biometric_enabled` das
  *    versões antigas são migradas por [migrateLegacy].)
  *  - `copy_totp_after_autofill`: copiar o TOTP depois de preencher um login (padrão: ligado).
+ *  - `list_folder`: a pasta lembrada no seletor da lista (`null` = todas, `""` = sem pasta, o id nos outros
+ *    casos), para a lista abrir nela. Estado de UI: nunca vai para o cofre.
  *  - `theme_mode`: tema do app ("system", "light" ou "dark"). O idioma não mora aqui: é o idioma por app do
  *    Android (AppCompatDelegate), que o próprio sistema guarda.
  *  - `update_*`: o atualizador (desligado por padrão), ver [UpdatePrefs]. Nada dele toca o cofre.
@@ -126,6 +128,17 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[Keys.COPY_TOTP] = enabled }
     }
 
+    /** Pasta lembrada no seletor da lista (`null` = todas, `""` = sem pasta, o id da pasta nos outros casos). */
+    val listFolderKey: Flow<String?> = context.dataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { it[Keys.LIST_FOLDER] }
+
+    suspend fun setListFolderKey(key: String?) {
+        context.dataStore.edit { prefs ->
+            if (key == null) prefs.remove(Keys.LIST_FOLDER) else prefs[Keys.LIST_FOLDER] = key
+        }
+    }
+
     val updatePrefs: Flow<UpdatePrefs> = context.dataStore.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { p ->
@@ -181,6 +194,7 @@ class SettingsStore(private val context: Context) {
         val RECENT_VAULTS = stringPreferencesKey("recent_vaults")
         val BIOMETRIC_KEYS = stringPreferencesKey("biometric_keys")
         val COPY_TOTP = booleanPreferencesKey("copy_totp_after_autofill")
+        val LIST_FOLDER = stringPreferencesKey("list_folder")
         val UPDATE_AUTO = booleanPreferencesKey("update_auto")
         val UPDATE_LAST_CHECK = longPreferencesKey("update_last_check")
         val UPDATE_LAST_STATUS = stringPreferencesKey("update_last_status")

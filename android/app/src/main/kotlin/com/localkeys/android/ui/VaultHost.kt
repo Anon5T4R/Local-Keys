@@ -71,7 +71,11 @@ fun VaultHost(
 ) {
     var stack by rememberSaveable(stateSaver = RouteStackSaver) { mutableStateOf(emptyList<Route>()) }
     val twoPane = LocalConfiguration.current.screenWidthDp >= TWO_PANE_MIN_DP
-    val filters = rememberListFilterState()
+    val filters = rememberListFilterState(
+        rememberedFolderKey = state.rememberedFolderKey,
+        folderIds = vault.folders.map { it.id },
+        onFolderChanged = viewModel::rememberListFolder,
+    )
     val snackbar = remember { SnackbarHostState() }
     val totpClock = rememberTotpClock()
     val holder = rememberSaveableStateHolder()

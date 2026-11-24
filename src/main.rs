@@ -1129,14 +1129,22 @@ impl KeysApp {
 
     fn adopt(&mut self, session: crypto::SessionKey, raw: serde_json::Value) {
         self.items = vault::items_view(&raw);
-        // O cofre pode ser OUTRO (destrancar depois de trancar): a pasta
-        // selecionada antes não pertence a este raw.
-        self.folder_filter = None;
+        // O cofre pode ser OUTRO (destrancar depois de trancar): a pasta lembrada só vale se este cofre ainda
+        // tem essa pasta; senão a lista começa em "todas" (a preferência fica como está).
+        self.folder_filter = self.prefs.folder.clone().filter(|id| vault::folders(&raw).iter().any(|folder| &folder.id == id));
         self.raw = Some(raw);
         self.session = Some(session);
         self.err = None;
         self.master.clear();
         self.confirm.clear();
+    }
+
+    /// Troca a pasta do filtro da lista e lembra a escolha no config.json (o próximo cofre abre nela). O cofre
+    /// não é tocado: a lembrança é estado de UI.
+    fn set_folder_filter(&mut self, folder: Option<String>) {
+        self.prefs.folder = folder.clone();
+        self.folder_filter = folder;
+        self.save_prefs();
     }
 
     // ── desbloqueio rápido (keyring do SO — desenho do oficial) ────────
@@ -3191,9 +3199,9 @@ impl KeysApp {
                 return;
             };
             if vault::delete_folder(&mut next, &id) {
-                // Se a pasta excluída era a do filtro, volta pra "todas".
+                // Se a pasta excluída era a do filtro, volta pra "todas" (e a escolha é lembrada).
                 if self.folder_filter.as_deref() == Some(id.as_str()) {
-                    self.folder_filter = None;
+                    self.set_folder_filter(None);
                 }
                 self.folder_edit_id = None;
                 self.folder_edit_name.clear();
@@ -3767,7 +3775,7 @@ impl KeysApp {
                 let ativa = self.folder_filter.as_deref() == id.as_deref();
                 let ink = if ativa { skin.accent } else { skin.muted };
                 if ghost_ink(ui, nome, ink).clicked() {
-                    self.folder_filter = id.clone();
+                    self.set_folder_filter(id.clone());
                 }
             }
         });
@@ -3874,7 +3882,7 @@ impl KeysApp {
                 if (por_filtro || por_busca || por_pasta) && ghost(ui, tr("Clear")).clicked() {
                     self.filters.clear();
                     self.search.clear();
-                    self.folder_filter = None;
+                    self.set_folder_filter(None);
                 }
             }
         } else {

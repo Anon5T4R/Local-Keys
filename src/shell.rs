@@ -17,8 +17,8 @@ fn shortcut_text(ctx: &egui::Context) -> String {
 }
 
 impl KeysApp {
-    /// Grava o config.json (idioma e tema).
-    fn save_prefs(&self) {
+    /// Grava o config.json (idioma, tema e a pasta lembrada da lista).
+    pub(crate) fn save_prefs(&self) {
         let _ = self.prefs.save_to(&self.config_file);
     }
 

@@ -130,6 +130,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         val recentVaults: List<RecentVault> = emptyList(),
         /** Copiar o TOTP depois de preencher um login pelo autofill. */
         val copyTotpAfterAutofill: Boolean = true,
+        /** Pasta lembrada no seletor da lista (null = todas, "" = sem pasta, o id nos outros casos). */
+        val rememberedFolderKey: String? = null,
         /** Sincronizar com outra cópia: esperando a senha dela ou a confirmação do resumo. */
         val syncPending: SyncPending? = null,
     )
@@ -192,6 +194,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(copyTotpAfterAutofill = on) }
             }
         }
+        viewModelScope.launch {
+            settings.listFolderKey.collect { key -> _state.update { it.copy(rememberedFolderKey = key) } }
+        }
     }
 
     /** A chave biométrica do cofre atual (nunca a de outro), ou null. */
@@ -244,6 +249,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     /** Liga ou desliga a cópia do TOTP depois do autofill. */
     fun setCopyTotpAfterAutofill(enabled: Boolean) {
         viewModelScope.launch { settings.setCopyTotpAfterAutofill(enabled) }
+    }
+
+    /** Lembra a pasta escolhida no seletor da lista (null = todas). Estado de UI, nunca do cofre. */
+    fun rememberListFolder(folderKey: String?) {
+        viewModelScope.launch { settings.setListFolderKey(folderKey) }
     }
 
     private fun loadBlob(uri: String) {

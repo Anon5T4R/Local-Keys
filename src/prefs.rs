@@ -1,5 +1,6 @@
-//! As preferências do app (idioma e tema) num JSON pequeno na pasta de config: `%APPDATA%\localkeys` no
-//! Windows, `$XDG_CONFIG_HOME/localkeys` ou `~/.config/localkeys` fora dele. Nada do cofre mora aqui.
+//! As preferências do app (idioma, tema e a pasta lembrada da lista) num JSON pequeno na pasta de config:
+//! `%APPDATA%\localkeys` no Windows, `$XDG_CONFIG_HOME/localkeys` ou `~/.config/localkeys` fora dele. Nada do
+//! cofre mora aqui.
 //!
 //! Ler é tolerante: arquivo ausente ou ilegível dá o padrão, e os valores gravados pelas versões do `lab-ui`
 //! (`"lang": "Pt"`, ids de tema velhos) caem no equivalente — nunca impedem o app de abrir.
@@ -19,6 +20,10 @@ pub struct Prefs {
     /// `system` (segue o sistema), `light` ou `dark`: os ids de `craft_icons::ThemeMode`.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Pasta do filtro da lista escolhida por último (`None` = todas). Estado de UI: a lista do cofre abre
+    /// nela quando a pasta ainda existe. Nunca é gravado no `.tkeys`.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 fn auto_language() -> String {
@@ -31,7 +36,7 @@ fn default_theme() -> String {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { language: auto_language(), theme: default_theme() }
+        Self { language: auto_language(), theme: default_theme(), folder: None }
     }
 }
 
@@ -39,7 +44,14 @@ impl Prefs {
     /// Preferências de um idioma e um modo (os testes montam o app com elas).
     #[cfg(test)]
     pub fn new(language: &str, theme: craft_icons::ThemeMode) -> Self {
-        Self { language: language.to_string(), theme: theme.id().to_string() }
+        Self { language: language.to_string(), theme: theme.id().to_string(), folder: None }
+    }
+
+    /// As mesmas preferências lembrando uma pasta do filtro (os testes montam o app já nela).
+    #[cfg(test)]
+    pub fn with_folder(mut self, folder: &str) -> Self {
+        self.folder = Some(folder.to_string());
+        self
     }
 
     /// O modo de tema salvo; id desconhecido cai no Automático.
@@ -97,6 +109,34 @@ mod tests {
         let prefs = Prefs::new("es", ThemeMode::Dark);
         prefs.save_to(&path).expect("grava");
         assert_eq!(Prefs::load_from(&path), prefs);
+    }
+
+    /// A pasta do filtro é lembrada junto (e "todas" também: o campo ausente/vazio volta como `None`).
+    #[test]
+    fn the_remembered_folder_comes_back() {
+        let path = scratch("folder");
+        let prefs = Prefs::new("en", ThemeMode::Light).with_folder("pasta-trabalho");
+        prefs.save_to(&path).expect("grava");
+        assert_eq!(Prefs::load_from(&path).folder.as_deref(), Some("pasta-trabalho"));
+        // Sem pasta escolhida, o arquivo grava `"folder": null` e a leitura devolve "todas".
+        Prefs::new("en", ThemeMode::Light).save_to(&path).expect("grava");
+        assert_eq!(Prefs::load_from(&path).folder, None);
+    }
+
+    /// Um config.json de antes da pasta lembrada (sem o campo) abre com "todas", sem perder idioma e tema.
+    #[test]
+    fn an_old_file_without_a_folder_opens_in_all() {
+        let path = scratch("old-folder");
+        std::fs::create_dir_all(path.parent().expect("pasta")).expect("pasta");
+        std::fs::write(&path, r#"{"language":"es","theme":"dark"}"#).expect("grava");
+        let prefs = Prefs::load_from(&path);
+        assert_eq!(prefs, Prefs::new("es", ThemeMode::Dark));
+        assert_eq!(prefs.folder, None);
+        // Com o campo (inclusive nulo), vale o que está gravado.
+        std::fs::write(&path, r#"{"language":"es","theme":"dark","folder":"pasta-1"}"#).expect("grava");
+        assert_eq!(Prefs::load_from(&path).folder.as_deref(), Some("pasta-1"));
+        std::fs::write(&path, r#"{"language":"es","theme":"dark","folder":null}"#).expect("grava");
+        assert_eq!(Prefs::load_from(&path).folder, None);
     }
 
     #[test]

@@ -56,6 +56,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +76,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.localkeys.android.R
+import com.localkeys.android.data.store.ListFolder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.Vault
 import com.localkeys.android.ui.theme.FavoriteAmber
@@ -89,25 +91,82 @@ data class VaultMenuActions(
     val onSettings: () -> Unit,
 )
 
-/** Estado salvável da lista: busca, filtro e pasta. Sobrevive a rotação e a ida e volta das outras telas. */
-class ListFilterState(query: String, searching: Boolean, filter: ListFilter, folderKey: String?) {
+/**
+ * Estado salvável da lista: busca, filtro e pasta. Sobrevive a rotação e a ida e volta das outras telas. A pasta
+ * escolhida é lembrada nas preferências ([onFolderChanged]); a busca e o filtro de tipo não são.
+ */
+class ListFilterState(
+    query: String,
+    searching: Boolean,
+    filter: ListFilter,
+    initialFolderKey: String?,
+    /** A pasta veio do estado salvo (rotação/morte do processo): a preferência que chega depois não mexe nela. */
+    restored: Boolean = false,
+) {
     var query by mutableStateOf(query)
     var searching by mutableStateOf(searching)
     var filter by mutableStateOf(filter)
-    var folderKey by mutableStateOf(folderKey)
-    val folder: FolderFilter get() = FolderFilter.fromKey(folderKey)
+
+    private var folderKeyState by mutableStateOf(initialFolderKey)
+
+    /** A pasta já foi decidida nesta tela (escolha da pessoa ou restauração): a lembrança não sobrescreve. */
+    private var folderChosen = restored || initialFolderKey != null
+
+    /** Grava a pasta escolhida nas preferências (null = todas). A tela aponta para elas. */
+    var onFolderChanged: (String?) -> Unit = {}
+
+    /** Pasta escolhida; cada mudança (inclusive voltar para "todas") é lembrada. */
+    var folderKey: String?
+        get() = folderKeyState
+        set(value) {
+            folderKeyState = value
+            folderChosen = true
+            onFolderChanged(value)
+        }
+
+    val folder: FolderFilter get() = FolderFilter.fromKey(folderKeyState)
+
+    /**
+     * Abre a lista já na pasta lembrada, sem regravar (a preferência veio de lá). Só vale antes de qualquer
+     * escolha: a preferência pode chegar do disco alguns quadros depois do primeiro desenho.
+     */
+    fun openIn(savedKey: String?) {
+        if (folderChosen) return
+        folderKeyState = savedKey
+        folderChosen = savedKey != null
+    }
 
     companion object {
         val Saver = androidx.compose.runtime.saveable.listSaver<ListFilterState, Any?>(
             save = { listOf(it.query, it.searching, it.filter.encode(), it.folderKey) },
-            restore = { ListFilterState(it[0] as String, it[1] as Boolean, ListFilter.decode(it[2] as String?), it[3] as String?) },
+            restore = {
+                ListFilterState(it[0] as String, it[1] as Boolean, ListFilter.decode(it[2] as String?), it[3] as String?, restored = true)
+            },
         )
     }
 }
 
+/**
+ * O estado da lista, criado já na pasta lembrada ([rememberedFolderKey], validada contra [folderIds]) e gravando
+ * cada escolha de pasta em [onFolderChanged].
+ */
 @Composable
-fun rememberListFilterState(): ListFilterState =
-    rememberSaveable(saver = ListFilterState.Saver) { ListFilterState("", false, ListFilter.NONE, null) }
+fun rememberListFilterState(
+    rememberedFolderKey: String?,
+    folderIds: Collection<String>,
+    onFolderChanged: (String?) -> Unit,
+): ListFilterState {
+    val state = rememberSaveable(saver = ListFilterState.Saver) {
+        ListFilterState("", false, ListFilter.NONE, ListFolder.openKey(rememberedFolderKey, folderIds))
+    }
+    // A instância restaurada é a que a tela usa; o gravador é sempre o de agora.
+    SideEffect { state.onFolderChanged = onFolderChanged }
+    // A preferência pode chegar do DataStore depois do primeiro desenho: entra uma vez, e nunca por cima de uma
+    // pasta que a pessoa já escolheu.
+    val openKey = ListFolder.openKey(rememberedFolderKey, folderIds)
+    LaunchedEffect(openKey) { state.openIn(openKey) }
+    return state
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -953,6 +953,73 @@ fn filtered_out_shows_the_message_and_the_footer_counts_the_whole_vault() {
     harness.get_by_label_contains("Nubank");
 }
 
+/// Um cofre com duas pastas ("Trabalho", "Pessoal") e um login em cada, para o teste da pasta lembrada.
+/// Devolve o cofre e os ids das pastas, na ordem em que foram criadas.
+fn folders_vault() -> (serde_json::Value, String, String) {
+    let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
+    crate::vault::add_folder(&mut raw, "Trabalho");
+    crate::vault::add_folder(&mut raw, "Pessoal");
+    for (name, user) in [("github", "hades"), ("banco", "joao")] {
+        let form = crate::vault::LoginForm { name, username: user, password: "x", totp: "", url: "", notes: "" };
+        crate::vault::add_login(&mut raw, form);
+    }
+    let folders = crate::vault::folders(&raw);
+    let (work, home) = (folders[0].id.clone(), folders[1].id.clone());
+    for (name, folder) in [("github", &work), ("banco", &home)] {
+        let id = crate::vault::items_view(&raw).into_iter().find(|item| item.name == name).expect("item do cofre").id;
+        assert!(crate::vault::set_item_folder(&mut raw, &id, Some(folder)), "item entra na pasta");
+    }
+    (raw, work, home)
+}
+
+/// O app destrancado nesse cofre (o config.json de teste vai para o scratch).
+fn opened(name: &str, prefs: Prefs, raw: serde_json::Value) -> KeysApp {
+    let mut app = app(name, prefs);
+    app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
+    app.adopt(crate::crypto::test_session(), raw);
+    app
+}
+
+/// A lista abre na pasta escolhida da última vez, não em "Todas": só os itens dela aparecem, e trocar de pasta
+/// (ou voltar para "Todas") grava a escolha no config.json.
+#[test]
+fn the_list_opens_in_the_remembered_folder() {
+    let (raw, work, home) = folders_vault();
+    let mut harness = harness(opened("folder-memory", Prefs::new("en", ThemeMode::Dark).with_folder(&work), raw));
+    harness.run_steps(2);
+    assert_eq!(harness.state().folder_filter.as_deref(), Some(work.as_str()), "abriu na pasta lembrada");
+    harness.get_by_label("Trabalho"); // o chip da pasta lembrada está na barra
+    harness.get_by_label_contains("github");
+    assert_eq!(harness.query_all_by_label_contains("banco").count(), 0, "item da outra pasta escondido");
+
+    // Clicar em outra pasta filtra por ela e grava no config.json de teste.
+    harness.get_by_label("Pessoal").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().folder_filter.as_deref(), Some(home.as_str()), "trocou para a pasta clicada");
+    harness.get_by_label_contains("banco");
+    assert_eq!(harness.query_all_by_label_contains("github").count(), 0, "a troca de pasta filtra a lista");
+    assert_eq!(Prefs::load_from(&harness.state().config_file).folder.as_deref(), Some(home.as_str()), "a escolha foi gravada");
+
+    // "Todas" também é uma escolha: volta a listar tudo e é gravada como tal.
+    harness.get_by_label("All").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().folder_filter, None, "voltou para todas");
+    harness.get_by_label_contains("github");
+    harness.get_by_label_contains("banco");
+    assert_eq!(Prefs::load_from(&harness.state().config_file).folder, None, "todas foi gravado");
+}
+
+/// Pasta lembrada que não existe no cofre aberto (apagada aqui ou em outro aparelho) cai em "Todas".
+#[test]
+fn a_remembered_folder_that_is_gone_opens_in_all() {
+    let (raw, _, _) = folders_vault();
+    let mut harness = harness(opened("folder-gone", Prefs::new("en", ThemeMode::Dark).with_folder("pasta-apagada"), raw));
+    harness.run_steps(2);
+    assert_eq!(harness.state().folder_filter, None, "pasta inexistente caiu em todas");
+    harness.get_by_label_contains("github");
+    harness.get_by_label_contains("banco");
+}
+
 /// As capturas do popup Filtrar (com tipo e "mostrar só" ligados) e do cartão com a bandeira detectada
 /// digitando o número, claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
 #[test]
