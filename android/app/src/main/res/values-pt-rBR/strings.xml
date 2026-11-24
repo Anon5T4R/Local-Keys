@@ -234,6 +234,7 @@
     <string name="tkeys_not_convertible">este item não pode ser convertido para o tipo escolhido; nada foi salvo</string>
     <string name="tkeys_invalid_items">não foi possível alterar os itens selecionados; nada foi salvo</string>
     <string name="tkeys_cannot_export">não foi possível exportar os itens selecionados; nada foi salvo</string>
+    <string name="tkeys_cannot_merge">não foi possível juntar os cofres; nada foi alterado</string>
 
     <!-- Conflito de sincronização (arquivo mudou fora do app) -->
     <string name="external_change_title">Arquivo modificado fora do app</string>

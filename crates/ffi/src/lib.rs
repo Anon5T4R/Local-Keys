@@ -12,6 +12,7 @@ use std::sync::Arc;
 use localkeys_core::batch;
 use localkeys_core::change_kind::{self, FieldLabels};
 use localkeys_core::crypto::{self, CryptoError, KdfParams, SessionKey};
+use localkeys_core::merge_other;
 use localkeys_core::vault_export;
 
 uniffi::setup_scaffolding!();
@@ -39,6 +40,9 @@ pub enum FfiError {
     /// A seleção não pode virar um cofre novo: um item sem `id`, uma entrada que não é lista de objetos ou a
     /// seleção vazia. A `reason` é o `Display` do erro do núcleo; nada é gerado.
     CannotExport { reason: String },
+    /// Os cofres não podem ser juntados: cofre sem `items`/`folders` válido, item/pasta que não é objeto ou sem
+    /// `id`, JSON inválido. A `reason` é o `Display` do erro do núcleo; nada é montado.
+    CannotMerge { reason: String },
 }
 
 impl std::fmt::Display for FfiError {
@@ -52,6 +56,7 @@ impl std::fmt::Display for FfiError {
             FfiError::NotConvertible { reason } => write!(f, "item cannot be converted to the requested kind: {reason}"),
             FfiError::InvalidItems { reason } => write!(f, "items cannot be changed: {reason}"),
             FfiError::CannotExport { reason } => write!(f, "items cannot be exported: {reason}"),
+            FfiError::CannotMerge { reason } => write!(f, "vaults cannot be merged: {reason}"),
         }
     }
 }
@@ -160,6 +165,40 @@ pub fn move_items(items_json: String, folder_id: Option<String>, folder_ids: Vec
 #[uniffi::export]
 pub fn subset_vault(folders_json: String, items_json: String) -> Result<String, FfiError> {
     vault_export::subset_vault_json(&folders_json, &items_json).map_err(|error| FfiError::CannotExport { reason: error.to_string() })
+}
+
+/// O cofre juntado + o resumo que a tela mostra antes de confirmar (todas as contagens em itens/pastas).
+#[derive(Debug, uniffi::Record)]
+pub struct MergeOtherResult {
+    /// O JSON do cofre juntado (o aberto com os itens/pastas que entraram); nada é gravado pela ponte.
+    pub merged_json: String,
+    /// Itens do outro cofre que entraram com o id próprio.
+    pub added: u32,
+    /// Mesmo id e conteúdo diferente: entraram com um id novo (ficaram os dois).
+    pub collisions: u32,
+    /// Itens que os dois cofres já tinham com o mesmo conteúdo.
+    pub already_present: u32,
+    /// Pastas do outro que entraram inteiras.
+    pub folders_added: u32,
+    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome.
+    pub folders_merged: u32,
+}
+
+/// Junta o cofre `other_json` no cofre `base_json` pela regra do núcleo (`merge_other`) e devolve o cofre resultante
+/// em JSON + o resumo. Cofres **distintos**: o outro cofre é só leitura (a ponte não grava nada) e, em colisão de
+/// id, o que entra ganha um id novo.
+#[uniffi::export]
+pub fn merge_other_vault(base_json: String, other_json: String) -> Result<MergeOtherResult, FfiError> {
+    let (merged_json, summary) =
+        merge_other::merge_other_json(&base_json, &other_json).map_err(|error| FfiError::CannotMerge { reason: error.to_string() })?;
+    Ok(MergeOtherResult {
+        merged_json,
+        added: summary.added,
+        collisions: summary.collisions,
+        already_present: summary.already_present,
+        folders_added: summary.folders_added,
+        folders_merged: summary.folders_merged,
+    })
 }
 
 /// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
@@ -413,5 +452,40 @@ mod tests {
         assert_eq!(reason(subset_vault(EXPORT_FOLDERS.into(), "[]".into())), "no items selected");
         assert_eq!(reason(subset_vault(EXPORT_FOLDERS.into(), r#"[{"name":"sem id"}]"#.into())), "item has no `id`");
         assert_eq!(FfiError::CannotExport { reason: "x".into() }.to_string(), "items cannot be exported: x");
+    }
+
+    #[test]
+    fn juntar_outro_cofre_pela_ponte_devolve_o_resumo_e_o_cofre() {
+        // Cofres distintos: um item novo (com a pasta unida por nome) e um id repetido com conteúdo diferente.
+        let base = r#"{"version":1,"folders":[{"id":"f1","name":"Work"}],"items":[{"id":"i1","kind":"note","name":"A","folderId":"f1","createdAt":1,"updatedAt":2,"deletedAt":null}]}"#;
+        let other = r#"{"version":1,"folders":[{"id":"g1","name":"Work","extraFolderKey":true}],"items":[{"id":"i2","kind":"note","name":"B","folderId":"g1","createdAt":1,"updatedAt":2,"deletedAt":null},{"id":"i1","kind":"note","name":"A (outro cofre)","folderId":"g1","createdAt":1,"updatedAt":2,"deletedAt":null}]}"#;
+
+        let out = merge_other_vault(base.into(), other.into()).unwrap();
+
+        assert_eq!(
+            (out.added, out.collisions, out.already_present, out.folders_added, out.folders_merged),
+            (1, 1, 0, 0, 1)
+        );
+        assert!(out.merged_json.contains("\"id\":\"i2\""), "{}", out.merged_json);
+        assert!(out.merged_json.contains("\"folderId\":\"f1\""), "a pasta unida foi repontada: {}", out.merged_json);
+        assert!(out.merged_json.contains("A (outro cofre)"), "a colisão entrou: {}", out.merged_json);
+    }
+
+    #[test]
+    fn erro_da_juncao_chega_tipado_com_a_razao() {
+        let reason = |result: Result<MergeOtherResult, FfiError>| match result {
+            Err(FfiError::CannotMerge { reason }) => reason,
+            other => panic!("esperava CannotMerge, veio {other:?}"),
+        };
+        assert!(reason(merge_other_vault("não é json".into(), "{}".into())).starts_with("invalid base JSON: "), "JSON inválido");
+        assert_eq!(
+            reason(merge_other_vault(r#"{"version":1,"folders":[],"items":[]}"#.into(), r#"{"items":[]}"#.into())),
+            "the other vault has no valid `items`/`folders` lists"
+        );
+        assert_eq!(
+            reason(merge_other_vault(r#"{"version":1,"folders":[],"items":[{"name":"x"}]}"#.into(), r#"{"version":1,"folders":[],"items":[]}"#.into())),
+            "an item in the base vault has no `id`"
+        );
+        assert_eq!(FfiError::CannotMerge { reason: "x".into() }.to_string(), "vaults cannot be merged: x");
     }
 }

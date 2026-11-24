@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Trabalho"
+    },
+    {
+      "id": "f2",
+      "name": "Pessoal"
+    }
+  ],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "Item 1",
+      "favorite": false,
+      "folderId": "f1",
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "u1",
+        "password": "p1",
+        "uris": [],
+        "totp": ""
+      }
+    },
+    {
+      "id": "i2",
+      "kind": "note",
+      "name": "Nota 2",
+      "favorite": false,
+      "folderId": "f2",
+      "notes": "texto",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null
+    }
+  ]
+}

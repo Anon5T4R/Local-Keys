@@ -877,6 +877,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         is TkeysError.NotConvertible -> str(R.string.tkeys_not_convertible)
         is TkeysError.InvalidItems -> str(R.string.tkeys_invalid_items)
         is TkeysError.CannotExport -> str(R.string.tkeys_cannot_export)
+        is TkeysError.CannotMerge -> str(R.string.tkeys_cannot_merge)
     }
 
     /** O texto do erro de um importador de arquivo, no idioma da interface (o [ImportError] carrega o recurso). */

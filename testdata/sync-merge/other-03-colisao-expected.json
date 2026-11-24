@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Trabalho"
+    }
+  ],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "Item 1",
+      "favorite": false,
+      "folderId": "f1",
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "u1",
+        "password": "p-base",
+        "uris": [],
+        "totp": ""
+      }
+    },
+    {
+      "id": "<new>",
+      "kind": "login",
+      "name": "Item 1",
+      "favorite": false,
+      "folderId": "f1",
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "u1",
+        "password": "p-other",
+        "uris": [],
+        "totp": ""
+      },
+      "attachments": [
+        {
+          "id": "a1",
+          "name": "f.txt",
+          "size": 2,
+          "mime": "text/plain",
+          "dataB64": "aGk=",
+          "deletedAt": null
+        }
+      ],
+      "passkeys": [
+        {
+          "credentialId": "pk1",
+          "rpId": "example.com",
+          "userName": "u1",
+          "userDisplayName": "U 1",
+          "userHandle": "dXNlcg",
+          "key": "a2V5",
+          "alg": -7,
+          "createdAt": 2000
+        }
+      ],
+      "unknownKey": {
+        "nested": [
+          1,
+          2
+        ]
+      }
+    }
+  ]
+}

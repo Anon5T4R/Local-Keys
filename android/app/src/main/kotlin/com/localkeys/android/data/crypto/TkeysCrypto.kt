@@ -3,12 +3,14 @@ package com.localkeys.android.data.crypto
 import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
+import com.localkeys.android.data.vault.Vault
 import com.localkeys.android.ffi.FfiException
 import com.localkeys.android.ffi.FieldLabelsFfi
 import com.localkeys.android.ffi.KdfParamsFfi
 import com.localkeys.android.ffi.Session
 import com.localkeys.android.ffi.changeItemKind as ffiChangeItemKind
 import com.localkeys.android.ffi.createVault as ffiCreateVault
+import com.localkeys.android.ffi.mergeOtherVault as ffiMergeOtherVault
 import com.localkeys.android.ffi.moveItems as ffiMoveItems
 import com.localkeys.android.ffi.openVault as ffiOpenVault
 import com.localkeys.android.ffi.openVaultWithKey as ffiOpenVaultWithKey
@@ -54,6 +56,13 @@ sealed class TkeysError : Exception() {
      */
     class CannotExport(val reason: String) : TkeysError() {
         override val message: String get() = "itens não podem ser exportados: $reason"
+    }
+    /**
+     * Os cofres não podem ser juntados: cofre sem `items`/`folders` válido, item/pasta que não é objeto ou sem `id`,
+     * JSON inválido. A [reason] é o diagnóstico em inglês do núcleo; nada foi montado.
+     */
+    class CannotMerge(val reason: String) : TkeysError() {
+        override val message: String get() = "cofres não podem ser juntados: $reason"
     }
 }
 
@@ -164,6 +173,33 @@ fun subsetVault(folders: List<Folder>, items: List<Item>): String {
     return translating { ffiSubsetVault(foldersJson, itemsJson) }
 }
 
+/**
+ * Junta o cofre [other] (somente leitura) no cofre [base] pela regra do núcleo: devolve o cofre MESCLADO (novo, com
+ * os itens/pastas que entraram) e o resumo que a tela mostra antes de confirmar. Em colisão de id, o que entra ganha
+ * um id novo; o outro cofre não é alterado e nada é gravado aqui ([TkeysError.CannotMerge] quando a regra recusa).
+ */
+fun mergeOtherVault(base: Vault, other: Vault): MergeOtherResult {
+    val out = translating { ffiMergeOtherVault(base.toJson().toString(), other.toJson().toString()) }
+    return MergeOtherResult(
+        merged = Vault.parse(out.mergedJson),
+        added = out.added.toInt(),
+        collisions = out.collisions.toInt(),
+        alreadyPresent = out.alreadyPresent.toInt(),
+        foldersAdded = out.foldersAdded.toInt(),
+        foldersMerged = out.foldersMerged.toInt(),
+    )
+}
+
+/** O que a junção de outro cofre fez: o cofre resultante + as contagens para a tela confirmar. */
+data class MergeOtherResult(
+    val merged: Vault,
+    val added: Int,
+    val collisions: Int,
+    val alreadyPresent: Int,
+    val foldersAdded: Int,
+    val foldersMerged: Int,
+)
+
 /** O lote só atravessa a ponte com os itens selecionados; o resultado volta como lista de [Item]. */
 private inline fun batchItems(items: List<Item>, bridge: (itemsJson: String) -> String): List<Item> {
     val json = JSONArray(items.map { it.toJson() }).toString()
@@ -184,5 +220,6 @@ private inline fun <T> translating(block: () -> T): T = try {
         is FfiException.NotConvertible -> TkeysError.NotConvertible(e.reason)
         is FfiException.InvalidItems -> TkeysError.InvalidItems(e.reason)
         is FfiException.CannotExport -> TkeysError.CannotExport(e.reason)
+        is FfiException.CannotMerge -> TkeysError.CannotMerge(e.reason)
     }
 }

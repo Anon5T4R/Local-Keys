@@ -48,3 +48,27 @@ outra cópia: `toOther` (itens que só existiam aqui ou aqui eram mais novos, in
 `a.json` é o cofre atual e `b.json` a outra cópia, em JSON puro (o conteúdo decifrado do `.tkeys`);
 `expected.json` é o resultado e `summary.json` o resumo. A comparação de `expected.json` é pelo conteúdo:
 `items` e `folders` por `id`, o resto igual.
+
+## Juntar um cofre DIFERENTE (pedido 027, unidade 7)
+
+Juntar outro `.tkeys` no aberto não é sincronizar: são cofres distintos, não existe "o mais novo", o outro cofre é
+**somente leitura** (a sincronização grava nos dois; esta não grava em nenhum) e o resultado é um cofre novo que só é
+gravado depois do resumo confirmado. A regra vive em `crates/core/src/merge_other.rs` (desktop) e na ponte
+`merge_other_vault` (Android).
+
+- Item com id só no outro cofre → entra **inteiro**, com o mesmo id (anexos, passkeys, histórico e chaves
+  desconhecidas vêm juntos).
+- Mesmo id e **conteúdo igual** → nada a fazer ("já estava").
+- Mesmo id e **conteúdo diferente** → ficam os dois: o que entra ganha um **id novo** (o do aberto não muda). Se o
+  conteúdo do outro já existe no aberto sob OUTRO id (a duplicata de uma junção anterior), conta como "já estava" — é
+  o que torna a junção idempotente.
+- Item na lixeira do outro entra como está (na lixeira). `updatedAt` de nada que entra muda (carimbar é do chamador).
+- Pastas: mesmo id → a do aberto; id diferente com o **mesmo nome** → une (os itens da pasta do outro repontam para a
+  do aberto); senão a pasta entra inteira (com as chaves que o app não conhece). Pasta órfã de um item é preservada.
+- Só `folders` e `items` do outro entram; a raiz (versão, chaves desconhecidas) é a do aberto.
+- Resumo antes de confirmar: itens adicionados, colisões (duplicados com id novo), já presentes, pastas adicionadas e
+  pastas unidas.
+
+As fixtures dessa regra ficam ao lado das de sincronização, com o prefixo `other-`:
+`other-<caso>-{base,other,expected,summary}.json`. O id que a regra gera aparece no esperado como `"<new>"` (o runner
+liga ao id real); os dois lados rodam as mesmas fixtures.

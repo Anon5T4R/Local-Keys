@@ -179,7 +179,9 @@ fn now_ms() -> i64 {
 /// Id no MESMO formato do oficial (`crypto.randomUUID()` do TS): UUID v4
 /// com traços (8-4-4-4-12). Era 32-hex sem traços — funcional (id é opaco),
 /// mas um parser estrito de UUID reclamaria; agora é indistinguível.
-fn gen_id() -> String {
+///
+/// Público para as regras que criam id (a junção de outro cofre em [`crate::merge_other`]).
+pub fn gen_id() -> String {
     let mut b = rand::random::<u128>().to_le_bytes();
     b[6] = (b[6] & 0x0f) | 0x40; // version 4
     b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx

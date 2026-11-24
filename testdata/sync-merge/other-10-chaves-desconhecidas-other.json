@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "folders": [
+    {
+      "id": "g1",
+      "name": "Nova",
+      "unknownFolderKey": "x"
+    }
+  ],
+  "items": [
+    {
+      "id": "i2",
+      "kind": "note",
+      "name": "Nota 2",
+      "favorite": false,
+      "folderId": "g1",
+      "notes": "texto",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "unknownKeyB": [
+        true
+      ],
+      "customFields": [
+        {
+          "id": "c1",
+          "name": "Extra",
+          "value": "v",
+          "hidden": false
+        }
+      ],
+      "passwordHistory": [
+        {
+          "password": "old",
+          "at": 5
+        }
+      ]
+    }
+  ]
+}

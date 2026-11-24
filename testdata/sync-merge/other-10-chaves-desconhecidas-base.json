@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Trabalho"
+    }
+  ],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "login",
+      "name": "Item 1",
+      "favorite": false,
+      "folderId": "f1",
+      "notes": "",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": null,
+      "login": {
+        "username": "u1",
+        "password": "p1",
+        "uris": [],
+        "totp": ""
+      },
+      "unknownKeyA": {
+        "a": 1
+      }
+    }
+  ]
+}

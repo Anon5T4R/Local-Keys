@@ -235,6 +235,7 @@
     <string name="tkeys_not_convertible">this item cannot be converted to the selected type; nothing was saved</string>
     <string name="tkeys_invalid_items">the selected items could not be changed; nothing was saved</string>
     <string name="tkeys_cannot_export">the selected items could not be exported; nothing was saved</string>
+    <string name="tkeys_cannot_merge">the vaults could not be merged; nothing was changed</string>
 
     <!-- Conflito de sincronização (arquivo mudou fora do app) -->
     <string name="external_change_title">File changed outside the app</string>
