@@ -1,5 +1,6 @@
 package com.localkeys.android.data.crypto
 
+import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.ffi.FfiException
@@ -11,6 +12,7 @@ import com.localkeys.android.ffi.createVault as ffiCreateVault
 import com.localkeys.android.ffi.moveItems as ffiMoveItems
 import com.localkeys.android.ffi.openVault as ffiOpenVault
 import com.localkeys.android.ffi.openVaultWithKey as ffiOpenVaultWithKey
+import com.localkeys.android.ffi.subsetVault as ffiSubsetVault
 import com.localkeys.android.ffi.trashItems as ffiTrashItems
 import org.json.JSONArray
 import org.json.JSONObject
@@ -45,6 +47,13 @@ sealed class TkeysError : Exception() {
      */
     class InvalidItems(val reason: String) : TkeysError() {
         override val message: String get() = "itens não podem ser alterados: $reason"
+    }
+    /**
+     * A seleção não pode virar um cofre novo: a regra do núcleo recusou (item sem `id`, entrada que não é lista ou
+     * seleção vazia). A [reason] é o diagnóstico em inglês do núcleo; nada foi gerado.
+     */
+    class CannotExport(val reason: String) : TkeysError() {
+        override val message: String get() = "itens não podem ser exportados: $reason"
     }
 }
 
@@ -141,6 +150,19 @@ fun trashItems(items: List<Item>, now: Long): List<Item> =
 fun moveItems(items: List<Item>, folderId: String?, now: Long): List<Item> =
     batchItems(items) { json -> ffiMoveItems(json, folderId, now.toULong()) }
 
+/**
+ * Gera o JSON de um cofre NOVO com os [items] SELECIONADOS e só as [folders] que eles referenciam, pela regra do
+ * núcleo: os itens vão inteiros (id, anexos, histórico, passkeys, chaves desconhecidas). O cofre inteiro não
+ * atravessa — só a seleção e as pastas (pequenas): num cofre grande o JSON completo custa memória. Quem cifra é o
+ * [TkeysCrypto.createVault], com o nome do arquivo e a senha escolhidos pelo usuário; uma recusa da regra
+ * ([TkeysError.CannotExport]) não gera nada.
+ */
+fun subsetVault(folders: List<Folder>, items: List<Item>): String {
+    val foldersJson = JSONArray(folders.map { it.toJson() }).toString()
+    val itemsJson = JSONArray(items.map { it.toJson() }).toString()
+    return translating { ffiSubsetVault(foldersJson, itemsJson) }
+}
+
 /** O lote só atravessa a ponte com os itens selecionados; o resultado volta como lista de [Item]. */
 private inline fun batchItems(items: List<Item>, bridge: (itemsJson: String) -> String): List<Item> {
     val json = JSONArray(items.map { it.toJson() }).toString()
@@ -160,5 +182,6 @@ private inline fun <T> translating(block: () -> T): T = try {
         is FfiException.Corrupted -> TkeysError.Corrupted
         is FfiException.NotConvertible -> TkeysError.NotConvertible(e.reason)
         is FfiException.InvalidItems -> TkeysError.InvalidItems(e.reason)
+        is FfiException.CannotExport -> TkeysError.CannotExport(e.reason)
     }
 }

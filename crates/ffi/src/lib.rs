@@ -1,8 +1,8 @@
 //! Ponte UniFFI do `localkeys-core` para o Keys Android: o formato `.tkeys`, a criptografia (Argon2id +
-//! XChaCha20-Poly1305), a sessão de gravação e a conversão do tipo de um item são o MESMO código do desktop. Aqui
-//! só se traduz tipos: nenhuma regra nova e nenhuma primitiva própria — a conversão do `kind` é a regra do núcleo
-//! (`change_kind`), exposta com os rótulos e o erro traduzidos. Os bindings Kotlin saem de `uniffi-bindgen` (ver
-//! `uniffi.toml`).
+//! XChaCha20-Poly1305), a sessão de gravação, a conversão do tipo de um item e o cofre novo a partir de uma seleção
+//! são o MESMO código do desktop. Aqui só se traduz tipos: nenhuma regra nova e nenhuma primitiva própria — a
+//! conversão do `kind` é a regra do núcleo (`change_kind`) e o cofre novo é a do `vault_export`, expostas com os
+//! rótulos e o erro traduzidos. Os bindings Kotlin saem de `uniffi-bindgen` (ver `uniffi.toml`).
 //!
 //! `panic = "abort"` no release: um panic dentro do `.so` derrubaria o processo de qualquer jeito, e abortar
 //! evita unwinding através do FFI. Os erros previstos viram [`FfiError`].
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use localkeys_core::batch;
 use localkeys_core::change_kind::{self, FieldLabels};
 use localkeys_core::crypto::{self, CryptoError, KdfParams, SessionKey};
+use localkeys_core::vault_export;
 
 uniffi::setup_scaffolding!();
 
@@ -35,6 +36,9 @@ pub enum FfiError {
     /// O lote (lixeira/pasta) não pode ser aplicado: um id ausente ou inexistente, um item que já está na lixeira,
     /// JSON que não é uma lista… A `reason` é o `Display` do erro do núcleo.
     InvalidItems { reason: String },
+    /// A seleção não pode virar um cofre novo: um item sem `id`, uma entrada que não é lista de objetos ou a
+    /// seleção vazia. A `reason` é o `Display` do erro do núcleo; nada é gerado.
+    CannotExport { reason: String },
 }
 
 impl std::fmt::Display for FfiError {
@@ -47,6 +51,7 @@ impl std::fmt::Display for FfiError {
             FfiError::Corrupted => write!(f, "corrupted file"),
             FfiError::NotConvertible { reason } => write!(f, "item cannot be converted to the requested kind: {reason}"),
             FfiError::InvalidItems { reason } => write!(f, "items cannot be changed: {reason}"),
+            FfiError::CannotExport { reason } => write!(f, "items cannot be exported: {reason}"),
         }
     }
 }
@@ -144,6 +149,15 @@ pub fn trash_items(items_json: String, now_ms: u64) -> Result<String, FfiError> 
 #[uniffi::export]
 pub fn move_items(items_json: String, folder_id: Option<String>, now_ms: u64) -> Result<String, FfiError> {
     batch::move_items_json(&items_json, folder_id.as_deref(), now_ms).map_err(|error| FfiError::InvalidItems { reason: error.to_string() })
+}
+
+/// Gera o JSON de um cofre NOVO (`{"version","folders","items"}`) com os itens SELECIONADOS e só as pastas que eles
+/// referenciam — os itens vão inteiros (id, anexos, histórico, passkeys, chaves desconhecidas). Quem cifra é
+/// `create_vault`, com o nome do arquivo e a senha do usuário. Tudo ou nada: uma entrada que não é lista, um item
+/// sem `id` ou a seleção vazia e nada é gerado.
+#[uniffi::export]
+pub fn subset_vault(folders_json: String, items_json: String) -> Result<String, FfiError> {
+    vault_export::subset_vault_json(&folders_json, &items_json).map_err(|error| FfiError::CannotExport { reason: error.to_string() })
 }
 
 /// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
@@ -329,6 +343,19 @@ mod tests {
     /// Um array do cofre só com os itens selecionados — o que a ponte recebe do Android.
     const SELECTED: &str = r#"[{"id":"a","kind":"note","name":"A","folderId":null,"createdAt":1,"updatedAt":2,"deletedAt":null},{"id":"b","kind":"login","name":"B","folderId":"work","createdAt":1,"updatedAt":2,"deletedAt":null,"login":{"username":"b","password":"p"}}]"#;
 
+    /// O caso fixo do export de uma seleção: as pastas do cofre, os itens SELECIONADOS (com anexo) e o cofre novo
+    /// esperado, byte a byte. É o MESMO caso do `SubsetVaultTest` do Android (paridade desktop × Android).
+    const EXPORT_FOLDERS: &str = r#"[{"id":"work","name":"Work"},{"id":"home","name":"Home"}]"#;
+    const EXPORT_ITEMS: &str = r#"[{"id":"a","kind":"note","name":"A","favorite":false,"folderId":"work","notes":"","createdAt":1,"updatedAt":2,"deletedAt":null,"attachments":[{"id":"att-1","name":"f.txt","size":2,"mime":"text/plain","dataB64":"aGk=","deletedAt":null}]},{"id":"b","kind":"login","name":"B","favorite":true,"folderId":null,"notes":"n","createdAt":1,"updatedAt":2,"deletedAt":null,"login":{"username":"b","password":"p","uris":[],"totp":""}}]"#;
+    /// Chaves em ordem alfabética: o `serde_json` do núcleo não usa `preserve_order`.
+    const EXPORT_EXPECTED: &str = r#"{"folders":[{"id":"work","name":"Work"}],"items":[{"attachments":[{"dataB64":"aGk=","deletedAt":null,"id":"att-1","mime":"text/plain","name":"f.txt","size":2}],"createdAt":1,"deletedAt":null,"favorite":false,"folderId":"work","id":"a","kind":"note","name":"A","notes":"","updatedAt":2},{"createdAt":1,"deletedAt":null,"favorite":true,"folderId":null,"id":"b","kind":"login","login":{"password":"p","totp":"","uris":[],"username":"b"},"name":"B","notes":"n","updatedAt":2}],"version":1}"#;
+
+    #[test]
+    fn exportar_a_selecao_devolve_o_cofre_novo() {
+        let out = subset_vault(EXPORT_FOLDERS.into(), EXPORT_ITEMS.into()).unwrap();
+        assert_eq!(out, EXPORT_EXPECTED);
+    }
+
     #[test]
     fn lote_manda_os_itens_para_a_lixeira_com_o_mesmo_agora() {
         let out = trash_items(SELECTED.into(), 1_700).unwrap();
@@ -359,5 +386,18 @@ mod tests {
         assert_eq!(reason(trash_items(r#"[{"name":"sem id"}]"#.into(), 1)), "item has no `id`");
         assert_eq!(reason(trash_items(r#"[{"id":"a","deletedAt":9}]"#.into(), 1)), "item `a` is already in the trash");
         assert_eq!(FfiError::InvalidItems { reason: "x".into() }.to_string(), "items cannot be changed: x");
+    }
+
+    #[test]
+    fn erro_do_export_chega_tipado_com_a_razao() {
+        let reason = |result: Result<String, FfiError>| match result {
+            Err(FfiError::CannotExport { reason }) => reason,
+            other => panic!("esperava CannotExport, veio {other:?}"),
+        };
+        assert!(reason(subset_vault("não é json".into(), EXPORT_ITEMS.into())).starts_with("invalid folders JSON: "), "JSON inválido");
+        assert_eq!(reason(subset_vault("{}".into(), EXPORT_ITEMS.into())), "invalid folders JSON: not a JSON array");
+        assert_eq!(reason(subset_vault(EXPORT_FOLDERS.into(), "[]".into())), "no items selected");
+        assert_eq!(reason(subset_vault(EXPORT_FOLDERS.into(), r#"[{"name":"sem id"}]"#.into())), "item has no `id`");
+        assert_eq!(FfiError::CannotExport { reason: "x".into() }.to_string(), "items cannot be exported: x");
     }
 }

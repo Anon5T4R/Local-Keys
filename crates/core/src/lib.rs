@@ -20,3 +20,4 @@ pub mod merge;
 pub mod otpauth;
 pub mod totp;
 pub mod vault;
+pub mod vault_export;
