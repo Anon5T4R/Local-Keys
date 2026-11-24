@@ -7,22 +7,23 @@
 //! Decisões da regra:
 //! - item do outro com id que **não existe** no aberto entra **inteiro**, com o mesmo id (anexos, passkeys, histórico
 //!   e chaves desconhecidas vêm juntos);
-//! - mesmo id e **conteúdo igual** → nada a fazer (`already_present`);
+//! - mesmo id e **conteúdo igual** → nada a fazer (`already_present`); chave ausente e `null` valem o mesmo (o modelo
+//!   do Android grava `folderId`/`deletedAt` como `null` onde o desktop omite a chave);
 //! - mesmo id e **conteúdo diferente** → ficam os dois: o que entra ganha um **id novo** (o do aberto não muda) e o
-//!   item vai inteiro; se o conteúdo do outro já existe no aberto sob OUTRO id (a duplicata de uma passada anterior),
-//!   conta em `content_already_present` — é o que torna a junção idempotente;
+//!   item vai inteiro; se o conteúdo do outro já existe no aberto sob OUTRO id — a duplicata de uma passada anterior
+//!   **ou uma edição que ficou idêntica a outro item** —, não entra e conta em `content_already_present` (é o que
+//!   torna a junção idempotente, e a edição descartada não é distinguida da duplicata);
 //! - item na lixeira do outro entra como está (na lixeira);
 //! - pastas: mesmo id → usa a do aberto; id diferente com o **mesmo nome** (comparação exata) → une, os itens que
-//!   apontavam para a pasta do outro passam a apontar para a do aberto (a pasta só conta em `folders_merged` quando
-//!   algum item foi de fato reapontado) e as chaves desconhecidas da pasta do outro que a do aberto não tem entram
-//!   nela (as do aberto vencem); senão a pasta entra inteira (com as chaves que o app não conhece). Pasta órfã de um
-//!   item do outro é preservada como está;
+//!   apontavam para a pasta do outro passam a apontar para a do aberto e as chaves desconhecidas da pasta do outro
+//!   que a do aberto não tem entram nela (as do aberto vencem); a pasta conta em `folders_merged` quando algum item
+//!   foi reapontado **ou** alguma chave da do outro entrou; senão a pasta entra inteira (com as chaves que o app não
+//!   conhece). Pasta órfã de um item do outro é preservada como está;
 //! - só `folders` e `items` do outro entram; a raiz (versão, preferências, chaves desconhecidas do cofre) é a do
 //!   aberto;
 //! - `updatedAt` dos itens que entram **não** muda: carimbar o cofre é do chamador, não da regra;
-//! - item sem `id` (ou com `id` vazio) no cofre **aberto** recusa a junção inteira ([`MergeOtherError::ItemWithoutId`]):
-//!   é a única saída defensiva em que um defeito do cofre aberto impede juntar (itens do outro com o mesmo defeito
-//!   também recusam, pelo mesmo motivo).
+//! - cofre malformado, item/pasta que não é objeto ou item/pasta sem `id` (ou com `id` vazio) recusam a junção
+//!   inteira ([`MergeOtherError`]), nos dois cofres — nada é montado com uma entrada inválida.
 //!
 //! A função é **pura em relação ao disco** (recebe e devolve JSON) e devolve o **resumo** que a tela mostra antes de
 //! confirmar. O formato `.tkeys` não ganha chave nenhuma.
@@ -48,7 +49,8 @@ pub struct MergeSummary {
     pub content_already_present: u32,
     /// Pastas do outro que entraram inteiras.
     pub folders_added: u32,
-    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome, com pelo menos um item reapontado.
+    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome, com ao menos um item reapontado ou uma chave
+    /// copiada da pasta do outro.
     pub folders_merged: u32,
 }
 
@@ -167,8 +169,11 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
         }
     }
     let mut folder_map: BTreeMap<String, String> = BTreeMap::new();
-    // Pastas do outro unidas por nome (id do outro → id do aberto): só contam no resumo se um item for reapontado.
+    // Pastas do outro unidas por nome (id do outro → id do aberto): contam no resumo se a união mexeu na pasta
+    // (algum item repontado para ela ou alguma chave do outro copiada para ela).
     let mut united: BTreeMap<String, String> = BTreeMap::new();
+    // Pastas unidas que receberam alguma chave desconhecida da pasta do outro.
+    let mut keys_copied: BTreeSet<String> = BTreeSet::new();
     let mut merged_folders: Vec<Value> = base_folders.clone();
     let mut summary = MergeSummary::default();
     for folder in other_folders {
@@ -182,8 +187,10 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
             folder_map.insert(id.to_string(), base_id.to_string());
             united.insert(id.to_string(), base_id.to_string());
             // Escrita conservadora: as chaves da pasta do outro que a do aberto não tem entram nela (as do aberto
-            // vencem; id e nome são os do aberto).
-            merge_folder_keys(&mut merged_folders, base_id, folder);
+            // vencem; id e nome são os do aberto). Se alguma entrou, a pasta conta como unida mesmo sem item.
+            if merge_folder_keys(&mut merged_folders, base_id, folder) {
+                keys_copied.insert(id.to_string());
+            }
             continue;
         }
         merged_folders.push(folder.clone());
@@ -210,12 +217,13 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
             summary.added += 1;
             continue;
         };
-        if json_same(current, &incoming) {
+        if json_same_nullable(current, &incoming) {
             summary.already_present += 1;
             continue;
         }
-        // O conteúdo pode já estar no aberto sob OUTRO id: é a duplicata de uma junção anterior. Não entra de novo
-        // (sem isso, juntar o mesmo cofre duas vezes criaria outra duplicata).
+        // O conteúdo pode já estar no aberto sob OUTRO id: a duplicata de uma junção anterior ou uma edição que ficou
+        // idêntica a outro item. Não entra de novo (sem isso, juntar o mesmo cofre duas vezes criaria outra
+        // duplicata) e o resumo não distingue os dois casos.
         if base_items.iter().any(|item| same_content(item, &incoming)) {
             summary.content_already_present += 1;
             continue;
@@ -227,7 +235,8 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
         mark_repointed(&mut repointed, &united, source_folder);
         summary.collisions += 1;
     }
-    summary.folders_merged = united.iter().filter(|(other_id, _)| repointed.contains(other_id.as_str())).count() as u32;
+    summary.folders_merged =
+        united.iter().filter(|(other_id, _)| repointed.contains(other_id.as_str()) || keys_copied.contains(*other_id)).count() as u32;
 
     let mut merged = base.clone();
     merged["items"] = Value::Array(merged_items);
@@ -236,20 +245,23 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
 }
 
 /// As chaves da pasta do outro que a pasta do aberto NÃO tem entram nela; `id`, `name` e as chaves já existentes
-/// ficam os do aberto (escrita conservadora, como nos itens).
-fn merge_folder_keys(folders: &mut [Value], base_id: &str, other: &Value) {
+/// ficam os do aberto (escrita conservadora, como nos itens). Devolve `true` quando alguma chave entrou.
+fn merge_folder_keys(folders: &mut [Value], base_id: &str, other: &Value) -> bool {
     let Some(source) = other.as_object() else {
-        return;
+        return false;
     };
     let Some(target) = folders.iter_mut().find(|folder| folder.get("id").and_then(Value::as_str) == Some(base_id)).and_then(Value::as_object_mut)
     else {
-        return;
+        return false;
     };
+    let mut copied = false;
     for (key, value) in source {
         if key != "id" && key != "name" && !target.contains_key(key) {
             target.insert(key.clone(), value.clone());
+            copied = true;
         }
     }
+    copied
 }
 
 /// Marca que um item que entrou foi reapontado de uma pasta unida para a do aberto (conta em `folders_merged`).
@@ -261,14 +273,30 @@ fn mark_repointed<'a>(repointed: &mut BTreeSet<&'a str>, united: &BTreeMap<Strin
     }
 }
 
-/// Igualdade de conteúdo de item **sem o `id`** (a duplicata de uma junção anterior tem outro id).
+/// Igualdade de JSON tratando **chave ausente e `Value::Null` como a mesma coisa**: o modelo do Android grava
+/// `folderId`/`deletedAt` como `null` onde o desktop omite a chave, e os dois lados têm de dar o mesmo resultado.
+fn json_same_nullable(a: &Value, b: &Value) -> bool {
+    fn without_nulls(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                Value::Object(map.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| (key.clone(), without_nulls(value))).collect())
+            }
+            Value::Array(items) => Value::Array(items.iter().map(without_nulls).collect()),
+            other => other.clone(),
+        }
+    }
+    json_same(&without_nulls(a), &without_nulls(b))
+}
+
+/// Igualdade de conteúdo de item **sem o `id`** (a duplicata de uma junção anterior tem outro id), com a mesma
+/// tolerância de `null` × ausente de [`json_same_nullable`].
 fn same_content(a: &Value, b: &Value) -> bool {
     fn without_id(value: &Value) -> Value {
         let mut object = value.as_object().cloned().unwrap_or_default();
         object.remove("id");
         Value::Object(object)
     }
-    json_same(&without_id(a), &without_id(b))
+    json_same_nullable(&without_id(a), &without_id(b))
 }
 
 /// O item com a pasta do outro repontada para a pasta do aberto quando elas foram unidas (mesmo nome); qualquer outro

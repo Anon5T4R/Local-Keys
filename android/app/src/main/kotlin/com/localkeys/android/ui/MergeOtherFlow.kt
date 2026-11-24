@@ -16,11 +16,12 @@ data class MergeOtherCounts(
     val collisions: Int = 0,
     /** Itens que os dois cofres já tinham com o mesmo conteúdo e o mesmo id. */
     val alreadyPresent: Int = 0,
-    /** Itens cujo conteúdo já estava no aberto sob OUTRO id (a duplicata de uma junção anterior). */
+    /** Itens cujo conteúdo já estava no aberto sob OUTRO id (a duplicata de uma junção anterior, ou uma edição que
+     * ficou idêntica a outro item): não entram de novo. */
     val contentAlreadyPresent: Int = 0,
     /** Pastas do outro que entraram inteiras. */
     val foldersAdded: Int = 0,
-    /** Pastas unidas a uma pasta do aberto com o mesmo nome, com pelo menos um item reapontado. */
+    /** Pastas unidas a uma pasta do aberto com o mesmo nome, com item reapontado ou chave copiada da do outro. */
     val foldersMerged: Int = 0,
 ) {
     companion object {

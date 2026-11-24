@@ -602,6 +602,8 @@
     <string name="merge_other_failed">The vaults could not be merged: %1$s</string>
     <string name="merge_other_too_big">The two vaults together are over the phone\'s 20 MB merge limit. Merge them on the desktop.</string>
     <string name="merge_other_result_too_big">The merged vault would be over the phone\'s 20 MB merge limit. Merge them on the desktop.</string>
+    <string name="merge_other_size_unknown">Could not check the size of this vault before opening the other one. Try again, or merge them on the desktop.</string>
+    <string name="merge_other_changed">This vault changed while the summary was open. Merge again to use the current vault.</string>
     <string name="merge_other_password_title">Password of the other vault</string>
     <string name="merge_other_password_message">%1$s does not open with the password of this vault. Type its master password. Only this vault is changed; the other file is never written.</string>
     <string name="merge_other_summary_title">Merge %1$s into this vault?</string>

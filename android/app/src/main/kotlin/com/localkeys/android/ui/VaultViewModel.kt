@@ -42,8 +42,11 @@ import com.localkeys.android.data.store.DocumentWriter
 import com.localkeys.android.data.store.RecentVault
 import com.localkeys.android.data.store.RecentVaults
 import com.localkeys.android.data.sync.JsonEq
+import com.localkeys.android.data.sync.MergeOtherFreshness
 import com.localkeys.android.data.sync.MergeOtherLimit
+import com.localkeys.android.data.sync.MergeOtherPrecheck
 import com.localkeys.android.data.sync.VaultMerge
+import com.localkeys.android.data.sync.isWrongPassword
 import org.json.JSONObject
 import com.localkeys.android.data.store.SettingsStore
 import com.localkeys.android.data.store.describeCause
@@ -1202,13 +1205,48 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     /** O estado da junção: diálogo de senha do outro, resumo para confirmar, ou nada. A tela lê [mergeOther]. */
     val mergeOther = MergeOtherFlow()
 
+    /** O outro arquivo lido (para o passo da senha) e o cofre dele (para refazer a junção se o aberto mudar). */
     private var mergeOtherBytes: ByteArray? = null
+    private var mergeOtherSource: Vault? = null
     private var mergeMerged: Vault? = null
 
+    /** O JSON do cofre ABERTO usado no cálculo do resumo: se ele mudar até o confirmar, a junção é refeita. */
+    private var mergeBaseJson: String? = null
+
+    /** O resultado de um passo calculado FORA da main; [applyMergeOutcome] é a única que mexe no Compose. */
+    private sealed interface MergeOutcome {
+        /** Não abriu com a chave da sessão: pede a senha do outro cofre (os bytes ficam para o passo da senha). */
+        data class NeedsPassword(val name: String, val bytes: ByteArray) : MergeOutcome
+
+        /** A junção foi calculada e cabe no teto: o resumo pode abrir. */
+        data class Ready(
+            val name: String,
+            val merged: Vault,
+            val other: Vault,
+            val baseJson: String,
+            val counts: MergeOtherCounts,
+            val nothingChanges: Boolean,
+        ) : MergeOutcome
+
+        /** Senha errada: o diálogo continua com o motivo e a pessoa tenta de novo. */
+        data class WrongPassword(val message: String) : MergeOutcome
+
+        /** Recusa ou falha: fecha a junção e mostra o erro traduzido. */
+        data class Failed(val message: String) : MergeOutcome
+    }
+
+    /** A leitura do outro arquivo com teto (provedor que não declara o tamanho). */
+    private sealed interface CappedRead {
+        data class Bytes(val bytes: ByteArray) : CappedRead
+        data object TooBig : CappedRead
+        data object Missing : CappedRead
+    }
+
     /**
-     * Outro `.tkeys` escolhido no SAF: lê o arquivo, confere o teto de tamanho (a soma dos dois arquivos) e tenta
-     * abri-lo com a chave deste cofre; se não abrir, pede a senha do outro. O outro arquivo só é LIDO — esta ação
-     * nunca grava nele; o cofre aberto só é gravado depois de o resumo ser confirmado.
+     * Outro `.tkeys` escolhido no SAF. O teto é conferido ANTES de ler — pelo tamanho declarado pelo provedor
+     * (`OpenableColumns.SIZE`); se ele não declarar, a leitura é limitada ao que ainda cabe. Assim um arquivo grande
+     * escolhido por engano no seletor é recusado sem alocar os bytes. Leitura, abertura e junção rodam fora da main;
+     * a etapa da tela é aplicada numa passada só em [applyMergeOutcome].
      */
     fun onMergeOtherChosen(uri: Uri) {
         if (uri.toString() == _state.value.vaultUri) {
@@ -1216,56 +1254,61 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (!mergeOther.begin()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(busy = true, error = null) }
-            try {
-                val resolver = getApplication<Application>().contentResolver
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: throw IOException(str(R.string.err_file_not_found))
-                val name = displayName(resolver, uri) ?: RecentVaults.fallbackName(uri.toString())
-                // O pico da junção é ~5–6× a soma dos dois JSONs: acima do teto, nada é aberto (nem decifrado).
-                if (MergeOtherLimit.overLimit(cachedBlob?.size?.toLong() ?: 0L, bytes.size.toLong())) {
-                    clearMergeOther()
-                    _state.update { it.copy(busy = false, error = str(R.string.merge_other_too_big)) }
-                    return@launch
-                }
-                mergeOtherBytes = bytes
-                val other = withContext(Dispatchers.Default) { repository.openOtherWithSessionKey(bytes) }
-                if (other == null) {
-                    _state.update { it.copy(busy = false) }
-                    mergeOther.askPassword(name)
-                } else {
-                    prepareMergeOther(name, other)
-                }
-            } catch (e: Exception) {
-                clearMergeOther()
-                val detail = (e as? TkeysError)?.let(::tkeysErrorMessage) ?: e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
-                _state.update { it.copy(busy = false, error = str(R.string.merge_other_open_failed, detail)) }
-            }
+        _state.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch(Dispatchers.Default) {
+            val outcome = runCatching { openAndPrepare(uri) }.getOrElse { MergeOutcome.Failed(mergeOpenFailure(it)) }
+            withContext(Dispatchers.Main) { applyMergeOutcome(outcome) }
         }
     }
 
     /**
+     * Lê o outro arquivo dentro do teto e tenta abri-lo com a chave deste cofre. Roda fora da main e não toca em
+     * estado de tela.
+     */
+    private suspend fun openAndPrepare(uri: Uri): MergeOutcome {
+        val resolver = getApplication<Application>().contentResolver
+        val name = withContext(Dispatchers.IO) { displayName(resolver, uri) } ?: RecentVaults.fallbackName(uri.toString())
+        val declared = withContext(Dispatchers.IO) { documentSize(resolver, uri) }
+        // Mesmo com tamanho declarado, a leitura é limitada ao que ainda cabe: provedor que mente ou arquivo que
+        // cresce entre a consulta e a leitura não chega a alocar além do teto.
+        val read = when (val check = MergeOtherLimit.precheck(vaultBytesForMerge(resolver), declared)) {
+            MergeOtherPrecheck.UnknownVaultSize -> return MergeOutcome.Failed(str(R.string.merge_other_size_unknown))
+            MergeOtherPrecheck.TooBig -> return MergeOutcome.Failed(str(R.string.merge_other_too_big))
+            is MergeOtherPrecheck.ReadWhole ->
+                withContext(Dispatchers.IO) { readDocumentBytesCapped(resolver, uri, MergeOtherLimit.MAX_BYTES - check.vaultBytes) }
+            is MergeOtherPrecheck.ReadCapped -> withContext(Dispatchers.IO) { readDocumentBytesCapped(resolver, uri, check.cap) }
+        }
+        val bytes = when (read) {
+            is CappedRead.Bytes -> read.bytes
+            CappedRead.TooBig -> return MergeOutcome.Failed(str(R.string.merge_other_too_big))
+            CappedRead.Missing ->
+                return MergeOutcome.Failed(str(R.string.merge_other_open_failed, str(R.string.err_file_not_found)))
+        }
+        val other = withContext(Dispatchers.Default) { repository.openOtherWithSessionKey(bytes) }
+            ?: return MergeOutcome.NeedsPassword(name, bytes)
+        return prepareMerge(name, other)
+    }
+
+    /**
      * Senha do outro cofre (quando a chave deste não abriu): o Argon2id roda fora da thread principal e a senha não
-     * fica guardada. Errada: o diálogo continua aberto com o motivo e nada é gravado.
+     * fica guardada. Só a senha errada ([TkeysError.Decrypt]) mantém o diálogo; arquivo corrompido ou que não é um
+     * cofre fecha com o erro traduzido.
      */
     fun onMergeOtherPassword(password: String) {
         if (password.isBlank()) return
         val bytes = mergeOtherBytes ?: return
         if (!mergeOther.startPassword()) return
         val stage = mergeOther.stage as? MergeOtherStage.NeedsPassword ?: return
+        _state.update { it.copy(busy = true) }
         viewModelScope.launch(Dispatchers.Default) {
-            _state.update { it.copy(busy = true) }
-            try {
-                prepareMergeOther(stage.name, repository.openOtherWithPassword(bytes, password))
+            val outcome = try {
+                prepareMerge(stage.name, repository.openOtherWithPassword(bytes, password))
             } catch (e: TkeysError) {
-                _state.update { it.copy(busy = false) }
-                mergeOther.passwordRejected(tkeysErrorMessage(e))
+                if (isWrongPassword(e)) MergeOutcome.WrongPassword(tkeysErrorMessage(e)) else MergeOutcome.Failed(tkeysErrorMessage(e))
             } catch (e: Exception) {
-                clearMergeOther()
-                val detail = e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
-                _state.update { it.copy(busy = false, error = str(R.string.merge_other_open_failed, detail)) }
+                MergeOutcome.Failed(mergeOpenFailure(e))
             }
+            withContext(Dispatchers.Main) { applyMergeOutcome(outcome) }
         }
     }
 
@@ -1273,49 +1316,110 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * A junção é calculada pela ponte (regra do núcleo) fora da thread principal; o resumo só aparece se o resultado
      * couber no teto. Nada é gravado aqui.
      */
-    private suspend fun prepareMergeOther(name: String, other: VaultRepository.OtherCopy) {
-        try {
-            val result = withContext(Dispatchers.Default) { mergeOtherVault(repository.vault, other.vault) }
-            if (MergeOtherLimit.resultOverLimit(MergeOtherLimit.utf8Size(result.merged.toJson()))) {
-                clearMergeOther()
-                _state.update { it.copy(busy = false, error = str(R.string.merge_other_result_too_big)) }
-                return
-            }
-            val nothing = JsonEq.same(JSONObject(result.merged.toJson()), JSONObject(repository.vault.toJson()))
-            mergeMerged = result.merged
-            _state.update { it.copy(busy = false) }
-            mergeOther.ready(name, MergeOtherCounts.of(result), nothing)
-        } catch (e: TkeysError) {
-            clearMergeOther()
-            _state.update { it.copy(busy = false, error = tkeysErrorMessage(e)) }
-        } catch (e: Exception) {
-            clearMergeOther()
-            val detail = e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
-            _state.update { it.copy(busy = false, error = str(R.string.merge_other_failed, detail)) }
+    private fun prepareMerge(name: String, other: VaultRepository.OtherCopy): MergeOutcome {
+        val baseJson = repository.vault.toJson()
+        val result = mergeOtherVault(repository.vault, other.vault)
+        val mergedJson = result.merged.toJson()
+        if (MergeOtherLimit.resultOverLimit(MergeOtherLimit.utf8Size(mergedJson))) {
+            return MergeOutcome.Failed(str(R.string.merge_other_result_too_big))
         }
+        val nothing = JsonEq.same(JSONObject(mergedJson), JSONObject(baseJson))
+        return MergeOutcome.Ready(name, result.merged, other.vault, baseJson, MergeOtherCounts.of(result), nothing)
+    }
+
+    /** Aplica a etapa da junção na main — o único lugar que escreve no estado Compose do fluxo. */
+    private fun applyMergeOutcome(outcome: MergeOutcome) {
+        when (outcome) {
+            is MergeOutcome.NeedsPassword -> {
+                mergeOtherBytes = outcome.bytes
+                mergeOtherSource = null
+                mergeMerged = null
+                mergeBaseJson = null
+                _state.update { it.copy(busy = false) }
+                mergeOther.askPassword(outcome.name)
+            }
+            is MergeOutcome.WrongPassword -> {
+                _state.update { it.copy(busy = false) }
+                mergeOther.passwordRejected(outcome.message)
+            }
+            is MergeOutcome.Ready -> {
+                mergeOtherBytes = null // a senha já foi usada (ou a chave da sessão serviu)
+                mergeOtherSource = outcome.other
+                mergeMerged = outcome.merged
+                mergeBaseJson = outcome.baseJson
+                _state.update { it.copy(busy = false) }
+                mergeOther.ready(outcome.name, outcome.counts, outcome.nothingChanges)
+            }
+            is MergeOutcome.Failed -> {
+                clearMergeOther()
+                _state.update { it.copy(busy = false, error = outcome.message) }
+            }
+        }
+    }
+
+    /** O que gravar quando a pessoa confirma: a junção do resumo ou uma refeita (se o cofre mudou no meio). */
+    private sealed interface MergeApplyPlan {
+        data class Ready(val vault: Vault) : MergeApplyPlan
+        data class Refused(val message: String) : MergeApplyPlan
     }
 
     /**
      * Confirmou o resumo: o cofre aberto recebe a junção e é gravado UMA vez ([persistAndCommit], com a conferência de
-     * sempre); o outro arquivo não é tocado. A seleção é limpa (os ids marcados podem ter ganhado duplicatas).
+     * sempre); o outro arquivo não é tocado. Se o cofre mudou desde o resumo (autofill/passkey gravou no meio), a
+     * junção é REFEITA sobre o conteúdo de agora — o resultado calculado antes nunca é gravado por cima.
      */
     fun confirmMergeOther() {
-        val merged = mergeMerged ?: return
         val name = (mergeOther.stage as? MergeOtherStage.Ready)?.name ?: return
         if (!mergeOther.startApply()) return
+        _state.update { it.copy(busy = true, error = null) }
         viewModelScope.launch(Dispatchers.Default) {
-            _state.update { it.copy(busy = true, error = null) }
-            try {
-                persistAndCommit(merged, notice = null)
+            val plan = try {
+                mergeForApply()
             } catch (e: Exception) {
-                clearMergeOther()
-                failSave(e, R.string.op_merge)
+                withContext(Dispatchers.Main) {
+                    clearMergeOther()
+                    failSave(e, R.string.op_merge)
+                }
                 return@launch
             }
-            clearMergeOther()
-            withContext(Dispatchers.Main) { selection.clear() }
-            _state.update { it.copy(busy = false, notice = str(R.string.merge_other_done, name)) }
+            if (plan is MergeApplyPlan.Refused) {
+                withContext(Dispatchers.Main) {
+                    clearMergeOther()
+                    _state.update { it.copy(busy = false, error = plan.message) }
+                }
+                return@launch
+            }
+            try {
+                persistAndCommit((plan as MergeApplyPlan.Ready).vault, notice = null)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    clearMergeOther()
+                    failSave(e, R.string.op_merge)
+                }
+                return@launch
+            }
+            withContext(Dispatchers.Main) {
+                clearMergeOther()
+                selection.clear()
+                _state.update { it.copy(busy = false, notice = str(R.string.merge_other_done, name)) }
+            }
         }
+    }
+
+    /** A junção a gravar: a calculada se o aberto não mudou; senão, refeita com o conteúdo de agora. */
+    private fun mergeForApply(): MergeApplyPlan {
+        val currentJson = repository.vault.toJson()
+        val base = mergeBaseJson
+        val merged = mergeMerged
+        if (base != null && merged != null && !MergeOtherFreshness.isStale(base, currentJson)) {
+            return MergeApplyPlan.Ready(merged)
+        }
+        val other = mergeOtherSource ?: return MergeApplyPlan.Refused(str(R.string.merge_other_changed))
+        val result = mergeOtherVault(repository.vault, other)
+        if (MergeOtherLimit.resultOverLimit(MergeOtherLimit.utf8Size(result.merged.toJson()))) {
+            return MergeApplyPlan.Refused(str(R.string.merge_other_result_too_big))
+        }
+        return MergeApplyPlan.Ready(result.merged)
     }
 
     /** Cancelou (ou fechou o resumo): nada é gravado. */
@@ -1326,8 +1430,47 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun clearMergeOther() {
         mergeOtherBytes = null
+        mergeOtherSource = null
         mergeMerged = null
+        mergeBaseJson = null
         mergeOther.close()
+    }
+
+    /** O tamanho do `.tkeys` aberto: o blob conhecido; sem ele, o tamanho do documento aberto; nada disso = null. */
+    private fun vaultBytesForMerge(resolver: ContentResolver): Long? =
+        cachedBlob?.size?.toLong() ?: _state.value.vaultUri?.let { documentSize(resolver, Uri.parse(it)) }
+
+    /** O `SIZE` que o provedor declara para o documento, ou null quando ele não informa. */
+    private fun documentSize(resolver: ContentResolver, uri: Uri): Long? = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        }
+    }.getOrNull()
+
+    /** Lê o documento com teto: passou de [cap] não guarda o resto nem devolve bytes parciais. */
+    private fun readDocumentBytesCapped(resolver: ContentResolver, document: Uri, cap: Long): CappedRead = try {
+        val input = resolver.openInputStream(document) ?: return CappedRead.Missing
+        input.use { stream ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > cap) return CappedRead.TooBig
+                out.write(buffer, 0, read)
+            }
+            CappedRead.Bytes(out.toByteArray())
+        }
+    } catch (_: Exception) {
+        CappedRead.Missing
+    }
+
+    /** O texto de uma falha ao abrir/juntar o outro cofre (a parte variável vem traduzida). */
+    private fun mergeOpenFailure(e: Throwable): String {
+        val detail = (e as? TkeysError)?.let(::tkeysErrorMessage) ?: e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
+        return str(R.string.merge_other_open_failed, detail)
     }
 
     // ── Exportar ─────────────────────────────────────────────────────────

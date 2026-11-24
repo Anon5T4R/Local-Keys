@@ -601,6 +601,8 @@
     <string name="merge_other_failed">Não foi possível juntar os cofres: %1$s</string>
     <string name="merge_other_too_big">Os dois cofres somam mais que o limite de 20 MB para juntar no celular. Junte pelo desktop.</string>
     <string name="merge_other_result_too_big">O cofre juntado passaria do limite de 20 MB para juntar no celular. Junte pelo desktop.</string>
+    <string name="merge_other_size_unknown">Não foi possível conferir o tamanho deste cofre antes de abrir o outro. Tente de novo, ou junte pelo desktop.</string>
+    <string name="merge_other_changed">Este cofre mudou com o resumo aberto. Junte de novo para usar o cofre de agora.</string>
     <string name="merge_other_password_title">Senha do outro cofre</string>
     <string name="merge_other_password_message">%1$s não abre com a senha deste cofre. Digite a senha mestra dele. Só este cofre é alterado; o outro arquivo nunca é gravado.</string>
     <string name="merge_other_summary_title">Juntar %1$s neste cofre?</string>

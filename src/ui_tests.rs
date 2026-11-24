@@ -2897,6 +2897,43 @@ fn merging_the_other_vault_with_a_wrong_password_reports_and_writes_nothing() {
 }
 
 /// Nada a juntar (o outro cofre já está inteiro aqui): o resumo diz isso e o único botão é Fechar.
+/// Juntar só as chaves de uma pasta de mesmo nome (sem item nenhum do outro): a pasta conta em `folders_merged`, o
+/// resumo mostra a linha (nunca um resumo vazio com "Juntar") e a confirmação grava as chaves.
+#[test]
+fn a_merge_that_only_copies_folder_keys_shows_the_united_line() {
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-keys", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-keys-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    // O outro: só a pasta de MESMO nome ("Work") com uma chave que o aberto não tem; nenhum item.
+    let other = serde_json::json!({
+        "version": 1,
+        "folders": [{"id": "g1", "name": "Work", "extraFolderKey": true}],
+        "items": []
+    });
+    let bytes = serde_json::to_vec(&other).expect("json do outro");
+    let file = app.session.as_ref().expect("sessão viva").seal(&bytes).expect("sela o outro");
+    std::fs::write(&other_path, &file).expect("grava o outro");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+
+    let plan = harness.state().merge_plan.clone().expect("o resumo");
+    assert_eq!(plan.summary.folders_merged, 1, "a pasta com as chaves copiadas conta como unida");
+    harness.get_by_label("1 folder united with a folder of this vault");
+    assert!(harness.query_by_label("Nothing to merge: this vault already has everything from the other vault.").is_none());
+
+    click_labelled_button(&mut harness, "Merge");
+    assert!(harness.state().err.is_none(), "a junção não deu erro: {:?}", harness.state().err);
+    assert_eq!(harness.state().persist_count - baseline, 1, "uma gravação só");
+    let raw = harness.state().raw.clone().expect("cofre aberto");
+    let work = raw["folders"].as_array().expect("pastas").iter().find(|folder| folder["name"] == "Work").expect("pasta Work").clone();
+    assert_eq!(work["extraFolderKey"], true, "as chaves da pasta do outro entraram");
+}
+
 #[test]
 fn merging_a_vault_with_nothing_new_says_nothing_to_merge() {
     let (mut app, other_path, _other) = unlocked_for_merge("merge-nothing", Prefs::new("en", ThemeMode::Dark));

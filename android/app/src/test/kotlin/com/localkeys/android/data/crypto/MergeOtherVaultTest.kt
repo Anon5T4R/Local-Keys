@@ -47,6 +47,15 @@ class MergeOtherVaultTest {
             assertEquals("$name: contentAlreadyPresent", summary.getInt("contentAlreadyPresent"), result.contentAlreadyPresent)
             assertEquals("$name: foldersAdded", summary.getInt("foldersAdded"), result.foldersAdded)
             assertEquals("$name: foldersMerged", summary.getInt("foldersMerged"), result.foldersMerged)
+
+            // Idempotente: juntar o RESULTADO com o mesmo outro cofre de novo não muda nada nem conta pasta unida.
+            val again = mergeOtherVault(result.merged, other)
+            assertSameVault("$name (de novo)", mergedJson, JSONObject(again.merged.toJson()))
+            assertEquals(
+                "$name: a segunda passada não adiciona nada nem conta pasta unida",
+                0,
+                again.added + again.collisions + again.foldersAdded + again.foldersMerged,
+            )
         }
     }
 

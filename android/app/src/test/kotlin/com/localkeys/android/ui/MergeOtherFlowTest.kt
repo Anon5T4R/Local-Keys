@@ -2,6 +2,7 @@ package com.localkeys.android.ui
 
 import com.localkeys.android.data.crypto.MergeOtherResult
 import com.localkeys.android.data.sync.MergeOtherLimit
+import com.localkeys.android.data.sync.MergeOtherPrecheck
 import com.localkeys.android.data.vault.Vault
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,10 +20,10 @@ class MergeOtherFlowTest {
 
     @Test
     fun `the two files together cannot pass the cap`() {
-        assertFalse("vazio cabe", MergeOtherLimit.overLimit(0, 0))
-        assertFalse("exatamente no teto cabe", MergeOtherLimit.overLimit(MergeOtherLimit.MAX_BYTES - 10, 10))
-        assertTrue("um byte a mais recusa", MergeOtherLimit.overLimit(MergeOtherLimit.MAX_BYTES - 10, 11))
-        assertTrue("um arquivo grande sozinho já recusa", MergeOtherLimit.overLimit(0, MergeOtherLimit.MAX_BYTES + 1))
+        assertTrue("vazio cabe", MergeOtherLimit.precheck(0, 0) is MergeOtherPrecheck.ReadWhole)
+        assertTrue("exatamente no teto cabe", MergeOtherLimit.precheck(MergeOtherLimit.MAX_BYTES - 10, 10) is MergeOtherPrecheck.ReadWhole)
+        assertTrue("um byte a mais recusa", MergeOtherLimit.precheck(MergeOtherLimit.MAX_BYTES - 10, 11) is MergeOtherPrecheck.TooBig)
+        assertTrue("um arquivo grande sozinho já recusa", MergeOtherLimit.precheck(0, MergeOtherLimit.MAX_BYTES + 1) is MergeOtherPrecheck.TooBig)
     }
 
     @Test

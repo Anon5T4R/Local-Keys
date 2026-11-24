@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "folders": [],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "note",
+      "name": "A",
+      "favorite": false,
+      "notes": "",
+      "createdAt": 1,
+      "updatedAt": 2
+    }
+  ]
+}

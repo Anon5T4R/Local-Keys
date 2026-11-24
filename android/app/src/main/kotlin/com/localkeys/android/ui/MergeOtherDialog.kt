@@ -46,6 +46,15 @@ private fun PasswordStep(
     // `remember`, não `rememberSaveable`: a senha do outro cofre não vai para o estado salvo (rotação/morte do
     // processo) e some do campo assim que a pessoa confirma — o ViewModel não guarda cópia.
     var password by remember(stage.name) { mutableStateOf("") }
+    // O MESMO envio para o botão e para o teclado: zera o campo antes de chamar o callback (o IME não pode deixar a
+    // senha preenchida enquanto o Argon2id roda).
+    val send = {
+        if (!busy && password.isNotBlank()) {
+            val typed = password
+            password = ""
+            onPassword(typed)
+        }
+    }
     AlertDialog(
         onDismissRequest = { if (!busy) onCancel() },
         title = { Text(stringResource(R.string.merge_other_password_title)) },
@@ -59,19 +68,14 @@ private fun PasswordStep(
                     enabled = !busy,
                     isError = stage.error != null,
                     supportingText = stage.error?.let { msg -> { Text(msg) } },
-                    onImeAction = { if (password.isNotBlank() && !busy) onPassword(password) },
+                    onImeAction = send,
                 )
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    val typed = password
-                    password = ""
-                    onPassword(typed)
-                },
-                enabled = !busy && password.isNotBlank(),
-            ) { Text(stringResource(R.string.sync_open)) }
+            TextButton(onClick = send, enabled = !busy && password.isNotBlank()) {
+                Text(stringResource(R.string.sync_open))
+            }
         },
         dismissButton = { TextButton(onClick = onCancel, enabled = !busy) { Text(stringResource(R.string.editor_cancel)) } },
     )
