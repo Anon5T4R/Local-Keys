@@ -51,6 +51,9 @@
 	choose the attachment file	informe o arquivo do anexo
 	attachment not found	anexo não encontrado
 	choose where to save the attachment	informe o destino do anexo
+	Large vault	Cofre grande
+	After saving, this vault will be about {size}. Saving a vault this big can freeze the window for a moment and use a lot of memory.	Depois de salvar, este cofre terá cerca de {size}. Salvar um cofre desse tamanho pode travar a janela por um instante e usar bastante memória.
+	Continue	Continuar
 	the operation ended without a result	a operação terminou sem resultado
 	Vault	Cofre
 	Master password	Senha-mestra

@@ -2774,8 +2774,12 @@ fn unlocked_for_merge(name: &str, prefs: Prefs) -> (KeysApp, std::path::PathBuf,
 
 /// Escreve um `outro.tkeys` com a senha PRÓPRIA (salt diferente): o cofre aberto não o abre pela chave da sessão.
 fn write_other_with_password(target: &std::path::Path, password: &str) {
-    let other = serde_json::json!({"version": 1, "folders": [], "items": []});
-    let bytes = serde_json::to_vec(&other).expect("json do outro");
+    write_other_with_password_and(target, password, &serde_json::json!({"version": 1, "folders": [], "items": []}));
+}
+
+/// O mesmo, com o conteúdo do outro cofre escolhido pelo teste.
+fn write_other_with_password_and(target: &std::path::Path, password: &str, other: &serde_json::Value) {
+    let bytes = serde_json::to_vec(other).expect("json do outro");
     let light = crate::crypto::KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 };
     let (file, _session) = crate::crypto::create_vault_with(password, &bytes, light).expect("sela o outro");
     std::fs::write(target, &file).expect("grava o outro");
@@ -2960,4 +2964,259 @@ fn merging_again_reports_content_already_present() {
     click_labelled_button(&mut harness, "Cancel");
     harness.run_steps(2);
     assert!(harness.state().merge_plan.is_none(), "cancelar fecha o resumo");
+}
+
+/// O caminho alternativo do cofre em uso (`sub/../cofre.tkeys`, `./cofre.tkeys`, caminho relativo) é o mesmo arquivo:
+/// o `same_path` resolve `.`/`..` mesmo sem o arquivo existir e o texto idêntico deixa de ser o único caso barrado.
+#[test]
+fn same_path_resolves_dot_components_without_touching_the_disk() {
+    let base = std::env::temp_dir().join("localkeys-same-path");
+    let file = base.join("cofre.tkeys");
+    let via_parent = base.join("sub").join("..").join("cofre.tkeys");
+
+    assert!(crate::same_path(&file.display().to_string(), &via_parent.display().to_string()), "sub/.. volta ao mesmo arquivo");
+    let dot_relative = format!(".{sep}cofre.tkeys", sep = std::path::MAIN_SEPARATOR);
+    assert!(crate::same_path("cofre.tkeys", &dot_relative), "relativo e ./relativo");
+    #[cfg(windows)]
+    assert!(
+        crate::same_path(&file.display().to_string(), &file.display().to_string().to_uppercase()),
+        "no Windows a caixa não separa dois caminhos do mesmo arquivo"
+    );
+    assert!(!crate::same_path(&file.display().to_string(), &base.join("outro.tkeys").display().to_string()));
+    assert!(!crate::same_path("", &file.display().to_string()), "caminho vazio não é o mesmo arquivo que nada");
+}
+
+/// A sincronização barra o cofre em uso mesmo escrito de outro jeito (`dir/./a.tkeys`), não só com o texto idêntico.
+#[test]
+fn sync_refuses_the_vault_in_use_written_another_way() {
+    let mut app = unlocked("sync-same-path", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("sync-same-path");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("a.tkeys").display().to_string();
+    let raw = app.raw.clone().expect("cofre");
+    app.persist(raw).then_some(()).expect("grava");
+
+    app.sync_with_other(&format!("{}/./a.tkeys", dir.display()));
+
+    assert!(app.err.as_deref().is_some_and(|e| e.contains("vault in use")), "{:?}", app.err);
+    assert!(!app.sync_open, "nada de resumo para o próprio arquivo");
+}
+
+/// O resultado de um job que já começa o PRÓXIMO (fila de anexos) não pode apagar o rótulo do job novo nem dizer que
+/// a operação terminou sem resultado.
+#[test]
+fn a_job_that_starts_the_next_attachment_keeps_its_label() {
+    let mut app = unlocked("queue-label", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("queue-label");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let raw = app.raw.clone().expect("cofre");
+    app.persist(raw).then_some(()).expect("grava");
+    let second = dir.join("segundo.txt");
+    std::fs::write(&second, b"b").expect("grava o segundo anexo");
+    let id = item_id(&app, "1lib.sk");
+
+    // O canal entrega o primeiro resultado e FECHA (a thread do primeiro job acabou).
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(crate::jobs::JobResult::AttachmentRead(Ok(crate::jobs::AttachmentRead {
+        item_id: id.clone(),
+        name: "primeiro.txt".into(),
+        mime: "text/plain",
+        size: 1,
+        data_b64: "YQ==".into(),
+    })))
+    .expect("manda o primeiro resultado");
+    drop(tx);
+    app.job_rx = Some(rx);
+    app.attach_queue = vec![(id, second.display().to_string())];
+
+    let ctx = egui::Context::default();
+    app.poll_jobs(&ctx);
+
+    assert_eq!(app.job_label, Some(crate::i18n::tr("reading file…")), "o rótulo do segundo job sobrevive");
+    assert!(app.err.is_none(), "sem 'the operation ended without a result': {:?}", app.err);
+
+    // Deixa o segundo job terminar (thread real) para não deixar trabalho pendurado.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while app.job_label.is_some() {
+        assert!(std::time::Instant::now() < deadline, "o segundo job não terminou no prazo");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        app.poll_jobs(&ctx);
+    }
+}
+
+/// Falha de gravação ao confirmar a junção: o cofre em memória continua o de antes (o plano não é adotado) e o plano
+/// não fica pendurado para um segundo clique. O caminho do outro cofre (o do diálogo da senha) sai junto.
+#[test]
+fn a_failed_merge_persist_keeps_the_old_vault() {
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-persist-fail", Prefs::new("en", ThemeMode::Dark));
+    write_other_with_password_and(
+        &other_path,
+        "senha-do-outro",
+        &serde_json::json!({
+            "version": 1, "folders": [], "items": [{
+                "id": "outro-item", "kind": "note", "name": "Do outro", "favorite": false, "notes": "",
+                "createdAt": 1, "updatedAt": 2, "deletedAt": null
+            }]
+        }),
+    );
+    let dir = scratch("merge-persist-fail-write");
+    // A pasta não existe: a gravação atômica falha.
+    app.path = dir.join("sem-pasta/cofre.tkeys").display().to_string();
+    let before = app.raw.clone().expect("cofre aberto");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    harness.run_steps(2);
+    assert!(harness.state().merge_open, "a chave da sessão não abre o outro: pede a senha");
+    harness.state_mut().merge_password = "senha-do-outro".into();
+    harness.run_steps(2);
+    click_labelled_button(&mut harness, "Open");
+    wait_for_job(&mut harness);
+    click_labelled_button(&mut harness, "Merge");
+
+    assert!(harness.state().err.is_some(), "a falha da gravação aparece");
+    assert_eq!(harness.state().raw.as_ref(), Some(&before), "a memória continua com o cofre antigo");
+    assert!(harness.state().merge_plan.is_none(), "o plano não fica pendurado");
+    assert!(harness.state().merge_path.is_empty(), "o caminho do outro cofre sai junto");
+}
+
+/// Trancar com o diálogo da senha aberto: o estado da junção sai todo (senha, caminho, plano).
+#[test]
+fn locking_with_the_merge_password_open_clears_it() {
+    let (app, other_path, _other) = unlocked_for_merge("merge-lock-password", Prefs::new("en", ThemeMode::Dark));
+    write_other_with_password(&other_path, "senha-do-outro");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    harness.run_steps(2);
+    assert!(harness.state().merge_open);
+    harness.state_mut().merge_password = "digitada".into();
+
+    harness.state_mut().lock();
+    harness.run_steps(2);
+
+    assert!(!harness.state().merge_open, "o diálogo fecha");
+    assert!(harness.state().merge_password.is_empty(), "a senha não sobrevive ao trancar");
+    assert!(harness.state().merge_path.is_empty(), "o caminho do outro cofre sai");
+    assert!(harness.state().merge_plan.is_none());
+    assert!(harness.state().raw.is_none());
+}
+
+/// Trancar com o resumo aberto: o plano (o cofre juntado) não sobrevive.
+#[test]
+fn locking_with_the_merge_summary_open_clears_it() {
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-lock-summary", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-lock-summary-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    persist_now(&mut app);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+    assert!(harness.state().merge_plan.is_some());
+
+    harness.state_mut().lock();
+    harness.run_steps(2);
+
+    assert!(harness.state().merge_plan.is_none(), "o resumo não sobrevive ao trancar");
+    assert!(harness.state().merge_path.is_empty());
+    assert!(harness.state().raw.is_none());
+}
+
+/// Juntar o cofre ABERTO por outro jeito de escrever o caminho (`dir/./cofre.tkeys`) é recusado antes de ler.
+#[test]
+fn merging_the_vault_in_use_by_another_path_is_refused() {
+    let (mut app, _other_path, _other) = unlocked_for_merge("merge-same-path", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-same-path-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    persist_now(&mut app);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    let ctx = harness.ctx.clone();
+    harness.state_mut().merge_other_chosen(&ctx, &format!("{}/./cofre.tkeys", dir.display()));
+    harness.run_steps(2);
+
+    let err = harness.state().err.clone().expect("a recusa em claro");
+    assert!(err.contains("the other vault is the vault in use"), "{err}");
+    assert!(harness.state().job_label.is_none(), "nada roda quando o outro é o próprio cofre");
+    assert!(harness.state().merge_plan.is_none());
+}
+
+/// O Cancelar do diálogo da senha fica travado enquanto o job abre o outro cofre (fechar não cancela o Argon2id, e o
+/// resultado reabriria o diálogo ou abriria o resumo).
+#[test]
+fn the_merge_password_cancel_is_disabled_while_the_other_vault_opens() {
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-cancel-busy", Prefs::new("en", ThemeMode::Dark));
+    app.merge_open = true;
+    app.merge_path = other_path.display().to_string();
+    app.job_label = Some(crate::i18n::tr("opening the other vault…"));
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    let cancel = harness.get_all_by_label("Cancel").find(|node| node.accesskit_node().role() == Role::Button).expect("o botão Cancelar");
+    assert!(cancel.accesskit_node().is_disabled(), "Cancelar não fecha o diálogo com o job rodando");
+}
+
+// ── unidade 8: anexos grandes ─────────────────────────────────────────
+
+/// O número de anexos VIVOS do item.
+fn live_attachments(app: &KeysApp, id: &str) -> usize {
+    item_by_id(app, id)["attachments"].as_array().map_or(0, |list| list.iter().filter(|a| a["deletedAt"].is_null()).count())
+}
+
+/// Abaixo do teto o anexo entra direto; acima, o aviso vem ANTES da leitura: Cancelar não anexa, Continuar lê e
+/// guarda. O "tamanho do cofre" do teste é o do arquivo em disco (só o tamanho importa aqui).
+#[test]
+fn the_large_vault_warning_comes_before_reading_and_can_add_or_cancel() {
+    let mut app = unlocked("attach-warn", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("attach-warn");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    persist_now(&mut app);
+    let id = item_id(&app, "1lib.sk");
+    let first = dir.join("primeiro.txt");
+    std::fs::write(&first, b"x").expect("grava o anexo");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let ctx = harness.ctx.clone();
+
+    // Abaixo do teto: sem diálogo, o job da leitura já roda e o anexo entra.
+    harness.state_mut().attachments_chosen(&id, vec![first.display().to_string()], &ctx);
+    assert!(harness.state().attach_warn.is_none(), "um cofre pequeno não avisa");
+    assert!(harness.state().job_label.is_some(), "a leitura começa na hora");
+    wait_for_job(&mut harness);
+    assert_eq!(live_attachments(harness.state(), &id), 1);
+
+    // Acima do teto: o arquivo em disco tem 101 MiB (o conteúdo não é relido neste teste).
+    let vault_path = harness.state().path.clone();
+    std::fs::OpenOptions::new().write(true).open(&vault_path).expect("abre o cofre").set_len(101 * 1024 * 1024).expect("estica o cofre");
+    let second = dir.join("segundo.txt");
+    std::fs::write(&second, b"y").expect("grava o segundo anexo");
+
+    harness.state_mut().attachments_chosen(&id, vec![second.display().to_string()], &ctx);
+    harness.run_steps(2);
+    assert!(harness.state().attach_warn.is_some(), "o aviso vem antes de ler");
+    assert!(harness.state().job_label.is_none(), "nada é lido antes do Continuar");
+    harness.get_by_label_contains("Large vault");
+
+    // Cancelar: nada é anexado.
+    click_labelled_button(&mut harness, "Cancel");
+    assert!(harness.state().attach_warn.is_none(), "o aviso fecha");
+    assert_eq!(live_attachments(harness.state(), &id), 1, "cancelar não anexa");
+    assert!(harness.state().job_label.is_none());
+
+    // Continuar: o anexo é lido e guardado (o cofre volta ao tamanho de verdade ao gravar).
+    harness.state_mut().attachments_chosen(&id, vec![second.display().to_string()], &ctx);
+    harness.run_steps(2);
+    click_labelled_button(&mut harness, "Continue");
+    wait_for_job(&mut harness);
+    assert!(harness.state().attach_warn.is_none());
+    assert_eq!(live_attachments(harness.state(), &id), 2, "continuar anexa");
 }

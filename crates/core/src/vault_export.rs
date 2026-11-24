@@ -125,9 +125,14 @@ pub fn subset_vault(folders: &[Value], items: &[Value]) -> Result<String, Export
 /// existe) ou [`ExportVaultError::NoItems`] (nenhum id) — e aí nada é gerado.
 pub fn vault_from_items(raw: &Value, ids: &[String]) -> Result<String, ExportVaultError> {
     let items = raw.get("items").and_then(Value::as_array).ok_or(ExportVaultError::MalformedVault)?;
-    // Um índice só: "selecionar tudo" num cofre grande não pode virar O(n·m).
-    let by_id: std::collections::HashMap<&str, &Value> =
-        items.iter().filter_map(|item| item.get("id").and_then(Value::as_str).map(|id| (id, item))).collect();
+    // Um índice só: "selecionar tudo" num cofre grande não pode virar O(n·m). Id repetido: a PRIMEIRA ocorrência
+    // vence (o mesmo que o `find` do `subset_vault` e da ponte).
+    let mut by_id: std::collections::HashMap<&str, &Value> = std::collections::HashMap::new();
+    for item in items {
+        if let Some(id) = item.get("id").and_then(Value::as_str) {
+            by_id.entry(id).or_insert(item);
+        }
+    }
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     for id in ids {

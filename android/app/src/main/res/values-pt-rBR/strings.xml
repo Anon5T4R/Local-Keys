@@ -323,6 +323,9 @@
     <string name="attach_trash_title">Lixeira de anexos (%1$d)</string>
     <string name="attach_delete_forever_message">Excluir “%1$s” de vez? O anexo sai do cofre e não volta.</string>
     <string name="attach_limit_hint">Até 10 MB por anexo. Os anexos ficam dentro do cofre cifrado.</string>
+    <string name="attach_total_warn_title">Cofre grande</string>
+    <string name="attach_total_warn">Depois deste anexo, o cofre terá cerca de %1$s. Abrir e salvar um cofre desse tamanho pode ficar lento e pode faltar memória neste aparelho.</string>
+    <string name="attach_total_continue">Continuar</string>
 
     <!-- Editor -->
     <string name="editor_name_required">Dê um título ao item.</string>

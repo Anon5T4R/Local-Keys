@@ -51,6 +51,9 @@
 	choose the attachment file	indica el archivo adjunto
 	attachment not found	adjunto no encontrado
 	choose where to save the attachment	indica dónde guardar el adjunto
+	Large vault	Bóveda grande
+	After saving, this vault will be about {size}. Saving a vault this big can freeze the window for a moment and use a lot of memory.	Después de guardar, esta bóveda tendrá unos {size}. Guardar una bóveda así de grande puede congelar la ventana por un momento y usar bastante memoria.
+	Continue	Continuar
 	the operation ended without a result	la operación terminó sin resultado
 	Vault	Bóveda
 	Master password	Contraseña maestra

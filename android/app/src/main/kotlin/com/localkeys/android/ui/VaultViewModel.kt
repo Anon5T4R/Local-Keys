@@ -171,6 +171,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             saver.seed(value)
         }
 
+    /** Tamanho do `.tkeys` aberto (o blob conhecido, já cifrado): entra no aviso de tamanho ao anexar. */
+    val vaultFileBytes: Long
+        get() = cachedBlob?.size?.toLong() ?: 0L
+
     /** Chaves biométricas por cofre (URI → hex). Só a do cofre atual é usada ([currentWrappedKey]). */
     @Volatile
     private var biometricKeys: Map<String, String> = emptyMap()
@@ -339,12 +343,16 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * da tela só até aqui — o repositório guarda a chave derivada, não a senha.
      */
     fun onCreatedDocument(uri: Uri, password: String) {
+        // O "criar" do SAF acabou de criar/sobrescrever o documento: o conhecido do cofre anterior sai daqui, senão
+        // a primeira gravação do cofre novo seria recusada como mudança externa (bug de criar depois de trancar).
+        saver.beginNewVault()
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
-            try {
+            val resolver = getApplication<Application>().contentResolver
+            // Antes de encostar no documento: se algo falhar aqui, o arquivo do "criar" está vazio e é apagado.
+            val file = try {
                 val file = repository.create(Vault.empty(), password)
                 repository.verifySaved(file) // nunca grava um blob que não reabriria
-                val resolver = getApplication<Application>().contentResolver
                 withContext(Dispatchers.IO) {
                     runCatching {
                         resolver.takePersistableUriPermission(
@@ -353,19 +361,30 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-                withContext(Dispatchers.IO) { saver.write(file, repository.vault, ResolverDocument(resolver, uri)) }
-                settings.setVaultUri(uri.toString())
-                syncAutofillCache(repository.vault)
-                _state.update { it.copy(vault = repository.vault, screen = Screen.Vault, busy = false) }
+                file
             } catch (e: Exception) {
-                val detail = when (e) {
-                    is VaultSaver.SaveFailure -> saveFailureText(e)
-                    is TkeysError -> tkeysErrorMessage(e)
-                    else -> e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
-                }
-                _state.update { it.copy(error = str(R.string.msg_create_failed, detail), busy = false) }
+                discardDocument(uri.toString())
+                _state.update { it.copy(error = str(R.string.msg_create_failed, createFailureText(e)), busy = false) }
+                return@launch
             }
+            try {
+                withContext(Dispatchers.IO) { saver.write(file, repository.vault, ResolverDocument(resolver, uri)) }
+            } catch (e: Exception) {
+                // A gravação pode ter começado: um cofre possivelmente válido não é apagado por falha de releitura.
+                _state.update { it.copy(error = str(R.string.msg_create_failed, createFailureText(e)), busy = false) }
+                return@launch
+            }
+            settings.setVaultUri(uri.toString())
+            syncAutofillCache(repository.vault)
+            _state.update { it.copy(vault = repository.vault, screen = Screen.Vault, busy = false) }
         }
+    }
+
+    /** O motivo de uma falha ao criar o cofre, do mesmo jeito que as outras gravações contam. */
+    private fun createFailureText(e: Exception): String = when (e) {
+        is VaultSaver.SaveFailure -> saveFailureText(e)
+        is TkeysError -> tkeysErrorMessage(e)
+        else -> e.message?.takeIf { it.isNotBlank() } ?: describeCause(e)
     }
 
     // ── Conflito com o disco (o arquivo mudou fora do app) ───────────────
@@ -1356,15 +1375,18 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelExportVault() {
         val pending = _state.value.exportVault
         _state.update { it.copy(exportVault = null, exportVaultError = null) }
-        pending?.let { discardExportDocument(it.uri) }
+        pending?.let { discardDocument(it.uri) }
     }
 
     /**
-     * Apaga o documento que o "criar" do sistema deixou quando a criação do cofre não foi adiante (cancelou ou a
-     * gravação falhou). Melhor esforço: falha de exclusão é ignorada (o arquivo vazio fica e a pessoa apaga à mão) e
-     * não muda o fluxo nem a mensagem.
+     * Apaga um documento que o "criar" do sistema deixou **vazio** porque nada foi gravado nele (o cofre novo que
+     * falhou antes de gravar, o export que falhou antes de gravar). Melhor esforço: falha de exclusão é ignorada (o
+     * arquivo vazio fica e a pessoa apaga à mão) e não muda o fluxo nem a mensagem.
+     *
+     * NÃO chamar depois que a gravação começou: um provedor pode ter escrito um cofre válido e falhado só na
+     * releitura; apagar aí destruiria o arquivo bom.
      */
-    private fun discardExportDocument(uri: String) {
+    private fun discardDocument(uri: String) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, Uri.parse(uri)) }
         }
@@ -1392,8 +1414,20 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         // Fecha o diálogo e marca o trabalho JÁ na thread da UI: um segundo toque não dispara outro cofre.
         _state.update { it.copy(busy = true, exportVault = null, exportVaultError = null) }
         viewModelScope.launch(Dispatchers.Default) {
+            val file = try {
+                exporter.build(repository.vault, ids, password)
+            } catch (e: Exception) {
+                // Nada foi gravado no documento: o vazio que o "criar" deixou não fica no disco.
+                discardDocument(pending.uri)
+                val detail = when (e) {
+                    // A recusa do núcleo (seleção vazia ou id que sumiu do cofre) já tem o texto traduzido.
+                    is TkeysError -> tkeysErrorMessage(e)
+                    else -> str(R.string.msg_export_vault_failed, describeCause(e))
+                }
+                _state.update { it.copy(busy = false, error = detail) }
+                return@launch
+            }
             try {
-                val file = exporter.build(repository.vault, ids, password)
                 val resolver = getApplication<Application>().contentResolver
                 withContext(Dispatchers.IO) {
                     exporter.write(ResolverDocument(resolver, Uri.parse(pending.uri)), file)
@@ -1402,11 +1436,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(busy = false, notice = str(R.string.msg_export_vault_saved, pending.name ?: pending.uri))
                 }
             } catch (e: Exception) {
-                // O documento vazio que o "criar" do sistema deixou não fica no disco quando a criação falha.
-                discardExportDocument(pending.uri)
+                // A gravação pode ter começado — inclusive ter gravado um cofre válido e falhado só na releitura:
+                // o documento NÃO é apagado aqui.
                 val detail = when (e) {
-                    // A recusa do núcleo (seleção vazia ou id que sumiu do cofre) já tem o texto traduzido.
-                    is TkeysError -> tkeysErrorMessage(e)
                     is VaultExport.Failure.Save -> str(R.string.msg_export_vault_failed, describeCause(e.cause ?: e))
                     else -> str(R.string.msg_export_vault_failed, describeCause(e))
                 }
@@ -1423,6 +1455,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         // A junção em andamento guarda o outro cofre decifrado: trancar descarta.
         clearMergeOther()
         repository.lock()
+        // Nada está aberto: o conteúdo conhecido do cofre que ficou para trás não serve de baseline para o próximo
+        // documento (criar cofre depois de trancar recusava a gravação como mudança externa).
+        cachedBlob = null
         syncAutofillCache(null)
         _state.update { it.copy(vault = null, screen = Screen.Unlock, exportVault = null, exportVaultError = null) }
     }

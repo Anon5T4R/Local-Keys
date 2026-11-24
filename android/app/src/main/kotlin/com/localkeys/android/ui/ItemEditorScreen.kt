@@ -78,7 +78,7 @@ import com.localkeys.android.data.vault.Attachment
 import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
-import com.localkeys.android.data.vault.MAX_ATTACHMENT_BYTES
+import com.localkeys.android.data.vault.VaultSizeLimit
 import com.localkeys.android.ffi.FieldLabelsFfi
 import com.localkeys.android.ui.theme.FavoriteAmber
 import kotlinx.coroutines.Dispatchers
@@ -98,6 +98,8 @@ fun ItemEditorScreen(
     folders: List<Folder>,
     defaultFolderId: String?,
     busy: Boolean,
+    /** Tamanho do `.tkeys` aberto: o aviso ao anexar soma este valor ao base64 do anexo (unidade 8). */
+    vaultBytes: Long,
     onSave: (Item) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
@@ -246,7 +248,7 @@ fun ItemEditorScreen(
             )
 
             CustomFieldsEditor(state)
-            AttachmentsEditor(state, busy)
+            AttachmentsEditor(state, busy, vaultBytes)
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -564,10 +566,11 @@ private fun CustomFieldsEditor(state: ItemEditorState) {
 }
 
 @Composable
-private fun AttachmentsEditor(state: ItemEditorState, busy: Boolean) {
+private fun AttachmentsEditor(state: ItemEditorState, busy: Boolean, vaultBytes: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tooLarge = stringResource(R.string.attach_too_large)
+    var pendingLarge by remember { mutableStateOf<PendingLargeAttachment?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
@@ -575,9 +578,34 @@ private fun AttachmentsEditor(state: ItemEditorState, busy: Boolean) {
             when (read) {
                 AttachmentRead.TooLarge -> Toast.makeText(context, tooLarge, Toast.LENGTH_LONG).show()
                 AttachmentRead.Failed -> Toast.makeText(context, R.string.attach_read_failed, Toast.LENGTH_SHORT).show()
-                is AttachmentRead.Ok -> state.attachments += read.attachment
+                is AttachmentRead.Ok -> {
+                    // Unidade 8: o cofre INTEIRO é regravado a cada save; acima do teto o aviso vem antes de guardar.
+                    // Só os anexos que ainda não estão no arquivo entram na conta além do novo.
+                    val predicted = VaultSizeLimit.attachWarning(vaultBytes, state.pendingAttachmentBytes, read.attachment.size)
+                    if (predicted == null) {
+                        state.attachments += read.attachment
+                    } else {
+                        pendingLarge = PendingLargeAttachment(read.attachment, predicted)
+                    }
+                }
             }
         }
+    }
+    pendingLarge?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingLarge = null },
+            title = { Text(stringResource(R.string.attach_total_warn_title)) },
+            text = { Text(stringResource(R.string.attach_total_warn, formatSize(pending.predictedBytes))) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        state.attachments += pending.attachment
+                        pendingLarge = null
+                    },
+                ) { Text(stringResource(R.string.attach_total_continue)) }
+            },
+            dismissButton = { TextButton(onClick = { pendingLarge = null }) { Text(stringResource(R.string.editor_cancel)) } },
+        )
     }
     EditorSection(stringResource(R.string.attach_title)) {
         state.attachments.filter { it.live }.forEach { att ->
@@ -612,6 +640,9 @@ private sealed interface AttachmentRead {
     data object Failed : AttachmentRead
 }
 
+/** Um anexo já lido esperando o "Continuar" do aviso de tamanho: só entra no item se a pessoa confirmar. */
+private data class PendingLargeAttachment(val attachment: Attachment, val predictedBytes: Long)
+
 /** Lê o arquivo escolhido. Confere o tamanho antes (pelo provedor) e de novo depois de ler. */
 private fun readAttachment(context: android.content.Context, uri: Uri): AttachmentRead = try {
     val resolver = context.contentResolver
@@ -623,7 +654,7 @@ private fun readAttachment(context: android.content.Context, uri: Uri): Attachme
             if (!c.isNull(1)) declared = c.getLong(1)
         }
     }
-    if (declared > MAX_ATTACHMENT_BYTES) {
+    if (declared > VaultSizeLimit.MAX_ATTACHMENT_BYTES) {
         AttachmentRead.TooLarge
     } else {
         val bytes = resolver.openInputStream(uri)?.use { input ->
@@ -634,7 +665,7 @@ private fun readAttachment(context: android.content.Context, uri: Uri): Attachme
                 val n = input.read(buf)
                 if (n < 0) break
                 total += n
-                if (total > MAX_ATTACHMENT_BYTES) return AttachmentRead.TooLarge
+                if (total > VaultSizeLimit.MAX_ATTACHMENT_BYTES) return AttachmentRead.TooLarge
                 out.write(buf, 0, n)
             }
             out.toByteArray()

@@ -149,6 +149,22 @@ class VaultSaverTest {
     }
 
     @Test
+    fun o_cofre_novo_depois_de_trancar_grava_sem_mudanca_externa() {
+        setup()
+        assertTrue("o cofre anterior tinha um conteúdo conhecido", saver.known != null)
+        // O SAF acabou de criar o documento: está vazio.
+        val fresh = MemoryDocument(ByteArray(0))
+        val file = repository.create(Vault.empty(), password)
+        // O passo do "criar cofre" no ViewModel: o conhecido do cofre anterior não vale para o documento novo.
+        saver.beginNewVault()
+
+        saver.write(file, repository.vault, fresh)
+
+        assertEquals("o vazio do documento não é mudança externa", repository.vault, Vault.parse(String(crypto.openVault(password, fresh.stored!!).plaintext)))
+        assertArrayEquals("o documento ficou com o cofre novo", fresh.stored, saver.known)
+    }
+
+    @Test
     fun a_edicao_comum_confere_contra_o_cofre_que_ja_mudou_em_memoria() {
         setup()
         val updated = repository.toggleFavorite("a")

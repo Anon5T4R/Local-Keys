@@ -88,6 +88,16 @@ class ItemEditorState(
     /** Todos os anexos, inclusive os da lixeira (a tela só mostra os vivos). */
     val attachments = mutableStateListOf<Attachment>().apply { addAll(initial?.attachments.orEmpty()) }
 
+    /**
+     * Tamanho dos anexos que AINDA NÃO estão no arquivo aberto (o aviso de tamanho do cofre, unidade 8): num item
+     * novo, todos os vivos; num item salvo, só os adicionados nesta sessão — os do `initial` já estão no `.tkeys`.
+     */
+    val pendingAttachmentBytes: List<Long>
+        get() {
+            val saved = initial?.attachments.orEmpty().map { it.id }.toSet()
+            return attachments.filter { it.live && it.id !in saved }.map { it.size }
+        }
+
     init {
         // Item livre: uma nota com um campo personalizado vazio já aberto (o desktop abre igual, é só uma nota).
         if (initial == null && preset == NewItemPreset.BLANK) addField()

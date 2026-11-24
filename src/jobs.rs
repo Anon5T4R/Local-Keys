@@ -13,12 +13,12 @@
 //! pode ir pra rede/OneDrive, então montar o JSON, cifrar (Argon2id) e gravar acontecem na thread, como os outros
 //! exports.
 
+use localkeys_core::merge_other;
 use std::sync::mpsc::{Receiver, Sender};
 
 use zeroize::Zeroizing;
 
 use crate::{ImportKind, bitwarden_encrypted, bwdecrypt, crypto, import, kdbx, mime_by_ext, vault, vault_export};
-use localkeys_core::merge_other;
 
 /// Cap de anexo do app: 10 MiB. O cofre INTEIRO é regravado (e recifrado) a
 /// cada save e o anexo viaja em base64 dentro do JSON — um anexo grande infla
@@ -152,6 +152,9 @@ pub enum JobError {
     VaultExport(vault_export::ExportVaultError),
     /// O outro cofre escolhido para juntar não é um `.tkeys` (magic/estrutura).
     OtherNotVault,
+    /// Não foi possível LER o outro cofre (sumiu, sem permissão, pasta de rede fora do ar) — a mensagem do SO fica
+    /// fora da tela; a UI diz o que fazer.
+    CouldNotReadOther,
     /// O outro cofre usa uma versão de formato que este build não conhece.
     OtherUnsupportedVersion,
     /// O outro cofre decifrou mas não é um cofre válido (JSON que não parseia).
@@ -324,7 +327,7 @@ fn export_vault(target: String, raw: &serde_json::Value, ids: &[String], passwor
 /// Abre o outro cofre (junção da unidade 7) com a senha digitada: lê, roda o Argon2id e parseia. O arquivo não é
 /// alterado.
 fn open_other(path: &str, password: &str) -> Result<OpenedOther, JobError> {
-    let file = std::fs::read(path).map_err(|e| JobError::Msg(format!("falha ao ler '{path}': {e}")))?;
+    let file = std::fs::read(path).map_err(|_| JobError::CouldNotReadOther)?;
     let plain = match crypto::open_vault(password, &file) {
         Ok((plain, _)) => plain,
         Err(crypto::CryptoError::BadFormat) => return Err(JobError::OtherNotVault),
@@ -376,6 +379,15 @@ mod tests {
         let (done, closed) = drain(&rx);
         assert!(done.is_empty());
         assert!(closed, "canal sem remetente tem de ser reportado como fechado");
+    }
+
+    #[test]
+    fn ler_o_outro_cofre_que_sumiu_e_um_erro_proprio() {
+        // Caminho que não existe (nem pasta): a leitura falha e o motivo NÃO é a mensagem do SO com o caminho.
+        let missing = std::env::temp_dir().join(format!("local-keys-que-nao-existe-{}.tkeys", std::process::id()));
+        let _ = std::fs::remove_file(&missing);
+        let error = open_other(&missing.display().to_string(), "senha").err().expect("ler o que não existe falha");
+        assert!(matches!(error, JobError::CouldNotReadOther), "erro próprio, não a mensagem crua do SO");
     }
 
     #[test]

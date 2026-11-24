@@ -324,6 +324,9 @@
     <string name="attach_trash_title">Attachment trash (%1$d)</string>
     <string name="attach_delete_forever_message">Delete “%1$s” forever? The attachment leaves the vault for good.</string>
     <string name="attach_limit_hint">Up to 10 MB per attachment. Attachments live inside the encrypted vault.</string>
+    <string name="attach_total_warn_title">Large vault</string>
+    <string name="attach_total_warn">After this attachment the vault will be about %1$s. Opening and saving a vault this big can be slow and may run out of memory on this device.</string>
+    <string name="attach_total_continue">Continue</string>
 
     <!-- Editor -->
     <string name="editor_name_required">Give the item a title.</string>

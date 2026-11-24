@@ -196,6 +196,7 @@ fun VaultHost(
                     folders = vault.folders,
                     defaultFolderId = (filters.folder as? FolderFilter.In)?.id,
                     busy = state.busy,
+                    vaultBytes = viewModel.vaultFileBytes,
                     onSave = { item ->
                         viewModel.saveItem(item)
                         stack = NavStack.afterSave(stack, item.id)

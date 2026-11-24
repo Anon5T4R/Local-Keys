@@ -150,6 +150,23 @@ fn vault_from_items_id_repetido_conta_uma_vez() {
     assert_eq!(out["items"].as_array().expect("items").len(), 1);
 }
 
+/// Id repetido DENTRO do cofre de origem: o índice guarda a PRIMEIRA ocorrência (o mesmo item que o `find` do
+/// `subset_vault` e a ponte entregam), não a última.
+#[test]
+fn vault_from_items_id_repetido_usa_a_primeira_ocorrencia() {
+    let mut first = item("a", None);
+    first["name"] = json!("A primeira");
+    let mut last = item("a", None);
+    last["name"] = json!("A última");
+    let source = json!({"version": 1, "folders": [], "items": [first, last]});
+
+    let out = parse(&vault_from_items(&source, &["a".to_string()]).unwrap_or_else(|e| panic!("seleção válida recusada: {e}")));
+
+    let items = out["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "A primeira", "a primeira ocorrência do id fica, como no subset/ponte");
+}
+
 /// A ponte manda a lista já pronta: id repetido também conta uma vez (a primeira ocorrência fica), como no caminho
 /// do desktop.
 #[test]

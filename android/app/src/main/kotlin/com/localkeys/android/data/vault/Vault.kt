@@ -333,12 +333,6 @@ data class CustomField(
     }
 }
 
-/**
- * Limite por anexo, o mesmo do desktop (`jobs.rs`): o blob inteiro é recifrado a cada gravação, então nada de
- * arquivos grandes.
- */
-const val MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024 // 10 MiB
-
 data class Attachment(
     val id: String,
     val name: String,

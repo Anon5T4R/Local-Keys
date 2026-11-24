@@ -24,6 +24,15 @@ class VaultSaver(private val repository: VaultRepository) {
         known = blob
     }
 
+    /**
+     * O "criar cofre" do SAF acabou de criar/sobrescrever o documento: o conteúdo conhecido do cofre ANTERIOR não
+     * vale mais (e não pode virar `ExternalChange` na primeira gravação do cofre novo). Sem isso, criar um cofre
+     * depois de trancar outro falhava toda vez com "file changed outside the app".
+     */
+    fun beginNewVault() {
+        known = null
+    }
+
     /** Por que a gravação não terminou (a UI resolve o texto; nada de recurso de Android aqui). */
     sealed class SaveFailure(cause: Throwable?) : Exception(cause) {
         /** O arquivo mudou fora do app desde [known] — não sobrescreve sem o usuário confirmar. */

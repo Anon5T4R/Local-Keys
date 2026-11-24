@@ -24,6 +24,7 @@ mod qr;
 mod selection;
 mod selection_ui;
 mod shell;
+mod size_limit;
 mod theme;
 #[cfg(any(windows, test))]
 mod tray;
@@ -409,9 +410,28 @@ fn shape_de_cofre(v: &serde_json::Value) -> bool {
     v.is_object() && v.get("items").is_none_or(serde_json::Value::is_array) && v.get("folders").is_none_or(serde_json::Value::is_array)
 }
 
-/// Os dois caminhos apontam para o MESMO arquivo? Compara canonicalizado quando os dois existem; senão, o texto
-/// normalizado (barras do SO e, no Windows, sem diferenciar maiúsculas). Usado para recusar exportar por cima do
-/// cofre aberto e para recusar juntar o cofre com ele mesmo.
+/// O caminho absoluto com `.` e `..` resolvidos no texto, sem tocar no disco: o fallback do [`same_path`] vale
+/// também para arquivo que ainda não existe (o destino do export) e para caminho relativo.
+fn absolute_lexical(path: &std::path::Path) -> std::path::PathBuf {
+    let base = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = std::path::PathBuf::new();
+    for component in base.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Os dois caminhos apontam para o MESMO arquivo? Compara canonicalizado quando os dois existem; senão, o caminho
+/// absoluto com `.`/`..` resolvidos no texto (barras do SO e, no Windows, sem diferenciar maiúsculas). Usado para
+/// recusar exportar por cima do cofre aberto, sincronizar/juntar o cofre com ele mesmo.
 fn same_path(first: &str, second: &str) -> bool {
     let first = std::path::Path::new(first.trim());
     let second = std::path::Path::new(second.trim());
@@ -422,7 +442,7 @@ fn same_path(first: &str, second: &str) -> bool {
         (Ok(first), Ok(second)) => first == second,
         _ => {
             let normalize = |path: &std::path::Path| {
-                let text = path.to_string_lossy().replace('/', std::path::MAIN_SEPARATOR_STR);
+                let text = absolute_lexical(path).to_string_lossy().replace('/', std::path::MAIN_SEPARATOR_STR);
                 #[cfg(windows)]
                 let text = text.to_lowercase();
                 text
@@ -440,6 +460,14 @@ struct FormCustomField {
     value: String,
     hidden: bool,
     revealed: bool,
+}
+
+/// O aviso de tamanho antes de ler os anexos (unidade 8): os caminhos escolhidos, o item de destino e o tamanho
+/// previsto do cofre. "Continuar" chama [`KeysApp::begin_attachments`]; "Cancelar" só descarta.
+struct AttachWarning {
+    item_id: String,
+    sources: Vec<String>,
+    predicted: u64,
 }
 
 /// A sincronização calculada, esperando a confirmação (o resumo aparece ANTES de gravar).
@@ -1071,6 +1099,8 @@ struct KeysApp {
     /// jobs é UM por vez: o primeiro arquivo roda já, o resto espera aqui e
     /// é consumido a cada resultado que chega (`apply_job`).
     attach_queue: Vec<(String, String)>,
+    /// Anexos escolhidos que fariam o cofre passar do aviso de tamanho: o diálogo Continuar/Cancelar (unidade 8).
+    attach_warn: Option<AttachWarning>,
     // onda 24 — pastas (gerência e criação, ambos os modais usam `folder_new`)
     folders_open: bool,
     folder_new_open: bool,
@@ -1204,6 +1234,7 @@ impl KeysApp {
             attach_item: None,
             attach_path: String::new(),
             attach_queue: Vec::new(),
+            attach_warn: None,
             folders_open: false,
             folder_new_open: false,
             folder_new: String::new(),
@@ -1312,6 +1343,7 @@ impl KeysApp {
         self.attach_item = None;
         self.attach_path.clear();
         self.attach_queue.clear();
+        self.attach_warn = None;
         // onda 24: gerência/criação de pastas fecha junto, e a fila de anexos
         // multi-selecionados não sobrevive ao trancar (o raw já era).
         self.folders_open = false;
@@ -1862,7 +1894,7 @@ impl KeysApp {
     /// (`merge::merge` do core, as regras do `docs/sync-merge.md`) e mostra o resumo ANTES de gravar.
     fn sync_with_other(&mut self, caminho: &str) {
         let Some(session) = self.session.as_ref() else { return };
-        if caminho == self.path.trim() {
+        if same_path(caminho, self.path.trim()) {
             self.err = Some(tr("the other copy is the vault in use").to_string());
             return;
         }
@@ -2047,17 +2079,16 @@ impl KeysApp {
     /// Aplica o plano no cofre ABERTO com UMA gravação; a seleção é limpa (a lista muda). O outro arquivo não é
     /// tocado.
     fn merge_apply(&mut self) {
-        let Some(plan) = self.merge_plan.clone() else {
+        // `take`: o cofre juntado sai do plano sem uma cópia inteira (num cofre grande o clone travaria a janela).
+        let Some(plan) = self.merge_plan.take() else {
             return;
         };
+        self.merge_path.clear();
         if self.persist(plan.merged) {
             self.clear_selection();
-            self.merge_plan = None;
             self.notice(tr("merged: the other vault's items are in this vault").to_string());
-        } else {
-            // `persist` já pôs o motivo em `err`; o plano não fica pendurado.
-            self.merge_plan = None;
         }
+        // `persist` já pôs o motivo em `err`; o plano não fica pendurado em nenhum dos caminhos.
     }
 
     /// Abre o form em modo "novo item" já com o tipo escolhido no seletor do "+". Se há pasta
@@ -2345,8 +2376,9 @@ impl KeysApp {
     }
 
     /// Sequência comum dos anexos: os caminhos do seletor, ou — vazios — os
-    /// digitados no campo. O primeiro abre o job; o resto espera na fila
-    /// (`attach_queue`), consumida a cada resultado.
+    /// digitados no campo. Antes de ler, calcula o tamanho previsto do cofre
+    /// (unidade 8): acima do teto, um diálogo de Continuar/Cancelar vem primeiro.
+    /// O primeiro arquivo abre o job; o resto espera na fila (`attach_queue`).
     fn attachments_chosen(&mut self, item_id: &str, mut sources: Vec<String>, ctx: &egui::Context) {
         if sources.is_empty() && item_id == FORM_ATTACH {
             // O formulário não tem campo de caminho: cancelar o seletor só não anexa nada.
@@ -2359,6 +2391,31 @@ impl KeysApp {
             self.err = Some(tr("choose the attachment file").into());
             return;
         }
+        // O aviso vem ANTES da leitura (o anexo pode ter 10 MiB e o job só roda depois do "Continuar").
+        let predicted = self.predicted_size_with(item_id, &sources);
+        if size_limit::exceeds_warn_limit(predicted) {
+            self.attach_warn = Some(AttachWarning { item_id: item_id.to_string(), sources, predicted });
+            return;
+        }
+        self.begin_attachments(item_id, sources, ctx);
+    }
+
+    /// O tamanho previsto do `.tkeys` depois destes anexos: o arquivo aberto (0 quando é um cofre novo) + o base64
+    /// dos anexos pendentes do formulário + o base64 dos arquivos escolhidos. Metadado de arquivo inacessível conta
+    /// como 0 aqui: o job da leitura é quem reporta o motivo real.
+    fn predicted_size_with(&self, item_id: &str, sources: &[String]) -> u64 {
+        let vault_bytes = std::fs::metadata(self.path.trim()).map_or(0, |meta| meta.len());
+        let mut extra: Vec<u64> = Vec::new();
+        // Só o formulário tem anexos PENDENTES; num item existente, os anexos dele já estão dentro do arquivo aberto.
+        if item_id == FORM_ATTACH {
+            extra.extend(self.form_attachments.iter().map(|attachment| attachment.data_b64.len() as u64));
+        }
+        extra.extend(sources.iter().filter_map(|source| std::fs::metadata(source).ok()).map(|meta| size_limit::base64_bytes(meta.len())));
+        size_limit::predicted_vault_bytes(vault_bytes, extra)
+    }
+
+    /// Começa a leitura dos anexos escolhidos (o primeiro já, o resto na fila).
+    fn begin_attachments(&mut self, item_id: &str, mut sources: Vec<String>, ctx: &egui::Context) {
         let primeiro = sources.remove(0);
         self.attach_queue = sources.into_iter().map(|source| (item_id.to_string(), source)).collect();
         self.start_job(ctx, tr("reading file…"), Job::ReadAttachment { item_id: item_id.to_string(), source: primeiro });
@@ -2660,6 +2717,7 @@ impl KeysApp {
             }
             JobError::VaultExport(error) => export_vault_error_text(&error),
             JobError::OtherNotVault => tr("the other vault is not a .tkeys vault").to_string(),
+            JobError::CouldNotReadOther => tr("could not read the other vault").to_string(),
             JobError::OtherUnsupportedVersion => tr("the other vault uses a newer format version").to_string(),
             JobError::OtherInvalid => tr("the other vault is not a valid vault").to_string(),
             JobError::MergeOther(error) => merge_other_error_text(&error),
@@ -3649,6 +3707,46 @@ impl KeysApp {
         }
     }
 
+    /// Aviso de tamanho do cofre ao anexar (unidade 8): não bloqueia — Continuar lê os anexos escolhidos, Cancelar
+    /// não anexa nada. O teto e a medição estão em [`size_limit`].
+    fn attach_size_modal(&mut self, ctx: &egui::Context) {
+        let Some(warning) = self.attach_warn.as_ref() else {
+            return;
+        };
+        let predicted = human_size(warning.predicted as usize);
+        let mut proceed = false;
+        let mut cancel = false;
+        let resp = egui::Modal::new(egui::Id::unique("attach-size")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            dialog_width(ui, 420.0);
+            ui.add(egui::Label::new(egui::RichText::new(tr("Large vault")).text_style(egui::TextStyle::Heading)).wrap());
+            ui.add_space(8.0);
+            ui.add(
+                egui::Label::new(tr_fmt(
+                    "After saving, this vault will be about {size}. Saving a vault this big can freeze the window for a moment and use a lot of memory.",
+                    &[("size", &predicted)],
+                ))
+                .wrap(),
+            );
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if pill(ui, tr("Continue"), true).clicked() {
+                    proceed = true;
+                }
+                if pill(ui, tr("Cancel"), false).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if proceed {
+            if let Some(warning) = self.attach_warn.take() {
+                self.begin_attachments(&warning.item_id, warning.sources, ctx);
+            }
+        } else if cancel || resp.should_close() {
+            self.attach_warn = None;
+        }
+    }
+
     /// Gerenciar pastas: criar, renomear (inline) e excluir. Excluir NÃO pede
     /// confirmação — os itens ficam no cofre, só perdem a pasta (o
     /// `delete_folder` limpa o `folderId` deles).
@@ -3867,11 +3965,13 @@ impl KeysApp {
         if !self.sync_open {
             return;
         }
-        let Some(plan) = self.sync_plan.clone() else {
+        // Como no resumo da junção: só o resumo e o caminho saem por cópia; o cofre juntado fica emprestado.
+        let Some(plan) = self.sync_plan.as_ref() else {
             self.sync_open = false;
             return;
         };
         let s = plan.summary;
+        let other_path = plan.other_path.clone();
         let mut grava = false;
         let mut fecha = false;
         let resp = egui::Modal::new(egui::Id::unique("sync")).frame(modal_frame(ctx)).show(ctx, |ui| {
@@ -3879,7 +3979,7 @@ impl KeysApp {
             dialog_width(ui, 400.0);
             ui.heading(tr("Sync with another copy"));
             ui.add_space(4.0);
-            ui.add(egui::Label::new(egui::RichText::new(&plan.other_path).small().weak()).truncate());
+            ui.add(egui::Label::new(egui::RichText::new(&other_path).small().weak()).truncate());
             ui.add_space(8.0);
             if s.nothing_changes() {
                 ui.label(egui::RichText::new(tr("Nothing to sync: the copies are already identical.")).weak());
@@ -3971,15 +4071,18 @@ impl KeysApp {
                 if ui.add_enabled_ui(ready, |ui| pill(ui, tr("Open"), true)).inner.clicked() {
                     open = true;
                 }
-                if pill(ui, tr("Cancel"), false).clicked() {
+                // Cancelar também trava durante o job: fechar agora não cancela o Argon2id, e o resultado reabriria
+                // o diálogo (ou abriria o resumo) depois.
+                if ui.add_enabled_ui(!busy, |ui| pill(ui, tr("Cancel"), false)).inner.clicked() {
                     cancel = true;
                 }
             });
         });
         if open {
             self.merge_other_open(ctx);
-        } else if cancel || resp.should_close() {
+        } else if !busy && (cancel || resp.should_close()) {
             self.merge_open = false;
+            self.merge_path.clear();
             drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
             self.merge_reveal = false;
             self.merge_error = None;
@@ -3989,10 +4092,13 @@ impl KeysApp {
     /// Resumo da junção ANTES de gravar: itens que entram, duplicados (mesmo id), já presentes e pastas. O outro
     /// arquivo nunca é gravado; confirmar grava o cofre aberto UMA vez.
     fn merge_summary_modal(&mut self, ctx: &egui::Context) {
-        let Some(plan) = self.merge_plan.clone() else {
+        // Um empréstimo só: o plano carrega o cofre juntado inteiro e cloná-lo a cada quadro trava a janela num
+        // cofre grande. O que é copiado aqui é o resumo (trivial) e o caminho do outro cofre.
+        let Some(plan) = self.merge_plan.as_ref() else {
             return;
         };
         let s = plan.summary;
+        let other_path = plan.other_path.clone();
         // "Nada a juntar": o resultado é o próprio cofre aberto (itens já presentes não mudam nada; uma pasta
         // "unida" que nenhum item usava também não).
         let nothing = self.raw.as_ref() == Some(&plan.merged);
@@ -4003,7 +4109,7 @@ impl KeysApp {
             dialog_width(ui, 400.0);
             ui.heading(tr("Merge another vault"));
             ui.add_space(4.0);
-            ui.add(egui::Label::new(egui::RichText::new(&plan.other_path).small().weak()).truncate());
+            ui.add(egui::Label::new(egui::RichText::new(&other_path).small().weak()).truncate());
             ui.add_space(8.0);
             if nothing {
                 ui.label(egui::RichText::new(tr("Nothing to merge: this vault already has everything from the other vault.")).weak());
@@ -4064,6 +4170,7 @@ impl KeysApp {
             self.merge_apply();
         } else if close || resp.should_close() {
             self.merge_plan = None;
+            self.merge_path.clear();
         }
     }
 
@@ -4299,6 +4406,7 @@ impl KeysApp {
         self.generator_modal(ctx);
         self.change_modal(ctx);
         self.attachments_modal(ctx);
+        self.attach_size_modal(ctx);
         self.folders_modal(ctx);
         self.new_folder_modal(ctx);
         self.trash_modal(ctx);

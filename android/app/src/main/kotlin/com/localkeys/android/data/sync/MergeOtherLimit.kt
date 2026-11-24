@@ -1,7 +1,10 @@
 package com.localkeys.android.data.sync
 
+import com.localkeys.android.data.vault.VaultSizeLimit
+
 /**
- * O teto conservador da junção de outro cofre no Android.
+ * O teto conservador da junção de outro cofre no Android — o MESMO número do aviso ao anexar
+ * ([VaultSizeLimit.MAX_BYTES]), porque os dois são o limite de memória desta plataforma.
  *
  * A junção segura o cofre aberto, o outro decifrado, o resultado do núcleo e o JSON do resultado ao mesmo tempo — a
  * revisora estimou o pico em ~5–6× a soma dos dois JSONs. A medição da unidade 8 mostrou que um cofre de 50 MB já
@@ -9,8 +12,8 @@ package com.localkeys.android.data.sync
  * Acima disso, a mensagem manda juntar no desktop.
  */
 object MergeOtherLimit {
-    /** Soma máxima dos dois arquivos `.tkeys` (o aberto e o outro). */
-    const val MAX_BYTES: Long = 20L * 1024 * 1024
+    /** Soma máxima dos dois arquivos `.tkeys` (o aberto e o outro): o teto do Android, num lugar só. */
+    const val MAX_BYTES: Long = VaultSizeLimit.MAX_BYTES
 
     /** A soma dos dois arquivos passou do teto? */
     fun overLimit(baseBytes: Long, otherBytes: Long): Boolean = baseBytes + otherBytes > MAX_BYTES
