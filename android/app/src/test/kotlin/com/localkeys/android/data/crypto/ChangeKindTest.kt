@@ -1,8 +1,12 @@
 package com.localkeys.android.data.crypto
 
+import com.localkeys.android.data.vault.Extra
+import com.localkeys.android.data.vault.Item
+import com.localkeys.android.data.vault.ItemKind
+import com.localkeys.android.data.vault.Login
 import com.localkeys.android.ffi.FfiException
 import com.localkeys.android.ffi.FieldLabelsFfi
-import com.localkeys.android.ffi.changeItemKind
+import com.localkeys.android.ffi.changeItemKind as bridgeChangeItemKind
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -12,7 +16,8 @@ import org.junit.Test
 /**
  * A regra de mudar o tipo de um item pela ponte UniFFI (`crates/ffi` → `change_kind` do núcleo): o item convertido
  * é comparado com o esperado do núcleo (o mesmo que `crates/core/tests/change_kind.rs` trava), e o erro chega
- * tipado. Nada de tela: a UI entra na peça seguinte.
+ * tipado. O caminho do editor (`changeItemKind`, que traduz o erro para o `TkeysError` do app) fica em
+ * `ui/ItemKindChangeTest`.
  */
 class ChangeKindTest {
 
@@ -44,7 +49,7 @@ class ChangeKindTest {
 
     @Test
     fun login_vira_nota_e_o_resultado_bate_com_o_esperado_do_nucleo() {
-        val converted = JSONObject(changeItemKind(login, "note", labels))
+        val converted = JSONObject(bridgeChangeItemKind(login, "note", labels))
 
         // O resto do item atravessa idêntico.
         assertEquals("note", converted.getString("kind"))
@@ -72,25 +77,40 @@ class ChangeKindTest {
 
     @Test
     fun erro_de_conversao_chega_como_not_convertible_e_com_a_razao() {
-        val semKind = assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("{}", "note", labels) }
+        val semKind = assertThrows(FfiException.NotConvertible::class.java) { bridgeChangeItemKind("{}", "note", labels) }
         assertEquals("unknown item kind", semKind.reason)
 
-        val naoObjeto = assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("[1]", "note", labels) }
+        val naoObjeto = assertThrows(FfiException.NotConvertible::class.java) { bridgeChangeItemKind("[1]", "note", labels) }
         assertEquals("item is not a JSON object", naoObjeto.reason)
 
-        val jsonInvalido = assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("não é json", "note", labels) }
+        val jsonInvalido = assertThrows(FfiException.NotConvertible::class.java) { bridgeChangeItemKind("não é json", "note", labels) }
         assertTrue("razão do JSON inválido: ${jsonInvalido.reason}", jsonInvalido.reason.startsWith("invalid item JSON: "))
 
         val tipoDesconhecido = assertThrows(FfiException.NotConvertible::class.java) {
-            changeItemKind("""{"id":"i1","kind":"login"}""", "otp", labels)
+            bridgeChangeItemKind("""{"id":"i1","kind":"login"}""", "otp", labels)
         }
         assertEquals("unknown item kind", tipoDesconhecido.reason)
 
-        // A razão diz o objeto/campo quando o erro do núcleo sabe (é o que a tela vai mostrar).
+        // A razão diz o objeto/campo quando o erro do núcleo sabe (é o que o log do app mostra).
         val campoDesconhecido = assertThrows(FfiException.NotConvertible::class.java) {
-            changeItemKind("""{"id":"i1","kind":"login","name":"n","login":{"username":"u","extra":"fica"}}""", "note", labels)
+            bridgeChangeItemKind("""{"id":"i1","kind":"login","name":"n","login":{"username":"u","extra":"fica"}}""", "note", labels)
         }
         assertEquals("cannot convert `login.extra`: unknown field", campoDesconhecido.reason)
+    }
+
+    /// O caminho que o editor usa: a ponte traduz o erro do núcleo para o `TkeysError` do app (com a razão).
+    @Test
+    fun a_ponte_do_app_traduz_o_erro_para_tkeys_not_convertible() {
+        val item = Item(
+            id = "i1", kind = ItemKind.LOGIN, name = "Gmail", favorite = false, folderId = null, notes = "",
+            createdAt = 1, updatedAt = 2, deletedAt = null,
+            login = Login("u", "p", emptyList(), "", extra = Extra("""{"passkeyId":"abc"}""")),
+            card = null, identity = null,
+            passwordHistory = null, customFields = null, attachments = null,
+        )
+
+        val erro = assertThrows(TkeysError.NotConvertible::class.java) { changeItemKind(item, ItemKind.NOTE, labels) }
+        assertEquals("cannot convert `login.passkeyId`: unknown field", erro.reason)
     }
 
     /** Os `customFields` como triplos (nome, valor, oculto) — os `id` são novos a cada conversão e ficam de fora. */

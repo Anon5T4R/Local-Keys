@@ -466,6 +466,32 @@ fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
     }
 }
 
+/// Edição com a troca de tipo pendente (os dois avisos) e uma mensagem de erro: os avisos ficam fora da
+/// rolagem, então na janela mínima (340×640) os botões Salvar/Cancelar têm de continuar à vista.
+#[test]
+fn the_change_type_form_keeps_its_buttons_in_the_narrow_window() {
+    let mut app = unlocked_kinds("change-narrow", Prefs::new("pt-br", ThemeMode::Dark));
+    let id = item_id(&app, "Gmail");
+    app.open_edit_form(&id);
+    app.form_target_kind = Some(crate::vault::ItemKind::Note);
+    app.form_err = Some("a gravação falhou".into());
+    let mut harness = harness_sized(app, 340.0);
+    harness.run_steps(3);
+    shot(&mut harness, "form-change-narrow");
+    for node in harness.root().children_recursive() {
+        let Some(rect) = node.accesskit_node().bounding_box() else { continue };
+        if rect.width() > 0.0 {
+            assert!(rect.x0 >= 0.0 && rect.x1 <= 340.0, "nó fora da largura: {rect:?}");
+        }
+    }
+    for label in ["Salvar", "Cancelar"] {
+        for node in harness.get_all_by_label(label) {
+            let rect = node.rect();
+            assert!(rect.min.y >= 0.0 && rect.max.y <= 640.0, "{label} fora da janela: {rect:?}");
+        }
+    }
+}
+
 /// O painel de anexos de um item (aberto pela lista) com nome longo, anexos vivos e apagados: na janela de
 /// 500 px e na mínima de 340, título, nomes, tamanho e todos os botões ficam inteiros e dentro da janela,
 /// em todos os idiomas do app (os rótulos mudam de tamanho). Na janela larga, cada anexo continua numa
@@ -660,7 +686,10 @@ fn creating_each_kind_stores_the_right_shape() {
 }
 
 /// O aviso que acompanha a troca de tipo (o texto do `tr("…")` em `main.rs`).
-const CONVERSION_WARNING: &str = "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden.";
+const CONVERSION_WARNING: &str = "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.";
+
+/// A segunda frase do aviso, só quando o item tem segredo TOTP e o tipo novo não é login.
+const TOTP_WARNING: &str = "The TOTP secret becomes a hidden field, and this item stops generating codes.";
 
 /// O item do cofre pelo id (o `raw` em memória, que o `persist` espelha no disco).
 fn item_by_id<'a>(app: &'a KeysApp, id: &str) -> &'a serde_json::Value {
@@ -683,6 +712,14 @@ fn selector_text(harness: &Harness<'_, KeysApp>) -> String {
     let combo = harness.get_by_label("Type");
     assert_eq!(combo.accesskit_node().role(), Role::ComboBox, "o tipo da edição é um seletor");
     combo.accesskit_node().data().value().unwrap_or_default().to_string()
+}
+
+/// Fecha o popup do seletor de tipo com um clique num ponto neutro e FORA dele (a seção "Custom fields", no
+/// fim do corpo). No egui o primeiro clique fora de um popup aberto só fecha o popup (não chega ao botão de
+/// baixo) — como na mão, a pessoa clica no formulário antes de Salvar.
+fn close_type_popup(harness: &mut Harness<'_, KeysApp>) {
+    harness.get_by_label("Custom fields").click();
+    harness.run_steps(2);
 }
 
 /// Na edição o tipo vira um seletor com as quatro opções, começando no tipo atual do item.
@@ -731,6 +768,9 @@ fn changing_a_login_to_a_note_moves_the_login_fields_to_custom_fields() {
     harness.get_by_label("📝 Note").click_accesskit();
     harness.run_steps(2);
     assert_eq!(harness.state().form_kind, crate::vault::ItemKind::Login, "os campos do formulário continuam os do item");
+    // O TOTP do Gmail vira campo oculto e o item deixa de gerar código: a frase própria aparece ANTES de salvar.
+    assert!(harness.query_by_label(TOTP_WARNING).is_some(), "o aviso do TOTP aparece com segredo e tipo novo sem login");
+    close_type_popup(&mut harness);
     harness.get_by_label("Save").click();
     harness.run_steps(2);
     assert!(!harness.state().form_open, "salvou: {:?}", harness.state().err);
@@ -750,6 +790,43 @@ fn changing_a_login_to_a_note_moves_the_login_fields_to_custom_fields() {
     assert_eq!(harness.state().items.iter().find(|i| i.id == id).expect("item na lista").kind, crate::vault::ItemKind::Note);
 }
 
+/// Cartão → login e salvar: o objeto `card` sai, os campos dele viram campos personalizados ("Card number"
+/// com nome próprio, oculto) e o item passa a ser um login sem objeto — os campos do tipo novo aparecem
+/// vazios ao reabrir.
+#[test]
+fn changing_a_card_to_a_login_moves_the_card_fields_to_custom_fields() {
+    let mut app = unlocked_kinds("change-card-login", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("change-card-login");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let id = item_id(&app, "Nubank");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().open_edit_form(&id);
+    harness.run_steps(2);
+    assert!(harness.query_by_label(TOTP_WARNING).is_none(), "cartão não tem segredo TOTP");
+    harness.get_by_label("Type").click_accesskit();
+    harness.run_steps(2);
+    harness.get_by_label("🔑 Login").click_accesskit();
+    harness.run_steps(2);
+    close_type_popup(&mut harness);
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    assert!(!harness.state().form_open, "salvou: {:?}", harness.state().err);
+    let it = item_by_id(harness.state(), &id);
+    assert_eq!(it["kind"], "login");
+    assert!(it.get("card").is_none(), "o objeto card saiu do item");
+    assert!(it.get("login").is_none(), "o tipo novo nasce sem objeto; os campos dele aparecem vazios ao reabrir");
+    let campos = it["customFields"].as_array().expect("campos extras");
+    let campo = |nome: &str| campos.iter().find(|c| c["name"] == nome).unwrap_or_else(|| panic!("campo {nome}: {campos:?}"));
+    assert_eq!(campo("Cardholder")["value"], "João da Silva");
+    assert_eq!(campo("Brand")["value"], "Elo");
+    assert_eq!(campo("Card number")["value"], "6362970000457013", "o número do cartão tem nome próprio");
+    assert_eq!(campo("Card number")["hidden"], true, "o número continua oculto");
+    assert_eq!(campo("Expiry (MM/YY)")["value"], "01/2027");
+    assert_eq!(campo("Security code")["hidden"], true, "o código continua oculto");
+}
+
 /// Trocar o tipo e voltar ao original antes de salvar não converte nada: o item sai como entrou.
 #[test]
 fn going_back_to_the_original_type_before_saving_keeps_the_item() {
@@ -758,6 +835,7 @@ fn going_back_to_the_original_type_before_saving_keeps_the_item() {
     std::fs::create_dir_all(&dir).expect("pasta do teste");
     app.path = dir.join("cofre.tkeys").display().to_string();
     let id = item_id(&app, "Gmail");
+    item_by_id_mut(&mut app, &id)["updatedAt"] = serde_json::json!(1);
     let login_antes = item_by_id(&app, &id)["login"].clone();
     let mut harness = harness(app);
     harness.run_steps(2);
@@ -774,6 +852,7 @@ fn going_back_to_the_original_type_before_saving_keeps_the_item() {
     harness.get_by_label("🔑 Login").click_accesskit();
     harness.run_steps(2);
     assert!(harness.query_by_label(CONVERSION_WARNING).is_none(), "voltou ao original: o aviso some");
+    close_type_popup(&mut harness);
     harness.get_by_label("Save").click();
     harness.run_steps(2);
     assert!(!harness.state().form_open, "salvou: {:?}", harness.state().err);
@@ -781,6 +860,7 @@ fn going_back_to_the_original_type_before_saving_keeps_the_item() {
     assert_eq!(it["kind"], "login");
     assert!(it.get("customFields").is_none(), "nenhum campo extra nasceu: {it}");
     assert_eq!(it["login"], login_antes, "o objeto login atravessou intacto");
+    assert_ne!(it["updatedAt"], serde_json::json!(1), "a gravação aconteceu (não foi só fechar o formulário)");
 }
 
 /// Item de `kind` desconhecido: sem seletor, o tipo fica fixo como antes e o arquivo não perde o valor.
@@ -829,6 +909,26 @@ fn the_conversion_warning_shows_only_for_a_different_type() {
     assert!(harness.query_by_label(CONVERSION_WARNING).is_none(), "voltou ao original: o aviso some");
 }
 
+/// O aviso do TOTP depende do ITEM, não do seletor: login sem segredo só leva o aviso comum.
+#[test]
+fn the_totp_warning_needs_a_totp_secret() {
+    let mut app = unlocked("change-no-totp", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("change-no-totp");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let id = item_id(&app, "192.168.1.34");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().open_edit_form(&id);
+    harness.run_steps(2);
+    harness.get_by_label("Type").click_accesskit();
+    harness.run_steps(2);
+    harness.get_by_label("📝 Note").click_accesskit();
+    harness.run_steps(2);
+    assert!(harness.query_by_label(CONVERSION_WARNING).is_some(), "o aviso comum aparece com o tipo diferente");
+    assert!(harness.query_by_label(TOTP_WARNING).is_none(), "sem segredo TOTP não há o que avisar");
+}
+
 /// Conversão que o núcleo recusa: mensagem traduzida, nada gravado (o arquivo fica byte a byte igual) e o
 /// formulário continua aberto no tipo original.
 #[test]
@@ -851,15 +951,59 @@ fn a_failed_conversion_keeps_the_form_open_and_saves_nothing() {
     harness.run_steps(2);
     harness.get_by_label("📝 Note").click_accesskit();
     harness.run_steps(2);
+    close_type_popup(&mut harness);
     harness.get_by_label("Save").click();
     harness.run_steps(2);
     assert!(harness.state().form_open, "o erro mantém o formulário aberto");
     harness.get_by_label_contains("cannot change type"); // a mensagem traduzida (inglês no teste)
     assert!(selector_text(&harness).contains("Login"), "o seletor volta ao tipo original");
+    assert_eq!(harness.state().add_name, "Gmail editado", "a edição do usuário continua no formulário");
     let it = item_by_id(harness.state(), &id);
     assert_eq!(it["kind"], "login", "o item em memória fica intacto");
     assert_eq!(it["name"], "Gmail", "a edição não foi aplicada");
     assert_eq!(std::fs::read(&harness.state().path).expect("cofre em disco"), antes, "o arquivo não foi regravado");
+    // A mensagem é do tipo que a pessoa escolheu: trocar de tipo a apaga (não fica obsoleta na tela).
+    assert!(harness.state().form_err.is_some());
+    if harness.query_by_label("👤 Identity").is_none() {
+        harness.get_by_label("Type").click_accesskit();
+        harness.run_steps(2);
+    }
+    harness.get_by_label("👤 Identity").click_accesskit();
+    harness.run_steps(2);
+    assert!(harness.state().form_err.is_none(), "trocar o tipo limpa a mensagem obsoleta");
+    assert!(harness.query_by_label_contains("cannot change type").is_none(), "a linha do erro some junto");
+    assert_eq!(harness.state().add_name, "Gmail editado", "trocar o tipo não descarta a edição do usuário");
+}
+
+/// Gravação que falha com a conversão pendente: o motivo aparece também DENTRO do modal (não só na tela de
+/// trás, que fica coberta), e o seletor continua no tipo escolhido para a pessoa tentar de novo.
+#[test]
+fn a_failed_save_with_a_pending_conversion_shows_the_error_in_the_form() {
+    let mut app = unlocked_kinds("change-save-fail", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("change-save-fail");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    // A pasta não existe: a gravação atômica falha (nada chega ao disco em lugar nenhum).
+    app.path = dir.join("sem-pasta/cofre.tkeys").display().to_string();
+    let id = item_id(&app, "Gmail");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().open_edit_form(&id);
+    harness.run_steps(2);
+    harness.get_by_label("Type").click_accesskit();
+    harness.run_steps(2);
+    harness.get_by_label("📝 Note").click_accesskit();
+    harness.run_steps(2);
+    close_type_popup(&mut harness);
+    harness.get_by_label("Save").click();
+    harness.run_steps(2);
+    assert!(harness.state().form_open, "a falha mantém o formulário aberto");
+    let na_tela_de_tras = harness.state().err.clone().expect("o erro da gravação");
+    assert_eq!(harness.state().form_err.as_deref(), Some(na_tela_de_tras.as_str()), "o mesmo motivo aparece no modal");
+    // O motivo aparece DOIS lugares: o modal (por `form_err`) e a linha da tela de trás (por `err`).
+    let na_tela = harness.get_all_by_label_contains("falha ao gravar").count();
+    assert!(na_tela >= 2, "o motivo aparece no modal e na tela de trás: {na_tela}");
+    assert!(selector_text(&harness).contains("Note"), "o tipo escolhido continua no seletor para tentar de novo");
+    assert_eq!(item_by_id(harness.state(), &id)["kind"], "login", "nada foi convertido em memória");
 }
 
 /// Campo personalizado com a chave "Oculto": o valor sai mascarado (👁 revela), o botão de copiar

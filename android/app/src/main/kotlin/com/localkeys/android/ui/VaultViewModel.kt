@@ -821,6 +821,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         TkeysError.Kdf -> str(R.string.tkeys_kdf)
         TkeysError.Decrypt -> str(R.string.tkeys_decrypt)
         TkeysError.Corrupted -> str(R.string.tkeys_corrupted)
+        is TkeysError.NotConvertible -> str(R.string.tkeys_not_convertible)
     }
 
     /** O texto do erro de um importador de arquivo, no idioma da interface (o [ImportError] carrega o recurso). */

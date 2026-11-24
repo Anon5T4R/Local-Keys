@@ -78,6 +78,7 @@ import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.data.vault.MAX_ATTACHMENT_BYTES
+import com.localkeys.android.ffi.FieldLabelsFfi
 import com.localkeys.android.ui.theme.FavoriteAmber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,8 +86,9 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
- * Editor de item em tela cheia: tipo (só ao criar), campos do tipo, gerador de senha, pasta, campos
- * personalizados e anexos. Salvar e fechar ficam na barra de cima; sair com alterações pede confirmação.
+ * Editor de item em tela cheia: tipo, campos do tipo, gerador de senha, pasta, campos personalizados e anexos.
+ * O tipo é escolhido ao criar (chips) e, ao editar, vira um seletor que só converte ao salvar (a regra do núcleo
+ * pela ponte, igual ao desktop). Salvar e fechar ficam na barra de cima; sair com alterações pede confirmação.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +106,25 @@ fun ItemEditorScreen(
     val state = remember(initial?.id, preset) { ItemEditorState(initial, defaultFolderId, preset) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var generatorOpen by remember { mutableStateOf(false) }
+    var kindError by remember { mutableStateOf(false) }
+    // Os rótulos dos campos que a conversão gera: os MESMOS do formulário, para o campo extra nascer com o nome
+    // que a pessoa conhece. O número do cartão tem chave própria ("Card number"), sem a ambiguidade do "Number".
+    val kindLabels = FieldLabelsFfi(
+        username = stringResource(R.string.field_username),
+        password = stringResource(R.string.field_password),
+        website = stringResource(R.string.field_uri),
+        totp = stringResource(R.string.field_totp),
+        cardholder = stringResource(R.string.field_cardholder),
+        brand = stringResource(R.string.field_brand),
+        cardNumber = stringResource(R.string.field_card_number),
+        expiry = stringResource(R.string.field_exp_mask),
+        securityCode = stringResource(R.string.field_code),
+        firstName = stringResource(R.string.field_first_name),
+        lastName = stringResource(R.string.field_last_name),
+        email = stringResource(R.string.field_email),
+        phone = stringResource(R.string.field_phone),
+        address = stringResource(R.string.field_address),
+    )
 
     fun requestClose() {
         if (state.isDirty) confirmDiscard = true else onCancel()
@@ -135,7 +156,14 @@ fun ItemEditorScreen(
                         )
                     }
                     TextButton(
-                        onClick = { onSave(state.build(System.currentTimeMillis())) },
+                        onClick = {
+                            when (val save = state.prepareSave(System.currentTimeMillis(), kindLabels)) {
+                                is ItemEditorState.Save.Ready -> onSave(save.item)
+                                // A conversão recusada não grava nada: o editor fica como está (tipo original e
+                                // as edições da pessoa) e o motivo aparece aqui.
+                                is ItemEditorState.Save.Refused -> kindError = true
+                            }
+                        },
                         enabled = state.canSave && !busy,
                     ) {
                         Text(stringResource(R.string.editor_save))
@@ -154,7 +182,22 @@ fun ItemEditorScreen(
                 .padding(horizontal = Gutter, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (state.isNew) KindSelector(state) else KindBadge(state.kind)
+            if (state.canChangeKind) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // O tipo do item aberto continua no comando dos campos; o seletor só marca o alvo da conversão.
+                    KindSelector(selected = state.targetKind ?: state.kind) { state.targetKind = it }
+                    if (state.kindChanged) {
+                        // Nada some em silêncio: o que o tipo novo não tem vira campo personalizado, os ocultos
+                        // continuam ocultos e os campos do tipo novo só existem ao reabrir o item.
+                        KindWarning(stringResource(R.string.editor_kind_warning))
+                        if (state.totpBecomesHiddenField) {
+                            KindWarning(stringResource(R.string.editor_kind_totp_warning))
+                        }
+                    }
+                }
+            } else {
+                KindSelector(selected = state.kind) { state.kind = it }
+            }
 
             // O aviso de nome vazio só aparece depois que a pessoa mexeu no nome (trocar o tipo não conta).
             var nameTouched by rememberSaveable { mutableStateOf(false) }
@@ -226,12 +269,24 @@ fun ItemEditorScreen(
             },
         )
     }
+
+    if (kindError) {
+        // O motivo sem o diagnóstico cru do núcleo (o `reason` é inglês de log): o que a pessoa precisa saber é
+        // que nada foi gravado e que o item continua no tipo original.
+        AlertDialog(
+            onDismissRequest = { kindError = false },
+            text = { Text(stringResource(R.string.tkeys_not_convertible)) },
+            confirmButton = {
+                TextButton(onClick = { kindError = false }) { Text(stringResource(android.R.string.ok)) }
+            },
+        )
+    }
 }
 
-/** Tipo do item novo: chips que quebram de linha (o texto nunca quebra letra por letra). */
+/** Tipo do item: chips que quebram de linha (o texto nunca quebra letra por letra). */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun KindSelector(state: ItemEditorState) {
+private fun KindSelector(selected: ItemKind, onSelect: (ItemKind) -> Unit) {
     Column {
         Text(
             stringResource(R.string.editor_kind_label),
@@ -242,14 +297,24 @@ private fun KindSelector(state: ItemEditorState) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ItemKind.entries.forEach { k ->
                 FilterChip(
-                    selected = state.kind == k,
-                    onClick = { state.kind = k },
+                    selected = selected == k,
+                    onClick = { onSelect(k) },
                     label = { Text(kindLabel(k), maxLines = 1, softWrap = false) },
                     leadingIcon = { Icon(kindIcon(k), contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) },
                 )
             }
         }
     }
+}
+
+/** Uma frase do aviso da troca de tipo (a cor de erro do tema, legível nos dois temas). */
+@Composable
+private fun KindWarning(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

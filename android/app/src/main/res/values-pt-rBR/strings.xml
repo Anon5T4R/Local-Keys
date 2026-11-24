@@ -63,8 +63,9 @@
     <string name="field_cardholder">Titular</string>
     <string name="field_brand">Bandeira</string>
     <string name="field_number">Número</string>
+    <string name="field_card_number">Número do cartão</string>
     <string name="field_exp">Validade</string>
-    <string name="field_code">Código</string>
+    <string name="field_code">Código de segurança</string>
     <string name="field_first_name">Nome</string>
     <string name="field_last_name">Sobrenome</string>
     <string name="field_email">E-mail</string>
@@ -216,6 +217,7 @@
     <string name="tkeys_kdf">falha ao derivar a chave (KDF)</string>
     <string name="tkeys_decrypt">senha incorreta ou arquivo corrompido/adulterado</string>
     <string name="tkeys_corrupted">arquivo corrompido (estrutura inválida)</string>
+    <string name="tkeys_not_convertible">este item não pode ser convertido para o tipo escolhido; nada foi salvo</string>
 
     <!-- Conflito de sincronização (arquivo mudou fora do app) -->
     <string name="external_change_title">Arquivo modificado fora do app</string>
@@ -485,7 +487,8 @@
     <string name="new_item_identity_hint">Nome, contato e documentos</string>
     <string name="new_item_note_hint">Texto livre</string>
     <string name="new_item_blank_hint">Sem formato pronto: você cria os campos</string>
-    <string name="editor_kind_fixed">Tipo: %1$s</string>
+    <string name="editor_kind_warning">Campos que não existem no tipo novo viram campos personalizados ao salvar; os ocultos continuam ocultos. Os campos do tipo novo só aparecem depois de salvar e reabrir o item.</string>
+    <string name="editor_kind_totp_warning">O segredo TOTP vira um campo oculto, e este item deixa de gerar código.</string>
 
     <!-- TOTP por QR ou colado -->
     <string name="totp_scan">Ler QR</string>

@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.localkeys.android.data.crypto.TkeysError
+import com.localkeys.android.data.crypto.changeItemKind
 import com.localkeys.android.data.forms.CardFormat
 import com.localkeys.android.data.totp.OtpAuth
 import com.localkeys.android.data.vault.Attachment
@@ -13,6 +15,7 @@ import com.localkeys.android.data.vault.Identity
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.data.vault.Login
+import com.localkeys.android.ffi.FieldLabelsFfi
 import java.util.UUID
 
 /**
@@ -20,6 +23,12 @@ import java.util.UUID
  *
  * O item salvo parte de uma CÓPIA do original (`initial.copy`): o que o editor não mostra — passkeys, chaves
  * desconhecidas em `extra`, histórico de senhas, anexos na lixeira — atravessa intacto, como no desktop.
+ *
+ * Mudar o TIPO: na edição de um item existente o seletor grava em [targetKind] e a conversão acontece ao salvar,
+ * pela regra do núcleo (`changeItemKind` da ponte), sobre o item JÁ editado — a mesma regra e o mesmo
+ * comportamento do desktop. [kind] continua sendo o tipo do item aberto (os campos mostrados e o objeto
+ * editado); item novo não tem seletor (o tipo vem do "+"), e item de `kind` desconhecido nem chega aqui: o
+ * `Vault.parse` os deixa em `otherItems`.
  */
 class ItemEditorState(
     private val initial: Item?,
@@ -31,6 +40,12 @@ class ItemEditorState(
     private val id: String = initial?.id ?: UUID.randomUUID().toString()
 
     var kind by mutableStateOf(initial?.kind ?: preset?.kind ?: ItemKind.LOGIN)
+
+    /**
+     * Na EDIÇÃO, o tipo escolhido no seletor (começa no tipo do item); a conversão acontece ao salvar. Null em
+     * item novo — lá o tipo é o do "+" ([kind]) e não muda depois do formulário aberto.
+     */
+    var targetKind by mutableStateOf(initial?.kind)
     var name by mutableStateOf(initial?.name ?: "")
     var notes by mutableStateOf(initial?.notes ?: "")
     var favorite by mutableStateOf(initial?.favorite ?: false)
@@ -131,8 +146,20 @@ class ItemEditorState(
 
     val canSave: Boolean get() = name.isNotBlank()
 
-    /** Algo mudou desde que o editor abriu? (guarda do "voltar") */
-    val isDirty: Boolean get() = build(now = 0) != baseline
+    /** O editor oferece o seletor de tipo? Só na edição de um item existente (tipo conhecido pelo `Vault.parse`). */
+    val canChangeKind: Boolean get() = !isNew
+
+    /** O tipo escolhido difere do item aberto: o aviso aparece e salvar converte. */
+    val kindChanged: Boolean get() = targetKind != null && targetKind != kind
+
+    /**
+     * O segredo TOTP do item vira campo OCULTO na conversão e o item deixa de gerar código: só acontece com
+     * segredo em mãos e tipo novo que não é login. A tela usa isto para a segunda frase do aviso.
+     */
+    val totpBecomesHiddenField: Boolean get() = kind == ItemKind.LOGIN && kindChanged && targetKind != ItemKind.LOGIN && totp.isNotBlank()
+
+    /** Algo mudou desde que o editor abriu? (guarda do "voltar") — escolher outro tipo também conta. */
+    val isDirty: Boolean get() = kindChanged || build(now = 0) != baseline
 
     fun addField() {
         customFields += CustomField(UUID.randomUUID().toString(), "", "", hidden = false)
@@ -210,6 +237,32 @@ class ItemEditorState(
             customFields = customFields.toList().takeIf { it.isNotEmpty() || initial?.customFields != null },
             attachments = attachments.toList().takeIf { it.isNotEmpty() || initial?.attachments != null },
         )
+    }
+
+    /** O que o Salvar devolveu: o item pronto para gravar, ou a conversão recusada (nada é gravado). */
+    sealed interface Save {
+        data class Ready(val item: Item) : Save
+        data class Refused(val error: TkeysError.NotConvertible) : Save
+    }
+
+    /**
+     * O item para gravar: as edições como hoje ([build]); com o tipo trocado, a conversão da ponte roda por
+     * cima do item JÁ editado ([changeItemKind] — a regra do núcleo, a mesma do desktop). Tudo ou nada: no erro
+     * o seletor volta ao tipo original (as edições ficam) e nada chega ao cofre.
+     *
+     * [labels] são os rótulos dos campos gerados, nos textos que o formulário já mostra.
+     */
+    fun prepareSave(now: Long, labels: FieldLabelsFfi): Save {
+        val edited = build(now)
+        val target = targetKind ?: return Save.Ready(edited)
+        if (target == kind) return Save.Ready(edited)
+        return try {
+            Save.Ready(changeItemKind(edited, target, labels))
+        } catch (e: TkeysError.NotConvertible) {
+            // Como no desktop: o formulário continua aberto no tipo ORIGINAL, com o que a pessoa editou.
+            targetKind = kind
+            Save.Refused(e)
+        }
     }
 }
 

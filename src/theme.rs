@@ -32,6 +32,10 @@ pub struct Tokens {
     pub pressed: Color32,
     /// Destaque (seleção, links, foco).
     pub accent: Color32,
+    /// Aviso em texto (o tipo do formulário mudou): legível sobre o cartão do diálogo nos dois temas.
+    pub warn: Color32,
+    /// Erro em texto (gravação recusada): legível sobre o cartão do diálogo nos dois temas.
+    pub danger: Color32,
     /// Sombras.
     pub shadow: Color32,
 }
@@ -49,6 +53,9 @@ impl Tokens {
             pressed: Color32::from_black_alpha(28),
             // 5,3:1 com branco por cima (pill primário) e sobre a base (links): AA. O #2f8f55 de antes dava 4,0:1.
             accent: Color32::from_rgb(0x26, 0x7a, 0x48),
+            // Sobre o cartão do diálogo, que no claro é branco: 5,9:1 (aviso) e 6,5:1 (erro) — AA para texto pequeno.
+            warn: Color32::from_rgb(0x8a, 0x5a, 0x00),
+            danger: Color32::from_rgb(0xb3, 0x26, 0x1e),
             shadow: Color32::from_black_alpha(45),
         }
     }
@@ -64,6 +71,9 @@ impl Tokens {
             hover: Color32::from_white_alpha(16),
             pressed: Color32::from_white_alpha(30),
             accent: Color32::from_rgb(0x7c, 0xbf, 0x7f),
+            // Sobre o cartão do diálogo escuro (#0e120f): 8,6:1 (aviso) e 6,8:1 (erro).
+            warn: Color32::from_rgb(0xe6, 0xa2, 0x3c),
+            danger: Color32::from_rgb(0xe8, 0x7c, 0x7c),
             shadow: Color32::from_black_alpha(140),
         }
     }
@@ -100,6 +110,8 @@ fn visuals(t: &Tokens) -> egui::Visuals {
     v.selection.bg_fill = t.accent.gamma_multiply(0.35);
     v.selection.stroke = egui::Stroke::new(1.0, t.accent);
     v.hyperlink_color = t.accent;
+    v.warn_fg_color = t.warn;
+    v.error_fg_color = t.danger;
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, t.border);
     v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, t.text);
     v.widgets.inactive.bg_fill = t.input;
@@ -132,5 +144,32 @@ mod tests {
         assert_eq!(preference(ThemeMode::System), egui::ThemePreference::System);
         assert_eq!(preference(ThemeMode::Light), egui::ThemePreference::Light);
         assert_eq!(preference(ThemeMode::Dark), egui::ThemePreference::Dark);
+    }
+
+    /// A luminância relativa da WCAG (0–1) de uma cor sRGB.
+    fn relative_luminance(c: Color32) -> f64 {
+        let channel = |v: u8| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
+    }
+
+    /// O contraste WCAG entre duas cores (1:1 a 21:1).
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (la, lb) = (relative_luminance(a), relative_luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    /// O aviso e o erro do formulário são texto pequeno sobre o cartão do diálogo (`input` nos dois temas):
+    /// passam de 4,5:1 nos dois (AA).
+    #[test]
+    fn warn_and_danger_read_on_the_dialog_card_in_both_themes() {
+        for tokens in [Tokens::light(), Tokens::dark()] {
+            for (nome, cor) in [("aviso", tokens.warn), ("erro", tokens.danger)] {
+                let ratio = contrast(cor, tokens.input);
+                assert!(ratio >= 4.5, "{nome} no tema {}: {ratio:.2}:1", if tokens.dark { "escuro" } else { "claro" });
+            }
+        }
     }
 }

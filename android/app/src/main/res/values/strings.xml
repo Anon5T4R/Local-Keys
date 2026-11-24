@@ -64,6 +64,7 @@
     <string name="field_cardholder">Cardholder</string>
     <string name="field_brand">Brand</string>
     <string name="field_number">Number</string>
+    <string name="field_card_number">Card number</string>
     <string name="field_exp">Expiration</string>
     <string name="field_code">Security code</string>
     <string name="field_first_name">First name</string>
@@ -217,6 +218,7 @@
     <string name="tkeys_kdf">key derivation (KDF) failed</string>
     <string name="tkeys_decrypt">wrong password or corrupted/tampered file</string>
     <string name="tkeys_corrupted">corrupted file (invalid structure)</string>
+    <string name="tkeys_not_convertible">this item cannot be converted to the selected type; nothing was saved</string>
 
     <!-- Conflito de sincronização (arquivo mudou fora do app) -->
     <string name="external_change_title">File changed outside the app</string>
@@ -486,7 +488,8 @@
     <string name="new_item_identity_hint">Name, contact details and documents</string>
     <string name="new_item_note_hint">Free text</string>
     <string name="new_item_blank_hint">No ready-made format: you add the fields</string>
-    <string name="editor_kind_fixed">Type: %1$s</string>
+    <string name="editor_kind_warning">Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.</string>
+    <string name="editor_kind_totp_warning">The TOTP secret becomes a hidden field, and this item stops generating codes.</string>
 
     <!-- TOTP por QR ou colado -->
     <string name="totp_scan">Scan QR</string>

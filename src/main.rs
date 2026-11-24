@@ -278,7 +278,7 @@ fn field_labels() -> change_kind::FieldLabels {
         totp: tr("TOTP").into(),
         cardholder: tr("Cardholder").into(),
         brand: tr("Brand").into(),
-        card_number: tr("Number").into(),
+        card_number: tr("Card number").into(),
         expiry: tr("Expiry (MM/YY)").into(),
         security_code: tr("Security code").into(),
         first_name: tr("First name").into(),
@@ -517,6 +517,10 @@ struct Skin {
     /// Cartão invertido do toast/progresso (claro no tema escuro e vice-versa).
     inverted_fill: egui::Color32,
     inverted_text: egui::Color32,
+    /// Aviso em texto (o tipo do formulário mudou).
+    warn: egui::Color32,
+    /// Erro em texto (gravação recusada).
+    danger: egui::Color32,
 }
 
 impl Skin {
@@ -539,6 +543,8 @@ impl Skin {
             hover: if v.dark_mode { egui::Color32::from_white_alpha(18) } else { egui::Color32::from_black_alpha(14) },
             inverted_fill: if v.dark_mode { egui::Color32::from_rgb(0xEC, 0xEC, 0xEF) } else { egui::Color32::from_rgb(0x2A, 0x2A, 0x2F) },
             inverted_text: if v.dark_mode { egui::Color32::from_rgb(0x22, 0x22, 0x26) } else { egui::Color32::WHITE },
+            warn: v.warn_fg_color,
+            danger: v.error_fg_color,
         }
     }
 }
@@ -1529,6 +1535,10 @@ impl KeysApp {
             self.close_form_buffers();
             self.form_open = false;
             self.form_edit_id = None;
+        } else if self.form_target_kind.is_some_and(|target| target != self.form_kind) {
+            // Gravação falhou com a conversão pendente: o motivo aparece também DENTRO do modal (a linha de erro
+            // da tela de trás fica coberta por ele enquanto o formulário está aberto).
+            self.form_err = self.err.clone();
         }
     }
 
@@ -2329,6 +2339,7 @@ impl KeysApp {
                 // Item existente de tipo conhecido: o tipo pode ser trocado. Trocar aqui só marca o alvo —
                 // a conversão (regra do núcleo) acontece no Salvar, junto com as edições, numa gravação só.
                 Some(target) => {
+                    let mut type_changed = false;
                     ui.horizontal(|ui| {
                         let label = ui.label(tr("Type"));
                         egui::ComboBox::from_id_salt("form-tipo")
@@ -2336,25 +2347,42 @@ impl KeysApp {
                             .selected_text(format!("{} {}", kind_icon(target), kind_label(target)))
                             .show_ui(ui, |ui| {
                                 for option in [vault::ItemKind::Login, vault::ItemKind::Note, vault::ItemKind::Card, vault::ItemKind::Identity] {
-                                    ui.selectable_value(
-                                        &mut self.form_target_kind,
-                                        Some(option),
-                                        format!("{} {}", kind_icon(option), kind_label(option)),
-                                    );
+                                    type_changed |= ui
+                                        .selectable_value(
+                                            &mut self.form_target_kind,
+                                            Some(option),
+                                            format!("{} {}", kind_icon(option), kind_label(option)),
+                                        )
+                                        .changed();
                                 }
                             })
                             .response
                             .labelled_by(label.id);
                     });
+                    // A mensagem da última gravação recusada é do tipo que a pessoa tinha escolhido: trocar de tipo
+                    // a torna obsoleta (ela some junto).
+                    if type_changed {
+                        self.form_err = None;
+                    }
                     // Nada some em silêncio: os campos que o tipo novo não tem viram campos personalizados.
                     if target != kind {
+                        let skin = Skin::of(ui);
                         ui.label(
                             egui::RichText::new(tr(
-                                "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden.",
+                                "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.",
                             ))
                             .small()
-                            .color(egui::Color32::from_rgb(230, 130, 40)),
+                            .color(skin.warn),
                         );
+                        // O TOTP não dá para "levar" como campo oculto e continuar gerando código: o item deixa de
+                        // gerar. Só avisa quando é o caso do item aberto.
+                        if kind == vault::ItemKind::Login && target != vault::ItemKind::Login && !self.add_totp.trim().is_empty() {
+                            ui.label(
+                                egui::RichText::new(tr("The TOTP secret becomes a hidden field, and this item stops generating codes."))
+                                    .small()
+                                    .color(skin.warn),
+                            );
+                        }
                     }
                 }
                 // Item novo (o tipo veio do "+") ou `kind` desconhecido no arquivo: crachá fixo, como antes.
@@ -2701,7 +2729,7 @@ impl KeysApp {
             // coberta enquanto o formulário está aberto.
             if let Some(error) = &self.form_err {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(format!("{}: {error}", tr("Error"))).color(egui::Color32::LIGHT_RED));
+                ui.label(egui::RichText::new(format!("{}: {error}", tr("Error"))).color(Skin::of(ui).danger));
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {

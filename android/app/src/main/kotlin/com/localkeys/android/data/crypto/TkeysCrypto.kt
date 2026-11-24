@@ -1,11 +1,16 @@
 package com.localkeys.android.data.crypto
 
+import com.localkeys.android.data.vault.Item
+import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.ffi.FfiException
+import com.localkeys.android.ffi.FieldLabelsFfi
 import com.localkeys.android.ffi.KdfParamsFfi
 import com.localkeys.android.ffi.Session
+import com.localkeys.android.ffi.changeItemKind as ffiChangeItemKind
 import com.localkeys.android.ffi.createVault as ffiCreateVault
 import com.localkeys.android.ffi.openVault as ffiOpenVault
 import com.localkeys.android.ffi.openVaultWithKey as ffiOpenVaultWithKey
+import org.json.JSONObject
 
 /**
  * Erros do `.tkeys`, espelhando o `CryptoError` do desktop.
@@ -26,6 +31,10 @@ sealed class TkeysError : Exception() {
     }
     object Corrupted : TkeysError() {
         override val message: String get() = "arquivo corrompido (estrutura inválida)"
+    }
+    /** O item não pode mudar para o tipo pedido (regra do núcleo). A [reason] é o diagnóstico em inglês do núcleo. */
+    class NotConvertible(val reason: String) : TkeysError() {
+        override val message: String get() = "item não pode ser convertido para o tipo pedido: $reason"
     }
 }
 
@@ -99,6 +108,14 @@ class SessionKey internal constructor(private val session: Session) {
 
 private fun KdfParams.toFfi() = KdfParamsFfi(mCost = mCostKib.toUInt(), tCost = tCost.toUInt(), pCost = pCost.toUInt())
 
+/**
+ * Converte um item do cofre para outro `kind` pela regra do núcleo (`change_kind`), a mesma do desktop: todo
+ * objeto tipado que não é o do tipo novo vira campo extra (senha, TOTP, número e código do cartão ocultos).
+ * [labels] são os rótulos dos campos gerados no idioma do usuário — os mesmos textos do editor.
+ */
+fun changeItemKind(item: Item, newKind: ItemKind, labels: FieldLabelsFfi): Item =
+    translating { Item.parse(JSONObject(ffiChangeItemKind(item.toJson().toString(), newKind.wire, labels))) }
+
 /** O erro do núcleo vira o [TkeysError] que o resto do app já trata. */
 private inline fun <T> translating(block: () -> T): T = try {
     block()
@@ -109,8 +126,6 @@ private inline fun <T> translating(block: () -> T): T = try {
         is FfiException.Kdf -> TkeysError.Kdf
         is FfiException.Decrypt -> TkeysError.Decrypt
         is FfiException.Corrupted -> TkeysError.Corrupted
-        // Nenhum TkeysError existente descreve "item não convertível" e a peça da UI ainda não existe: o erro cai
-        // no "estrutura inválida" do item (a variante própria entra quando a tela precisar da mensagem).
-        is FfiException.NotConvertible -> TkeysError.Corrupted
+        is FfiException.NotConvertible -> TkeysError.NotConvertible(e.reason)
     }
 }

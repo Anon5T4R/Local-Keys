@@ -174,7 +174,8 @@
 	Free item	Elemento libre
 	Title	Título
 	Type: {kind}	Tipo: {kind}
-	Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden.	Los campos que no existen en el tipo nuevo se convierten en campos personalizados al guardar; los ocultos siguen ocultos.
+	Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.	Los campos que no existen en el tipo nuevo se convierten en campos personalizados al guardar; los ocultos siguen ocultos. Los campos del tipo nuevo solo aparecen después de guardar y volver a abrir el elemento.
+	The TOTP secret becomes a hidden field, and this item stops generating codes.	El secreto TOTP se convierte en un campo oculto y este elemento deja de generar códigos.
 	This item cannot change type: it is not a valid vault item.	No se puede cambiar el tipo de este elemento: no es un elemento de bóveda válido.
 	This item cannot change type: its current type is unknown.	No se puede cambiar el tipo de este elemento: su tipo actual es desconocido.
 	This item cannot change type: it has a field this app cannot convert.	No se puede cambiar el tipo de este elemento: tiene un campo que esta app no puede convertir.
@@ -186,8 +187,9 @@
 	Cardholder	Titular
 	Brand	Marca
 	Number	Número
+	Card number	Número de tarjeta
 	Expiry (MM/YY)	Caducidad (MM/AA)
-	Security code	Código
+	Security code	Código de seguridad
 	First name	Nombre
 	Last name	Apellido
 	E-mail	Correo electrónico
