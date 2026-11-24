@@ -6,7 +6,7 @@
 
 /// O tamanho que `bytes` ocupa em base64 (4 bytes por 3, arredondado para cima).
 pub fn base64_len(bytes: u64) -> u64 {
-    bytes.div_ceil(3) * 4
+    bytes.div_ceil(3).saturating_mul(4)
 }
 
 /// Tamanho previsto do `.tkeys` depois dos anexos: o arquivo aberto + o base64 de cada anexo. Cofre novo/sem arquivo:
@@ -31,6 +31,7 @@ mod tests {
         assert_eq!(base64_len(3), 4);
         assert_eq!(base64_len(4), 8);
         assert_eq!(base64_len(10 * 1024 * 1024), 13_981_016);
+        assert_eq!(base64_len(u64::MAX), u64::MAX, "satura em vez de estourar");
     }
 
     #[test]

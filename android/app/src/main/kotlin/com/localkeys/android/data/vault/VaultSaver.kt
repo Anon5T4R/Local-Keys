@@ -16,6 +16,7 @@ import java.io.IOException
 class VaultSaver(private val repository: VaultRepository) {
 
     /** O último conteúdo CONHECIDO do documento (o que este app gravou/leu): detecta mudança externa antes de gravar. */
+    @Volatile
     var known: ByteArray? = null
         private set
 

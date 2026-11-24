@@ -67,6 +67,7 @@ import com.localkeys.android.data.vault.VaultAutofillCache
 import com.localkeys.android.data.vault.VaultRepository
 import com.localkeys.android.data.vault.VaultSaver
 import com.localkeys.android.data.vault.VaultSession
+import com.localkeys.android.data.vault.VaultSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -169,14 +170,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      */
     val selection = ListSelectionMode()
 
-    /**
-     * O cofre aberto na JVM: carregar/destrancar/trancar/criar sem Android. O conteúdo conhecido é o ciphertext do
-     * cofre (unlock + baseline da mudança externa) e NÃO é zerado ao trancar — ver [VaultSession].
-     */
-
     /** Tamanho do `.tkeys` aberto (o blob conhecido, já cifrado): entra no aviso de tamanho ao anexar. */
     val vaultFileBytes: Long
-        get() = session.known?.size?.toLong() ?: 0L
+        get() = if (session.isFor(_state.value.vaultUri)) session.known?.size?.toLong() ?: 0L else 0L
 
     /** Chaves biométricas por cofre (URI → hex). Só a do cofre atual é usada ([currentWrappedKey]). */
     @Volatile
@@ -194,11 +190,20 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 // Só quando a URI muda: o DataStore reemite a cada preferência gravada (tema, biometria), e reler o
                 // arquivo nessas horas trocaria a base da detecção de mudança externa no meio do uso.
                 settings.vaultUri.distinctUntilChanged().collect { uri ->
-                    session.forget()
-                    _state.update {
-                        it.copy(vaultUri = uri, vaultName = null, biometricAvailable = uri != null && biometricKeys.containsKey(uri))
+                    if (VaultSource.onUriObserved(session.knownUri, uri) == VaultSource.UriAction.Reload) {
+                        session.forget()
+                        _state.update {
+                            it.copy(vaultUri = uri, vaultName = null, biometricAvailable = uri != null && biometricKeys.containsKey(uri))
+                        }
+                        if (uri != null) loadBlob(uri)
+                    } else {
+                        // O conhecido já é deste URI (o cofre que acabou de ser criado): só confirma o estado da tela
+                        // e o nome/recentes, sem esquecer nem reler o arquivo.
+                        _state.update {
+                            it.copy(vaultUri = uri, biometricAvailable = uri != null && biometricKeys.containsKey(uri))
+                        }
+                        if (uri != null) rememberVault(uri)
                     }
-                    if (uri != null) loadBlob(uri)
                 }
             }
             launch {
@@ -295,14 +300,14 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val bytes = resolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
                     ?: throw IOException(str(R.string.err_file_not_found))
-                session.load(bytes)
-                val name = runCatching {
-                    resolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-                }.getOrNull() ?: Uri.parse(uri).lastPathSegment?.substringAfterLast('/')
-                _state.update { it.copy(vaultName = name) }
-                settings.touchRecentVault(uri, name)
+                // A leitura pode ter demorado e o cofre mudou no meio (A→B→A com dois loadBlob): só adota se este
+                // ainda é o cofre atual.
+                if (!VaultSource.isCurrent(uri, _state.value.vaultUri)) return@launch
+                session.load(uri, bytes)
+                rememberVault(uri)
             } catch (e: Exception) {
+                // Falha de uma leitura que já não é a do cofre atual não pode esquecer o cofre bom.
+                if (!VaultSource.isCurrent(uri, _state.value.vaultUri)) return@launch
                 session.forget()
                 _state.update {
                     it.copy(
@@ -316,21 +321,35 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Nome do arquivo + lista de recentes do cofre atual, sem ler o cofre. */
+    private fun rememberVault(uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val resolver = getApplication<Application>().contentResolver
+            val name = runCatching {
+                resolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            }.getOrNull() ?: Uri.parse(uri).lastPathSegment?.substringAfterLast('/')
+            if (_state.value.vaultUri != uri) return@launch
+            _state.update { it.copy(vaultName = name) }
+            settings.touchRecentVault(uri, name)
+        }
+    }
+
     /** Desbloqueia com a master password (roda o Argon2id em background). */
     fun unlock(password: String) {
         if (password.isBlank()) {
             _state.update { it.copy(error = str(R.string.msg_password_empty)) }
             return
         }
-        val blob = session.known
-        if (blob == null) {
-            _state.update { it.copy(error = str(R.string.msg_no_vault_loaded)) }
-            return
-        }
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             try {
-                val vault = session.unlock(password)
+                // Sem blob ou com o blob de OUTRO arquivo, o destrancar recusa sem exceção (a mensagem é a de sempre).
+                val vault = session.unlock(_state.value.vaultUri, password)
+                if (vault == null) {
+                    _state.update { it.copy(error = str(R.string.msg_no_vault_loaded), busy = false) }
+                    return@launch
+                }
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, screen = Screen.Vault, busy = false) }
             } catch (e: TkeysError) {
@@ -368,7 +387,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             }
             try {
                 // `force`: o SAF acabou de criar/sobrescrever o documento — não há mudança externa a proteger.
-                withContext(Dispatchers.IO) { session.writeCreated(file, ResolverDocument(resolver, uri)) }
+                withContext(Dispatchers.IO) { session.writeCreated(uri.toString(), file, ResolverDocument(resolver, uri)) }
             } catch (e: Exception) {
                 // A gravação pode ter começado: um cofre possivelmente válido não é apagado por falha de releitura.
                 _state.update { it.copy(error = str(R.string.msg_create_failed, createFailureText(e)), busy = false) }
@@ -420,7 +439,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 val resolver = getApplication<Application>().contentResolver
                 val bytes = readDocumentBytes(resolver, Uri.parse(uri))
                     ?: throw IOException(str(R.string.err_file_not_found))
-                val vault = session.reload(bytes)
+                val vault = session.reload(uri, bytes)
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, busy = false, notice = str(R.string.msg_reloaded)) }
             } catch (e: Exception) {
@@ -463,7 +482,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     /** Após a biometria: recupera a chave e abre o vault sem senha. */
     fun unlockWithBiometricCipher(cipher: Cipher) {
         val (uri, hex) = currentWrappedKey() ?: return
-        if (session.known == null) return
+        // Sem o conteúdo conhecido DESTE cofre, a biometria não tem o que abrir: mensagem, não exceção.
+        if (!session.isFor(_state.value.vaultUri)) {
+            _state.update { it.copy(error = str(R.string.msg_no_vault_loaded)) }
+            return
+        }
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             try {
@@ -473,7 +496,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(busy = false) }
                     return@launch
                 }
-                val vault = session.unlockWithKey(key)
+                val vault = session.unlockWithKey(uri, key)
+                if (vault == null) {
+                    _state.update { it.copy(error = str(R.string.msg_no_vault_loaded), busy = false) }
+                    return@launch
+                }
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, screen = Screen.Vault, busy = false) }
             } catch (e: Exception) {
@@ -939,7 +966,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 val uri = _state.value.vaultUri ?: throw IOException(str(R.string.err_no_file))
                 val bytes = readDocumentBytes(getApplication<Application>().contentResolver, Uri.parse(uri))
                     ?: throw IOException(str(R.string.err_file_not_found))
-                session.reload(bytes)
+                session.reload(uri, bytes)
                 once()
                 null
             } catch (e: Exception) {
@@ -1046,7 +1073,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 // O arquivo antigo vira só cópia de segurança: sai da lista para não ser aberto por engano.
                 settings.forgetRecentVault(oldUri)
                 settings.touchRecentVault(newUri, newName)
-                session.load(back)
+                session.load(newUri, back)
                 _state.update { it.copy(vaultUri = newUri, vaultName = newName, busy = false) }
                 settings.setVaultUri(newUri)
                 _state.update {
@@ -1448,9 +1475,13 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         mergeOther.close()
     }
 
-    /** O tamanho do `.tkeys` aberto: o blob conhecido; sem ele, o tamanho do documento aberto; nada disso = null. */
+    /** O tamanho do `.tkeys` aberto: o blob conhecido DESTE cofre; senão, o tamanho do documento aberto; nada = null. */
     private fun vaultBytesForMerge(resolver: ContentResolver): Long? =
-        session.known?.size?.toLong() ?: _state.value.vaultUri?.let { documentSize(resolver, Uri.parse(it)) }
+        if (session.isFor(_state.value.vaultUri)) {
+            session.known?.size?.toLong()
+        } else {
+            _state.value.vaultUri?.let { documentSize(resolver, Uri.parse(it)) }
+        }
 
     /** O `SIZE` que o provedor declara para o documento, ou null quando ele não informa (inclusive o -1). */
     private fun documentSize(resolver: ContentResolver, uri: Uri): Long? = declaredDocumentSize(

@@ -157,7 +157,7 @@ class VaultSaverTest {
         val session = VaultSession(repository, saver)
         val file = session.createFile(Vault.empty(), password)
         // O passo do "criar cofre" no ViewModel: grava com force (o SAF acabou de criar o arquivo).
-        session.writeCreated(file, fresh)
+        session.writeCreated("content://docs/novo.tkeys", file, fresh)
 
         assertEquals("o vazio do documento não é mudança externa", repository.vault, Vault.parse(String(crypto.openVault(password, fresh.stored!!).plaintext)))
         assertArrayEquals("o documento ficou com o cofre novo", fresh.stored, saver.known)

@@ -3330,6 +3330,38 @@ fn the_size_warning_counts_the_form_pending_attachments_once() {
     assert_eq!(live_attachments(harness.state(), &saved_id), 3);
 }
 
+/// Trancar com uma leitura de anexo em andamento: o resultado que chega depois é da geração antiga e não cai no
+/// formulário (que já foi limpo).
+#[test]
+fn locking_discards_a_running_attachment_and_the_late_result_is_ignored() {
+    let mut app = unlocked("lock-job", Prefs::new("en", ThemeMode::Dark));
+    app.job_generation = 4;
+    app.job_label = Some(crate::i18n::tr("reading file…"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.job_rx = Some(rx);
+
+    app.lock();
+
+    assert!(app.job_label.is_none(), "o spinner do job não sobrevive ao trancar");
+    assert_eq!(app.job_generation, 5, "a geração muda ao trancar");
+    tx.send(crate::jobs::Sent {
+        generation: 4,
+        result: crate::jobs::JobResult::AttachmentRead(Ok(crate::jobs::AttachmentRead {
+            item_id: crate::FORM_ATTACH.into(),
+            name: "nota.txt".into(),
+            mime: "text/plain",
+            size: 1,
+            data_b64: "YQ==".into(),
+        })),
+    })
+    .expect("manda o resultado tardio");
+    drop(tx);
+    app.poll_jobs(&egui::Context::default());
+
+    assert!(app.form_attachments.is_empty(), "a leitura velha não cai no formulário depois de trancar");
+    assert!(app.err.is_none(), "o resultado velho não vira erro");
+}
+
 /// O cap por anexo (10 MiB) atua na leitura, antes do aviso: um arquivo de 200 MB nunca chega ao "Large vault".
 #[test]
 fn an_attachment_over_the_cap_is_refused_before_the_size_warning() {

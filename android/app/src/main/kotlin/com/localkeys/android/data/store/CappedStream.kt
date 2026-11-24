@@ -8,8 +8,9 @@ import java.io.InputStream
  * Com o tamanho declarado, aloca exatamente `min(declarado, teto)` e lê até encher — em vez do
  * `ByteArrayOutputStream`, que dobra a capacidade e ainda copia no `toByteArray` (ler 20 MB segurava ~53 MB). Se
  * sobrar byte, o arquivo passa do teto quando o declarado já era o teto; se o provedor declarou MENOS do que o
- * arquivo real, a leitura continua pelo caminho que cresce, ainda com o teto. Sem declaração, só o caminho que
- * cresce.
+ * arquivo real, a leitura continua pelo caminho que cresce (o byte extra conta no teto) e o resultado é copiado UMA
+ * vez para um buffer do tamanho final — esse caso ainda chega a ~2× o teto, não a 3×. Sem declaração, só o caminho
+ * que cresce.
  */
 object CappedStream {
 
@@ -45,7 +46,14 @@ object CappedStream {
         // O byte extra já lido também conta no teto.
         val rest = readGrowing(input, cap - filled - 1)
         return when (rest) {
-            is Result.Bytes -> Result.Bytes(buffer + byteArrayOf(extra.toByte()) + rest.bytes)
+            is Result.Bytes -> {
+                // Um buffer só com o tamanho final (nada de concatenar duas vezes: o pico era 3× o teto).
+                val combined = ByteArray(filled + 1 + rest.bytes.size)
+                buffer.copyInto(combined, 0, 0, filled)
+                combined[filled] = extra.toByte()
+                rest.bytes.copyInto(combined, filled + 1)
+                Result.Bytes(combined)
+            }
             else -> rest
         }
     }

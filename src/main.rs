@@ -1294,6 +1294,12 @@ impl KeysApp {
     /// Tranca: apaga a sessão (Drop → Zeroizing limpa a chave) e o vault em
     /// claro da memória. Ordem session → raw, como no oficial.
     fn lock(&mut self) {
+        // Um job em andamento (leitura de anexo, junção) fica órfão ao trancar: a geração muda e o resultado tardio é
+        // descartado em vez de cair no formulário/cofre que não está mais aberto.
+        if self.job_label.is_some() {
+            self.job_generation = self.job_generation.wrapping_add(1);
+            self.job_label = None;
+        }
         self.session = None;
         self.raw = None;
         self.items.clear();
@@ -1898,6 +1904,8 @@ impl KeysApp {
             return;
         }
         self.path = destino.display().to_string();
+        // O arquivo novo tem os mesmos bytes selados: o tamanho guardado acompanha o caminho novo (aviso de anexo).
+        self.vault_bytes = sealed.len() as u64;
         remember_last_path(&self.path);
         self.err = None;
         self.notice(tr("copy checked — this file is the vault now").to_string());
