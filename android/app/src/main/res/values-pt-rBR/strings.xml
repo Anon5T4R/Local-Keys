@@ -414,7 +414,7 @@
     <!-- Atualizações -->
     <string name="settings_updates">Atualizações</string>
     <string name="update_auto_title">Procurar atualizações automaticamente</string>
-    <string name="update_auto_body">Desligado por padrão. Ligado, o Local Keys procura versão nova no máximo uma vez por dia. A única conexão é com o GitHub, para ler as releases de Anon5T4R/Local-Keys; nada sobre você ou o seu cofre é enviado.</string>
+    <string name="update_auto_body">Desligado por padrão. Ligado, o Local Keys procura versão nova no máximo uma vez por dia. A única conexão é com o GitHub, para ler as releases de Styx-Studios/Local-Keys (ou de Anon5T4R/Local-Keys, o endereço anterior); nada sobre você ou o seu cofre é enviado.</string>
     <string name="update_check_now">Verificar agora</string>
     <string name="update_checking">Verificando…</string>
     <string name="update_status_never">Ainda não verificado.</string>

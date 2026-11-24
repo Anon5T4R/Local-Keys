@@ -3,6 +3,8 @@ package com.localkeys.android.data.update
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.net.MalformedURLException
+import java.net.URL
 
 /** Uma release do Keys Android publicada no GitHub, com o APK que a atualização baixa. */
 data class AndroidRelease(
@@ -74,8 +76,27 @@ object ReleasePicker {
     fun newerThan(json: String, currentVersion: String): AndroidRelease? =
         newest(json)?.takeIf { AppVersion.isNewer(it.version, currentVersion) }
 
-    /** O APK só vem do github.com por https (o GitHub redireciona para o próprio CDN, também por https). */
-    fun isAllowedDownload(url: String): Boolean = url.startsWith("https://github.com/")
+    /** Os únicos lugares de onde um APK pode ser baixado (os mesmos repos de [UpdateNet.RELEASE_REPOS]). */
+    private val DOWNLOAD_ROOTS: List<String> = UpdateNet.RELEASE_REPOS.map { "/$it/releases/download/" }
+
+    /**
+     * O APK só vem de `https://github.com/{repo}/releases/download/…`, onde `{repo}` é um dos dois do Keys
+     * ([UpdateNet.RELEASE_REPOS]); o GitHub redireciona o download para o próprio CDN, também por https.
+     * Outro esquema, host, porta ou repositório é recusado (o host é comparado inteiro, então
+     * `github.com.evil` e `github.com@evil.com` não passam).
+     */
+    fun isAllowedDownload(url: String): Boolean {
+        val parsed = try {
+            URL(url)
+        } catch (_: MalformedURLException) {
+            return false
+        }
+        if (parsed.protocol != "https" || parsed.host != "github.com" || parsed.port != -1) return false
+        // Sem `.`/`..` no caminho: o GitHub resolveria para outro repositório.
+        val path = parsed.path
+        if (path.split('/').any { it == "." || it == ".." }) return false
+        return DOWNLOAD_ROOTS.any { path.startsWith(it) && path.length > it.length }
+    }
 
     private fun parseRelease(o: JSONObject): AndroidRelease? {
         if (o.optBoolean("draft", false) || o.optBoolean("prerelease", false)) return null

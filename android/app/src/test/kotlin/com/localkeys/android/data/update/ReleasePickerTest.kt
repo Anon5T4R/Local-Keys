@@ -90,4 +90,101 @@ class ReleasePickerTest {
         assertNull(AndroidRelease.fromJson(r.copy(apkUrl = "https://example.com/x.apk").toJson()))
         assertTrue(ReleasePicker.isAllowedDownload(r.apkUrl))
     }
+
+    // ── repositórios de releases e de onde o APK pode vir ─────────────────────────────────────────────
+
+    private val styx = "https://api.github.com/repos/Styx-Studios/Local-Keys/releases?per_page=30"
+    private val anon = "https://api.github.com/repos/Anon5T4R/Local-Keys/releases?per_page=30"
+
+    private fun http(code: Int): Nothing = throw UpdateException(UpdateFailure.HTTP, code)
+
+    @Test
+    fun consulta_a_org_primeiro() {
+        val asked = mutableListOf<String>()
+        val json = UpdateNet.fetchReleasesJson { url -> asked += url; sample }
+        assertEquals(listOf(styx), asked)
+        assertEquals("0.5.0", ReleasePicker.newest(json)!!.version)
+    }
+
+    @Test
+    fun not_found_na_org_cai_no_repo_antigo() {
+        val asked = mutableListOf<String>()
+        val json = UpdateNet.fetchReleasesJson { url -> asked += url; if (url == styx) http(404) else sample }
+        assertEquals(listOf(styx, anon), asked)
+        assertEquals("0.5.0", ReleasePicker.newest(json)!!.version)
+    }
+
+    @Test
+    fun resposta_boa_na_org_nao_consulta_o_repo_antigo() {
+        val asked = mutableListOf<String>()
+        UpdateNet.fetchReleasesJson { url -> asked += url; "[]" }
+        assertEquals(listOf(styx), asked)
+    }
+
+    @Test
+    fun not_found_nos_dois_e_erro() {
+        val asked = mutableListOf<String>()
+        try {
+            UpdateNet.fetchReleasesJson { url -> asked += url; http(404) }
+            fail("esperava UpdateException")
+        } catch (e: UpdateException) {
+            assertEquals(UpdateFailure.HTTP, e.failure)
+            assertEquals(404, e.code)
+        }
+        assertEquals(listOf(styx, anon), asked)
+    }
+
+    @Test
+    fun erro_que_nao_e_not_found_nao_cai_para_o_segundo() {
+        val failures = listOf(
+            UpdateException(UpdateFailure.HTTP, 403),
+            UpdateException(UpdateFailure.HTTP, 500),
+            UpdateException(UpdateFailure.HTTP, 301),
+            UpdateException(UpdateFailure.NETWORK),
+            UpdateException(UpdateFailure.TOO_LARGE),
+        )
+        for (failure in failures) {
+            val asked = mutableListOf<String>()
+            try {
+                UpdateNet.fetchReleasesJson { url -> asked += url; throw failure }
+                fail("esperava UpdateException para $failure")
+            } catch (e: UpdateException) {
+                assertEquals(failure.failure, e.failure)
+                assertEquals(failure.code, e.code)
+            }
+            assertEquals("caiu para o repo antigo depois de $failure", listOf(styx), asked)
+        }
+    }
+
+    @Test
+    fun download_so_dos_dois_repos_do_keys() {
+        val download = "/releases/download/android-v0.8.0/local-keys-android-0.8.0.apk"
+        listOf("Styx-Studios/Local-Keys", "Anon5T4R/Local-Keys").forEach { repo ->
+            assertTrue(repo, ReleasePicker.isAllowedDownload("https://github.com/$repo$download"))
+        }
+        listOf(
+            "http://github.com/Styx-Studios/Local-Keys$download",
+            "https://github.com/Outro/Repo$download",
+            "https://github.com/Styx-Studios/Outro$download",
+            "https://github.com/Styx-Studios/Local-Keys-evil$download",
+            "https://github.com/Styx-Studios/Local-Keys/other$download",
+            "https://github.com/Styx-Studios/Local-Keys/releases/download/../../Outro/Repo$download",
+            "https://github.com.evil/Styx-Studios/Local-Keys$download",
+            "https://github.com@evil.com/Styx-Studios/Local-Keys$download",
+            "https://evil.com/?https://github.com/Styx-Studios/Local-Keys$download",
+            "https://github.com:8443/Styx-Studios/Local-Keys$download",
+            "file:///Styx-Studios/Local-Keys$download",
+            "",
+        ).forEach { url -> assertTrue(url, !ReleasePicker.isAllowedDownload(url)) }
+    }
+
+    @Test
+    fun release_da_org_e_aceita_e_asset_de_outro_repo_e_ignorado() {
+        val json = "[" + listOf(
+            release("android-v0.9.0", listOf(asset("a.apk", url = "https://github.com/Outro/Repo/releases/download/x/a.apk"))),
+            release("android-v0.9.1", listOf(asset("a.apk", url = "https://github.com/Styx-Studios/Local-Keys/releases/download/x/a.apk"))),
+            release("android-v0.9.2", listOf(asset("a.apk", url = "https://github.com/Styx-Studios/Local-Keys-evil/releases/download/x/a.apk"))),
+        ).joinToString(",") + "]"
+        assertEquals("0.9.1", ReleasePicker.newest(json)!!.version)
+    }
 }

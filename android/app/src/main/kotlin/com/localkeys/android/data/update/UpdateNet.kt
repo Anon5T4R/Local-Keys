@@ -19,7 +19,13 @@ class UpdateException(val failure: UpdateFailure, val code: Int = 0, cause: Thro
  * cookies nem dados do usuário; o User-Agent é genérico. Nada aqui toca o cofre.
  */
 object UpdateNet {
-    const val RELEASES_URL = "https://api.github.com/repos/Anon5T4R/Local-Keys/releases?per_page=30"
+    /**
+     * Repositórios de releases, na ordem de consulta: a org primeiro; o antigo só é consultado se a org
+     * responder 404 (a mudança ainda não aconteceu ou já foi desfeita).
+     */
+    val RELEASE_REPOS: List<String> = listOf("Styx-Studios/Local-Keys", "Anon5T4R/Local-Keys")
+
+    fun releasesUrl(repo: String): String = "https://api.github.com/repos/$repo/releases?per_page=30"
     private const val USER_AGENT = "LocalKeys-Android"
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 30_000
@@ -27,9 +33,33 @@ object UpdateNet {
     const val MAX_APK_BYTES = 100L * 1024 * 1024
     private const val MAX_REDIRECTS = 5
 
-    /** O JSON da lista de releases. */
-    fun fetchReleasesJson(): String {
-        val conn = open(RELEASES_URL, accept = "application/vnd.github+json")
+    /**
+     * O JSON da lista de releases: consulta [RELEASE_REPOS] na ordem e cai para o seguinte só quando o
+     * anterior responder 404. Qualquer outro resultado — resposta boa, 403 de cota, rede, teto de tamanho —
+     * encerra a consulta (erro segue como veio). [fetch] lê uma URL e lança [UpdateException].
+     */
+    fun fetchReleasesJson(fetch: (url: String) -> String = ::fetchFrom): String {
+        var repo = 0
+        while (true) {
+            try {
+                return fetch(releasesUrl(RELEASE_REPOS[repo]))
+            } catch (e: UpdateException) {
+                val next = nextRepoAfter(repo, e) ?: throw e
+                repo = next
+            }
+        }
+    }
+
+    /** Depois do repo de índice [tried] falhar com [failure]: o índice do próximo a consultar, ou null para parar. */
+    internal fun nextRepoAfter(tried: Int, failure: UpdateException?): Int? =
+        if (failure != null && failure.failure == UpdateFailure.HTTP && failure.code == 404 && tried + 1 < RELEASE_REPOS.size) {
+            tried + 1
+        } else {
+            null
+        }
+
+    private fun fetchFrom(url: String): String {
+        val conn = open(url, accept = "application/vnd.github+json")
         try {
             val bytes = conn.inputStream.use { readCapped(it, MAX_JSON_BYTES) }
             return String(bytes, Charsets.UTF_8)
