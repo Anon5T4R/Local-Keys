@@ -271,6 +271,7 @@
 @plural	{n} item added from the other vault|{n} items added from the other vault	{n} item adicionado do outro cofre|{n} itens adicionados do outro cofre
 @plural	{n} item kept as a duplicate (same id)|{n} items kept as duplicates (same id)	{n} item mantido em duplicidade (mesmo id)|{n} itens mantidos em duplicidade (mesmo id)
 @plural	{n} item was already here|{n} items were already here	{n} item já estava aqui|{n} itens já estavam aqui
+@plural	{n} item was already here under another id|{n} items were already here under another id	{n} item já estava aqui com outro id|{n} itens já estavam aqui com outro id
 @plural	{n} folder added from the other vault|{n} folders added from the other vault	{n} pasta adicionada do outro cofre|{n} pastas adicionadas do outro cofre
 @plural	{n} folder united with a folder of this vault|{n} folders united with folders of this vault	{n} pasta unida a uma pasta deste cofre|{n} pastas unidas a pastas deste cofre
 @plural	{n} item added from the other copy|{n} items added from the other copy	{n} item adicionado da outra cópia|{n} itens adicionados da outra cópia

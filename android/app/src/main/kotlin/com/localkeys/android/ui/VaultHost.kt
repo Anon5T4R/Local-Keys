@@ -53,6 +53,8 @@ data class HostCallbacks(
     val onMoveVault: (String) -> Unit,
     /** Escolher a outra cópia para sincronizar. */
     val onSyncOther: () -> Unit,
+    /** Escolher outro cofre (DIFERENTE) para juntar neste; o outro arquivo só é lido. */
+    val onMergeOther: () -> Unit,
     /** Exportar a seleção para um cofre NOVO: abre o "criar" do sistema (`exported-vault.tkeys`). */
     val onExportVault: () -> Unit,
 )
@@ -126,6 +128,7 @@ fun VaultHost(
         onImportFile = callbacks.onPickImport,
         onImportOther = callbacks.onImportOther,
         onExport = { exportOpen = true },
+        onMergeOther = callbacks.onMergeOther,
         onFolders = { push(Route.Folders) },
         onTrash = { push(Route.Trash) },
         onSettings = { push(Route.Settings) },
@@ -304,6 +307,15 @@ fun VaultHost(
             onPassword = viewModel::onSyncPassword,
             onConfirm = viewModel::confirmSync,
             onCancel = viewModel::cancelSync,
+        )
+    }
+    viewModel.mergeOther.stage?.let { stage ->
+        MergeOtherDialog(
+            stage = stage,
+            busy = state.busy,
+            onPassword = viewModel::onMergeOtherPassword,
+            onConfirm = viewModel::confirmMergeOther,
+            onCancel = viewModel::cancelMergeOther,
         )
     }
     if (newItemOpen) {

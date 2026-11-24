@@ -61,6 +61,12 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) viewModel.onSyncOtherChosen(uri)
         }
 
+    /** Juntar outro cofre diferente: só é lido; o resumo vem antes de gravar o cofre aberto. */
+    private val mergeOtherLauncher: ActivityResultLauncher<Array<String>> =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) viewModel.onMergeOtherChosen(uri)
+        }
+
     private val exportLauncher: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
             if (uri != null) viewModel.onExportUriChosen(uri)
@@ -114,6 +120,7 @@ class MainActivity : AppCompatActivity() {
                         onOpenVault = { openVaultLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
                         onMoveVault = { name -> moveVaultLauncher.launch(name) },
                         onSyncOther = { syncOtherLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
+                        onMergeOther = { mergeOtherLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
                         onExportVault = { exportVaultLauncher.launch("exported-vault.tkeys") },
                     ),
                 )

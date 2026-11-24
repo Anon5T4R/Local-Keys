@@ -593,4 +593,44 @@
     <string name="sync_done">Synced: this vault and %1$s are now identical.</string>
     <string name="sync_other_failed">This vault was updated, but %1$s was not: %2$s</string>
     <string name="op_sync">Sync</string>
+    <string name="menu_merge_other">Merge another vault\u2026</string>
+    <string name="merge_other_same_file">That is the vault already open. Pick another vault.</string>
+    <string name="merge_other_open_failed">Could not open the other vault: %1$s</string>
+    <string name="merge_other_failed">The vaults could not be merged: %1$s</string>
+    <string name="merge_other_too_big">The two vaults together are over the phone\'s 20 MB merge limit. Merge them on the desktop.</string>
+    <string name="merge_other_result_too_big">The merged vault would be over the phone\'s 20 MB merge limit. Merge them on the desktop.</string>
+    <string name="merge_other_password_title">Password of the other vault</string>
+    <string name="merge_other_password_message">%1$s does not open with the password of this vault. Type its master password. Only this vault is changed; the other file is never written.</string>
+    <string name="merge_other_summary_title">Merge %1$s into this vault?</string>
+    <string name="merge_other_summary_nothing_title">%1$s is already here</string>
+    <string name="merge_other_summary_nothing">Nothing to merge: this vault already has everything from the other vault.</string>
+    <string name="merge_other_summary_note">The other vault is only read; this vault is saved once.</string>
+    <string name="merge_other_confirm">Merge</string>
+    <string name="merge_other_close">Close</string>
+    <string name="merge_other_done">Merged %1$s into this vault.</string>
+    <string name="op_merge">Merge</string>
+    <plurals name="merge_other_added">
+        <item quantity="one">%1$d item added from the other vault</item>
+        <item quantity="other">%1$d items added from the other vault</item>
+    </plurals>
+    <plurals name="merge_other_duplicates">
+        <item quantity="one">%1$d item kept as a duplicate (same id)</item>
+        <item quantity="other">%1$d items kept as duplicates (same id)</item>
+    </plurals>
+    <plurals name="merge_other_already">
+        <item quantity="one">%1$d item was already here</item>
+        <item quantity="other">%1$d items were already here</item>
+    </plurals>
+    <plurals name="merge_other_content_already">
+        <item quantity="one">%1$d item was already here under another id</item>
+        <item quantity="other">%1$d items were already here under another id</item>
+    </plurals>
+    <plurals name="merge_other_folders_added">
+        <item quantity="one">%1$d folder added from the other vault</item>
+        <item quantity="other">%1$d folders added from the other vault</item>
+    </plurals>
+    <plurals name="merge_other_folders_merged">
+        <item quantity="one">%1$d folder united with a folder of this vault</item>
+        <item quantity="other">%1$d folders united with folders of this vault</item>
+    </plurals>
 </resources>

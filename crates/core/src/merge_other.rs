@@ -10,14 +10,19 @@
 //! - mesmo id e **conteúdo igual** → nada a fazer (`already_present`);
 //! - mesmo id e **conteúdo diferente** → ficam os dois: o que entra ganha um **id novo** (o do aberto não muda) e o
 //!   item vai inteiro; se o conteúdo do outro já existe no aberto sob OUTRO id (a duplicata de uma passada anterior),
-//!   conta como `already_present` — é o que torna a junção idempotente;
+//!   conta em `content_already_present` — é o que torna a junção idempotente;
 //! - item na lixeira do outro entra como está (na lixeira);
 //! - pastas: mesmo id → usa a do aberto; id diferente com o **mesmo nome** (comparação exata) → une, os itens que
-//!   apontavam para a pasta do outro passam a apontar para a do aberto; senão a pasta entra inteira (com as chaves
-//!   que o app não conhece). Pasta órfã de um item do outro é preservada como está;
+//!   apontavam para a pasta do outro passam a apontar para a do aberto (a pasta só conta em `folders_merged` quando
+//!   algum item foi de fato reapontado) e as chaves desconhecidas da pasta do outro que a do aberto não tem entram
+//!   nela (as do aberto vencem); senão a pasta entra inteira (com as chaves que o app não conhece). Pasta órfã de um
+//!   item do outro é preservada como está;
 //! - só `folders` e `items` do outro entram; a raiz (versão, preferências, chaves desconhecidas do cofre) é a do
 //!   aberto;
-//! - `updatedAt` dos itens que entram **não** muda: carimbar o cofre é do chamador, não da regra.
+//! - `updatedAt` dos itens que entram **não** muda: carimbar o cofre é do chamador, não da regra;
+//! - item sem `id` (ou com `id` vazio) no cofre **aberto** recusa a junção inteira ([`MergeOtherError::ItemWithoutId`]):
+//!   é a única saída defensiva em que um defeito do cofre aberto impede juntar (itens do outro com o mesmo defeito
+//!   também recusam, pelo mesmo motivo).
 //!
 //! A função é **pura em relação ao disco** (recebe e devolve JSON) e devolve o **resumo** que a tela mostra antes de
 //! confirmar. O formato `.tkeys` não ganha chave nenhuma.
@@ -36,11 +41,14 @@ pub struct MergeSummary {
     pub added: u32,
     /// Mesmo id e conteúdo diferente: entraram com um id novo (ficaram os dois).
     pub collisions: u32,
-    /// Itens que os dois cofres já tinham com o mesmo conteúdo.
+    /// Itens que os dois cofres já tinham com o mesmo conteúdo e o mesmo id.
     pub already_present: u32,
+    /// Itens cujo conteúdo já estava no aberto sob OUTRO id (a duplicata de uma junção anterior) — não entraram de
+    /// novo, é o que mantém a junção idempotente.
+    pub content_already_present: u32,
     /// Pastas do outro que entraram inteiras.
     pub folders_added: u32,
-    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome (id diferente).
+    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome, com pelo menos um item reapontado.
     pub folders_merged: u32,
 }
 
@@ -48,8 +56,8 @@ impl std::fmt::Display for MergeSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} added, {} in duplicate, {} already present, {} folders added, {} folders merged",
-            self.added, self.collisions, self.already_present, self.folders_added, self.folders_merged
+            "{} added, {} in duplicate, {} already present, {} content already present, {} folders added, {} folders merged",
+            self.added, self.collisions, self.already_present, self.content_already_present, self.folders_added, self.folders_merged
         )
     }
 }
@@ -159,6 +167,8 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
         }
     }
     let mut folder_map: BTreeMap<String, String> = BTreeMap::new();
+    // Pastas do outro unidas por nome (id do outro → id do aberto): só contam no resumo se um item for reapontado.
+    let mut united: BTreeMap<String, String> = BTreeMap::new();
     let mut merged_folders: Vec<Value> = base_folders.clone();
     let mut summary = MergeSummary::default();
     for folder in other_folders {
@@ -170,7 +180,10 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
         let same_name = folder.get("name").and_then(Value::as_str).and_then(|name| base_ids_by_name.get(name).copied());
         if let Some(base_id) = same_name {
             folder_map.insert(id.to_string(), base_id.to_string());
-            summary.folders_merged += 1;
+            united.insert(id.to_string(), base_id.to_string());
+            // Escrita conservadora: as chaves da pasta do outro que a do aberto não tem entram nela (as do aberto
+            // vencem; id e nome são os do aberto).
+            merge_folder_keys(&mut merged_folders, base_id, folder);
             continue;
         }
         merged_folders.push(folder.clone());
@@ -184,12 +197,16 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
     let base_by_id: BTreeMap<&str, &Value> =
         base_items.iter().filter_map(|item| item.get("id").and_then(Value::as_str).map(|id| (id, item))).collect();
     let mut merged_items: Vec<Value> = base_items.clone();
+    // Pastas unidas que tiveram pelo menos um item do outro reapontado para a do aberto NESTA junção.
+    let mut repointed: BTreeSet<&str> = BTreeSet::new();
     for item in other_items {
         let id = id_of(item, "item", "other")?;
+        let source_folder = item.get("folderId").and_then(Value::as_str);
         let incoming = remap_folder(item, &folder_map);
         let Some(current) = base_by_id.get(id) else {
             // Id que só existe no outro: entra inteiro, com o id dele.
             merged_items.push(incoming);
+            mark_repointed(&mut repointed, &united, source_folder);
             summary.added += 1;
             continue;
         };
@@ -197,23 +214,51 @@ pub fn merge_other(base: &Value, other: &Value) -> Result<(Value, MergeSummary),
             summary.already_present += 1;
             continue;
         }
-        // O conteúdo pode já estar no aberto sob OUTRO id: é a duplicata de uma junção anterior. Conta como presente
+        // O conteúdo pode já estar no aberto sob OUTRO id: é a duplicata de uma junção anterior. Não entra de novo
         // (sem isso, juntar o mesmo cofre duas vezes criaria outra duplicata).
         if base_items.iter().any(|item| same_content(item, &incoming)) {
-            summary.already_present += 1;
+            summary.content_already_present += 1;
             continue;
         }
         // Mesmo id e conteúdo diferente: ficam os dois; o que entra ganha um id novo.
         let mut duplicate = incoming;
         duplicate["id"] = Value::String(new_id(&mut taken));
         merged_items.push(duplicate);
+        mark_repointed(&mut repointed, &united, source_folder);
         summary.collisions += 1;
     }
+    summary.folders_merged = united.iter().filter(|(other_id, _)| repointed.contains(other_id.as_str())).count() as u32;
 
     let mut merged = base.clone();
     merged["items"] = Value::Array(merged_items);
     merged["folders"] = Value::Array(merged_folders);
     Ok((merged, summary))
+}
+
+/// As chaves da pasta do outro que a pasta do aberto NÃO tem entram nela; `id`, `name` e as chaves já existentes
+/// ficam os do aberto (escrita conservadora, como nos itens).
+fn merge_folder_keys(folders: &mut [Value], base_id: &str, other: &Value) {
+    let Some(source) = other.as_object() else {
+        return;
+    };
+    let Some(target) = folders.iter_mut().find(|folder| folder.get("id").and_then(Value::as_str) == Some(base_id)).and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    for (key, value) in source {
+        if key != "id" && key != "name" && !target.contains_key(key) {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// Marca que um item que entrou foi reapontado de uma pasta unida para a do aberto (conta em `folders_merged`).
+fn mark_repointed<'a>(repointed: &mut BTreeSet<&'a str>, united: &BTreeMap<String, String>, source_folder: Option<&'a str>) {
+    if let Some(folder_id) = source_folder
+        && united.contains_key(folder_id)
+    {
+        repointed.insert(folder_id);
+    }
 }
 
 /// Igualdade de conteúdo de item **sem o `id`** (a duplicata de uma junção anterior tem outro id).

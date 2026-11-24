@@ -4016,6 +4016,14 @@ impl KeysApp {
                     ),
                     (s.already_present as u64, tr_n(s.already_present as u64, "{n} item was already here", "{n} items were already here")),
                     (
+                        s.content_already_present as u64,
+                        tr_n(
+                            s.content_already_present as u64,
+                            "{n} item was already here under another id",
+                            "{n} items were already here under another id",
+                        ),
+                    ),
+                    (
                         s.folders_added as u64,
                         tr_n(s.folders_added as u64, "{n} folder added from the other vault", "{n} folders added from the other vault"),
                     ),

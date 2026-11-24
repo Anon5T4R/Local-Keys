@@ -2741,7 +2741,8 @@ fn exporting_over_the_open_vault_is_refused() {
 
 /// Um cofre com a pasta "Work" (itens dentro) + um `outro.tkeys` sintético: um item igual, um em colisão (mesmo id,
 /// conteúdo diferente), dois novos e uma pasta com o mesmo nome ("Work", id diferente) e outra nova ("Nova").
-fn unlocked_for_merge(name: &str, prefs: Prefs) -> (KeysApp, std::path::PathBuf) {
+/// Devolve também o JSON do outro cofre (sem o selo) para um teste montar outra variante dele.
+fn unlocked_for_merge(name: &str, prefs: Prefs) -> (KeysApp, std::path::PathBuf, serde_json::Value) {
     let (app, _folder_id) = unlocked_in_folder(name, "Work", prefs);
     let dir = scratch(name);
     std::fs::create_dir_all(&dir).expect("pasta do teste");
@@ -2768,7 +2769,7 @@ fn unlocked_for_merge(name: &str, prefs: Prefs) -> (KeysApp, std::path::PathBuf)
     let bytes = serde_json::to_vec(&other).expect("json do outro");
     let file = app.session.as_ref().expect("sessão viva").seal(&bytes).expect("sela o outro");
     std::fs::write(&target, &file).expect("grava o outro");
-    (app, target)
+    (app, target, other)
 }
 
 /// Escreve um `outro.tkeys` com a senha PRÓPRIA (salt diferente): o cofre aberto não o abre pela chave da sessão.
@@ -2789,7 +2790,7 @@ fn merge_chosen(harness: &mut Harness<'_, KeysApp>, path: &std::path::Path) {
 /// fica byte a byte igual.
 #[test]
 fn merging_another_vault_shows_the_summary_and_writes_once() {
-    let (mut app, other_path) = unlocked_for_merge("merge-other", Prefs::new("en", ThemeMode::Dark));
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-other", Prefs::new("en", ThemeMode::Dark));
     let dir = scratch("merge-other-apply");
     std::fs::create_dir_all(&dir).expect("pasta do teste");
     app.path = dir.join("cofre.tkeys").display().to_string();
@@ -2834,7 +2835,7 @@ fn merging_another_vault_shows_the_summary_and_writes_once() {
 /// Cancelar no resumo não grava nem muda o cofre; o outro arquivo continua igual.
 #[test]
 fn cancelling_the_merge_summary_writes_nothing() {
-    let (mut app, other_path) = unlocked_for_merge("merge-cancel", Prefs::new("en", ThemeMode::Dark));
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-cancel", Prefs::new("en", ThemeMode::Dark));
     let dir = scratch("merge-cancel-write");
     std::fs::create_dir_all(&dir).expect("pasta do teste");
     app.path = dir.join("cofre.tkeys").display().to_string();
@@ -2859,7 +2860,7 @@ fn cancelling_the_merge_summary_writes_nothing() {
 /// O outro cofre com outra senha: sem a senha certa o resumo não abre; a mensagem aparece e nada é gravado.
 #[test]
 fn merging_the_other_vault_with_a_wrong_password_reports_and_writes_nothing() {
-    let (mut app, other_path) = unlocked_for_merge("merge-password", Prefs::new("en", ThemeMode::Dark));
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-password", Prefs::new("en", ThemeMode::Dark));
     write_other_with_password(&other_path, "senha-do-outro");
     let dir = scratch("merge-password-write");
     std::fs::create_dir_all(&dir).expect("pasta do teste");
@@ -2894,7 +2895,7 @@ fn merging_the_other_vault_with_a_wrong_password_reports_and_writes_nothing() {
 /// Nada a juntar (o outro cofre já está inteiro aqui): o resumo diz isso e o único botão é Fechar.
 #[test]
 fn merging_a_vault_with_nothing_new_says_nothing_to_merge() {
-    let (mut app, other_path) = unlocked_for_merge("merge-nothing", Prefs::new("en", ThemeMode::Dark));
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-nothing", Prefs::new("en", ThemeMode::Dark));
     let dir = scratch("merge-nothing-write");
     std::fs::create_dir_all(&dir).expect("pasta do teste");
     app.path = dir.join("cofre.tkeys").display().to_string();
@@ -2916,4 +2917,47 @@ fn merging_a_vault_with_nothing_new_says_nothing_to_merge() {
     harness.run_steps(2);
     assert!(harness.state().merge_plan.is_none());
     assert_eq!(harness.state().persist_count, baseline, "fechar não grava");
+}
+
+/// Juntar de novo o mesmo outro cofre (com um item novo): a duplicata que entrou na primeira passada agora conta em
+/// "já estava com outro id" (linha própria do resumo) e o resto continua dizendo "já estava aqui".
+#[test]
+fn merging_again_reports_content_already_present() {
+    let (mut app, other_path, mut other) = unlocked_for_merge("merge-again", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("merge-again-write");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+    click_labelled_button(&mut harness, "Merge");
+    assert!(harness.state().err.is_none(), "a primeira junção não deu erro: {:?}", harness.state().err);
+    harness.run_steps(2);
+
+    // Outra variante do outro cofre: a colisão continua lá e um item novo chega.
+    other["items"].as_array_mut().expect("itens do outro").push(serde_json::json!({
+        "id": "novo-extra", "kind": "note", "name": "Extra", "favorite": false,
+        "notes": "", "createdAt": 1, "updatedAt": 2, "deletedAt": null
+    }));
+    let bytes = serde_json::to_vec(&other).expect("json do outro");
+    let file = harness.state().session.as_ref().expect("sessão viva").seal(&bytes).expect("sela o outro");
+    std::fs::write(&other_path, &file).expect("grava o outro");
+
+    merge_chosen(&mut harness, &other_path);
+    wait_for_job(&mut harness);
+
+    let plan = harness.state().merge_plan.clone().expect("o resumo da segunda junção");
+    assert_eq!(
+        (plan.summary.added, plan.summary.collisions, plan.summary.already_present, plan.summary.content_already_present),
+        (1, 0, 3, 1),
+        "o que veio novo entra; o que já está sob outro id não entra de novo"
+    );
+    harness.get_by_label("1 item added from the other vault");
+    harness.get_by_label("3 items were already here");
+    harness.get_by_label("1 item was already here under another id");
+    click_labelled_button(&mut harness, "Cancel");
+    harness.run_steps(2);
+    assert!(harness.state().merge_plan.is_none(), "cancelar fecha o resumo");
 }

@@ -60,14 +60,18 @@ gravado depois do resumo confirmado. A regra vive em `crates/core/src/merge_othe
   desconhecidas vêm juntos).
 - Mesmo id e **conteúdo igual** → nada a fazer ("já estava").
 - Mesmo id e **conteúdo diferente** → ficam os dois: o que entra ganha um **id novo** (o do aberto não muda). Se o
-  conteúdo do outro já existe no aberto sob OUTRO id (a duplicata de uma junção anterior), conta como "já estava" — é
-  o que torna a junção idempotente.
+  conteúdo do outro já existe no aberto sob OUTRO id (a duplicata de uma junção anterior), não entra de novo e conta em
+  `content_already_present` ("já estava com outro id") — é o que torna a junção idempotente.
 - Item na lixeira do outro entra como está (na lixeira). `updatedAt` de nada que entra muda (carimbar é do chamador).
 - Pastas: mesmo id → a do aberto; id diferente com o **mesmo nome** → une (os itens da pasta do outro repontam para a
-  do aberto); senão a pasta entra inteira (com as chaves que o app não conhece). Pasta órfã de um item é preservada.
+  do aberto; a pasta só conta em `folders_merged` quando algum item foi de fato reapontado, e as chaves desconhecidas
+  da pasta do outro que a do aberto não tem entram nela — as do aberto vencem); senão a pasta entra inteira (com as
+  chaves que o app não conhece). Pasta órfã de um item é preservada.
 - Só `folders` e `items` do outro entram; a raiz (versão, chaves desconhecidas) é a do aberto.
-- Resumo antes de confirmar: itens adicionados, colisões (duplicados com id novo), já presentes, pastas adicionadas e
-  pastas unidas.
+- **Item sem `id` (ou com `id` vazio) no cofre aberto recusa a junção inteira** — é a única saída defensiva em que um
+  defeito do cofre aberto impede juntar. O mesmo defeito no outro cofre também recusa.
+- Resumo antes de confirmar: itens adicionados, colisões (duplicados com id novo), já presentes, já presentes com
+  outro id, pastas adicionadas e pastas unidas.
 
 As fixtures dessa regra ficam ao lado das de sincronização, com o prefixo `other-`:
 `other-<caso>-{base,other,expected,summary}.json`. O id que a regra gera aparece no esperado como `"<new>"` (o runner

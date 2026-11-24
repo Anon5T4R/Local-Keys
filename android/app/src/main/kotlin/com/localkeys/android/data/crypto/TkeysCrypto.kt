@@ -185,6 +185,7 @@ fun mergeOtherVault(base: Vault, other: Vault): MergeOtherResult {
         added = out.added.toInt(),
         collisions = out.collisions.toInt(),
         alreadyPresent = out.alreadyPresent.toInt(),
+        contentAlreadyPresent = out.contentAlreadyPresent.toInt(),
         foldersAdded = out.foldersAdded.toInt(),
         foldersMerged = out.foldersMerged.toInt(),
     )
@@ -196,6 +197,7 @@ data class MergeOtherResult(
     val added: Int,
     val collisions: Int,
     val alreadyPresent: Int,
+    val contentAlreadyPresent: Int,
     val foldersAdded: Int,
     val foldersMerged: Int,
 )

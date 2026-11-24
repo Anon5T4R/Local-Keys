@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.automirrored.outlined.CallMerge
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Fingerprint
@@ -96,6 +97,8 @@ data class VaultMenuActions(
     val onImportFile: () -> Unit,
     val onImportOther: (() -> Unit)?,
     val onExport: () -> Unit,
+    /** Juntar outro cofre DIFERENTE no aberto (o outro só é lido; o resumo vem antes de gravar). */
+    val onMergeOther: () -> Unit,
     val onFolders: () -> Unit,
     val onTrash: () -> Unit,
     val onSettings: () -> Unit,
@@ -488,6 +491,12 @@ private fun ListTopBar(filters: ListFilterState, busy: Boolean, menu: VaultMenuA
                         leadingIcon = { Icon(Icons.Outlined.FileUpload, contentDescription = null) },
                         enabled = !busy,
                         onClick = { pick(menu.onExport) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.menu_merge_other)) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.CallMerge, contentDescription = null) },
+                        enabled = !busy,
+                        onClick = { pick(menu.onMergeOther) },
                     )
                     HorizontalDivider()
                     DropdownMenuItem(

@@ -3,7 +3,8 @@
   "folders": [
     {
       "id": "f1",
-      "name": "Trabalho"
+      "name": "Trabalho",
+      "unknownFolderKey": true
     }
   ],
   "items": [

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "folders": [],
+  "items": [
+    {
+      "id": "i1",
+      "kind": "note",
+      "name": "A",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1,
+      "updatedAt": 2,
+      "deletedAt": null
+    },
+    {
+      "id": "dup",
+      "kind": "note",
+      "name": "B",
+      "favorite": false,
+      "folderId": null,
+      "notes": "",
+      "createdAt": 1,
+      "updatedAt": 2,
+      "deletedAt": null
+    }
+  ]
+}

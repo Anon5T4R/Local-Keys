@@ -20,7 +20,8 @@ Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-c
   escrita conservadora (`vault.rs`), importadores, exportação, TOTP e gerador. O Keys Android o usa por UniFFI
   (`crates/ffi`); nada de UI ou i18n entra aqui.
 - `crates/ffi` — `localkeys-ffi`, a ponte UniFFI do núcleo para o Kotlin (hoje: o formato `.tkeys`, a cripto, a sessão
-  de gravação, a conversão do tipo de um item, o lote de lixeira/pasta e o cofre novo a partir de uma seleção). **Workspace próprio** (fora do `Cargo.lock` e do `cargo-deny` do desktop: o UniFFI é MPL-2.0 e só entra
+  de gravação, a conversão do tipo de um item, o lote de lixeira/pasta, o cofre novo a partir de uma seleção e a
+  junção de outro cofre). **Workspace próprio** (fora do `Cargo.lock` e do `cargo-deny` do desktop: o UniFFI é MPL-2.0 e só entra
   no `.so` do Android). O Gradle o compila sozinho (`cargoBuildHost`, `generateUniffi`, `cargoNdk` em
   `android/app/build.gradle.kts`); precisa de Rust com os targets `*-linux-android`, `cargo install cargo-ndk` e o NDK.
   Os bindings Kotlin e os `.so` ficam fora do git. `cargo test` na pasta testa a ponte.
@@ -32,8 +33,9 @@ Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-c
 - `src/` — o app (`src/pickers.rs`: seletor nativo async via rfd + pollster,
   portal XDG no Linux; também `src/i18n.rs`, `src/prefs.rs`, `src/theme.rs`, `src/shell.rs` e
   `i18n/locales/<code>/*.tsv`)
-- `docs/sync-merge.md` — as regras de juntar duas cópias do cofre ("Sincronizar com outra cópia"), as mesmas no
-  Android e no desktop; os casos comuns (JSON puro) ficam em `testdata/sync-merge/` e os dois lados os rodam.
+- `docs/sync-merge.md` — as regras de juntar duas cópias do cofre ("Sincronizar com outra cópia") e de juntar outro
+  cofre diferente no aberto ("Juntar outro cofre"), as mesmas no Android e no desktop; os casos comuns (JSON puro)
+  ficam em `testdata/sync-merge/` e os dois lados os rodam.
 - Casca da suíte = `src/shell.rs` + craft-icons + craft-palette + craft-desktop-theme
   (espelhos do local-libs)
 - `icons/` — ícones do app (master PNG 1024)

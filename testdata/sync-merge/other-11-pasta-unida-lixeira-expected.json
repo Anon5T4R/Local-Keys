@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "folders": [
+    {
+      "id": "f1",
+      "name": "Trabalho"
+    }
+  ],
+  "items": [
+    {
+      "id": "i2",
+      "kind": "note",
+      "name": "Nota na lixeira",
+      "favorite": false,
+      "folderId": "f1",
+      "notes": "texto",
+      "createdAt": 1000,
+      "updatedAt": 1000,
+      "deletedAt": 1700000000000
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 //! Ponte UniFFI do `localkeys-core` para o Keys Android: o formato `.tkeys`, a criptografia (Argon2id +
-//! XChaCha20-Poly1305), a sessão de gravação, a conversão do tipo de um item e o cofre novo a partir de uma seleção
-//! são o MESMO código do desktop. Aqui só se traduz tipos: nenhuma regra nova e nenhuma primitiva própria — a
-//! conversão do `kind` é a regra do núcleo (`change_kind`) e o cofre novo é a do `vault_export`, expostas com os
-//! rótulos e o erro traduzidos. Os bindings Kotlin saem de `uniffi-bindgen` (ver `uniffi.toml`).
+//! XChaCha20-Poly1305), a sessão de gravação, a conversão do tipo de um item, o cofre novo a partir de uma seleção e a
+//! junção de outro cofre são o MESMO código do desktop. Aqui só se traduz tipos: nenhuma regra nova e nenhuma
+//! primitiva própria — a conversão do `kind` é a regra do núcleo (`change_kind`), o cofre novo é a do `vault_export` e
+//! a junção é a do `merge_other`, expostas com os rótulos e o erro traduzidos. Os bindings Kotlin saem de
+//! `uniffi-bindgen` (ver `uniffi.toml`).
 //!
 //! `panic = "abort"` no release: um panic dentro do `.so` derrubaria o processo de qualquer jeito, e abortar
 //! evita unwinding através do FFI. Os erros previstos viram [`FfiError`].
@@ -176,11 +177,13 @@ pub struct MergeOtherResult {
     pub added: u32,
     /// Mesmo id e conteúdo diferente: entraram com um id novo (ficaram os dois).
     pub collisions: u32,
-    /// Itens que os dois cofres já tinham com o mesmo conteúdo.
+    /// Itens que os dois cofres já tinham com o mesmo conteúdo e o mesmo id.
     pub already_present: u32,
+    /// Itens cujo conteúdo já estava no aberto sob OUTRO id (a duplicata de uma junção anterior): não entram de novo.
+    pub content_already_present: u32,
     /// Pastas do outro que entraram inteiras.
     pub folders_added: u32,
-    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome.
+    /// Pastas do outro unidas a uma pasta do aberto com o mesmo nome, com pelo menos um item reapontado.
     pub folders_merged: u32,
 }
 
@@ -196,6 +199,7 @@ pub fn merge_other_vault(base_json: String, other_json: String) -> Result<MergeO
         added: summary.added,
         collisions: summary.collisions,
         already_present: summary.already_present,
+        content_already_present: summary.content_already_present,
         folders_added: summary.folders_added,
         folders_merged: summary.folders_merged,
     })
@@ -463,12 +467,31 @@ mod tests {
         let out = merge_other_vault(base.into(), other.into()).unwrap();
 
         assert_eq!(
-            (out.added, out.collisions, out.already_present, out.folders_added, out.folders_merged),
-            (1, 1, 0, 0, 1)
+            (out.added, out.collisions, out.already_present, out.content_already_present, out.folders_added, out.folders_merged),
+            (1, 1, 0, 0, 0, 1)
         );
         assert!(out.merged_json.contains("\"id\":\"i2\""), "{}", out.merged_json);
         assert!(out.merged_json.contains("\"folderId\":\"f1\""), "a pasta unida foi repontada: {}", out.merged_json);
         assert!(out.merged_json.contains("A (outro cofre)"), "a colisão entrou: {}", out.merged_json);
+    }
+
+    #[test]
+    fn conteudo_ja_presente_sob_outro_id_conta_no_campo_proprio() {
+        // `i1` existe nos dois com conteúdo DIFERENTE, mas o conteúdo do outro (`B`) já está no aberto sob `dup`:
+        // é a duplicata de uma junção anterior, não entra de novo e conta em `content_already_present`.
+        let base = r#"{"version":1,"folders":[],"items":[
+            {"id":"i1","kind":"note","name":"A","createdAt":1,"updatedAt":2,"deletedAt":null},
+            {"id":"dup","kind":"note","name":"B","createdAt":1,"updatedAt":2,"deletedAt":null}]}"#;
+        let other = r#"{"version":1,"folders":[],"items":[
+            {"id":"i1","kind":"note","name":"B","createdAt":1,"updatedAt":2,"deletedAt":null}]}"#;
+
+        let out = merge_other_vault(base.into(), other.into()).unwrap();
+
+        assert_eq!(
+            (out.added, out.collisions, out.already_present, out.content_already_present),
+            (0, 0, 0, 1)
+        );
+        assert_eq!(out.merged_json.matches("\"id\":").count(), 2, "nada entrou: {}", out.merged_json);
     }
 
     #[test]

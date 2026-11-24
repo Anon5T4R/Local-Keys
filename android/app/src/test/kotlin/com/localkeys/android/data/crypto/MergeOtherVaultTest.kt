@@ -44,6 +44,7 @@ class MergeOtherVaultTest {
             assertEquals("$name: added", summary.getInt("added"), result.added)
             assertEquals("$name: collisions", summary.getInt("collisions"), result.collisions)
             assertEquals("$name: alreadyPresent", summary.getInt("alreadyPresent"), result.alreadyPresent)
+            assertEquals("$name: contentAlreadyPresent", summary.getInt("contentAlreadyPresent"), result.contentAlreadyPresent)
             assertEquals("$name: foldersAdded", summary.getInt("foldersAdded"), result.foldersAdded)
             assertEquals("$name: foldersMerged", summary.getInt("foldersMerged"), result.foldersMerged)
         }

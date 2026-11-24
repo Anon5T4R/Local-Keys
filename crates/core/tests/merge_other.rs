@@ -79,6 +79,7 @@ fn summary_json(s: &MergeSummary) -> Value {
         "added": s.added,
         "collisions": s.collisions,
         "alreadyPresent": s.already_present,
+        "contentAlreadyPresent": s.content_already_present,
         "foldersAdded": s.folders_added,
         "foldersMerged": s.folders_merged,
     })
@@ -141,9 +142,9 @@ fn casos_compartilhados() {
         let (again, again_summary) = merge_other(&merged, &other).unwrap_or_else(|e| panic!("{name} (de novo): {e}"));
         assert_same_vault(&format!("{name} (de novo)"), &merged, &again);
         assert_eq!(
-            (again_summary.added, again_summary.collisions, again_summary.folders_added),
-            (0, 0, 0),
-            "{name}: a segunda passada não adiciona nada"
+            (again_summary.added, again_summary.collisions, again_summary.folders_added, again_summary.folders_merged),
+            (0, 0, 0, 0),
+            "{name}: a segunda passada não adiciona nada nem conta pasta unida"
         );
     }
 }
@@ -175,8 +176,23 @@ fn cofre_invalido_e_item_sem_id_sao_erro() {
 /// O resumo tem uma linha curta em inglês (a tela traduz o que mostra).
 #[test]
 fn resumo_e_erros_tem_texto_em_ingles() {
-    let s = MergeSummary { added: 2, collisions: 1, already_present: 3, folders_added: 4, folders_merged: 5 };
-    assert_eq!(s.to_string(), "2 added, 1 in duplicate, 3 already present, 4 folders added, 5 folders merged");
+    let s = MergeSummary { added: 2, collisions: 1, already_present: 3, content_already_present: 4, folders_added: 5, folders_merged: 6 };
+    assert_eq!(s.to_string(), "2 added, 1 in duplicate, 3 already present, 4 content already present, 5 folders added, 6 folders merged");
     assert_eq!(MergeOtherError::MalformedVault { which: "other" }.to_string(), "the other vault has no valid `items`/`folders` lists");
     assert_eq!(MergeOtherError::ItemWithoutId { which: "base" }.to_string(), "an item in the base vault has no `id`");
+}
+
+/// Juntar um cofre com ele mesmo: nada muda e tudo conta como "já presente" (mesmo id e mesmo conteúdo).
+#[test]
+fn juntar_o_proprio_cofre_nao_muda_nada() {
+    let base = read_json(&cases_dir().join("other-01-item-novo-base.json"));
+    let items = item_ids(&base).len() as u32;
+
+    let (merged, summary) = merge_other(&base, &base).unwrap_or_else(|e| panic!("o próprio cofre não junta: {e}"));
+
+    assert!(json_same(&base, &merged), "o cofre não muda");
+    assert_eq!(
+        (summary.added, summary.collisions, summary.already_present, summary.content_already_present, summary.folders_added, summary.folders_merged),
+        (0, 0, items, 0, 0, 0)
+    );
 }

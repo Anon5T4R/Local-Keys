@@ -592,4 +592,44 @@
     <string name="sync_done">Sincronizado: este cofre e %1$s agora são iguais.</string>
     <string name="sync_other_failed">Este cofre foi atualizado, mas %1$s não: %2$s</string>
     <string name="op_sync">Sincronizar</string>
+    <string name="menu_merge_other">Juntar outro cofre\u2026</string>
+    <string name="merge_other_same_file">Esse é o cofre que já está aberto. Escolha outro cofre.</string>
+    <string name="merge_other_open_failed">Não foi possível abrir o outro cofre: %1$s</string>
+    <string name="merge_other_failed">Não foi possível juntar os cofres: %1$s</string>
+    <string name="merge_other_too_big">Os dois cofres somam mais que o limite de 20 MB para juntar no celular. Junte pelo desktop.</string>
+    <string name="merge_other_result_too_big">O cofre juntado passaria do limite de 20 MB para juntar no celular. Junte pelo desktop.</string>
+    <string name="merge_other_password_title">Senha do outro cofre</string>
+    <string name="merge_other_password_message">%1$s não abre com a senha deste cofre. Digite a senha mestra dele. Só este cofre é alterado; o outro arquivo nunca é gravado.</string>
+    <string name="merge_other_summary_title">Juntar %1$s neste cofre?</string>
+    <string name="merge_other_summary_nothing_title">%1$s já está aqui</string>
+    <string name="merge_other_summary_nothing">Nada a juntar: este cofre já tem tudo do outro cofre.</string>
+    <string name="merge_other_summary_note">O outro cofre é só lido; este cofre é gravado uma vez.</string>
+    <string name="merge_other_confirm">Juntar</string>
+    <string name="merge_other_close">Fechar</string>
+    <string name="merge_other_done">%1$s foi juntado neste cofre.</string>
+    <string name="op_merge">Juntar</string>
+    <plurals name="merge_other_added">
+        <item quantity="one">%1$d item adicionado do outro cofre</item>
+        <item quantity="other">%1$d itens adicionados do outro cofre</item>
+    </plurals>
+    <plurals name="merge_other_duplicates">
+        <item quantity="one">%1$d item mantido em duplicidade (mesmo id)</item>
+        <item quantity="other">%1$d itens mantidos em duplicidade (mesmo id)</item>
+    </plurals>
+    <plurals name="merge_other_already">
+        <item quantity="one">%1$d item já estava aqui</item>
+        <item quantity="other">%1$d itens já estavam aqui</item>
+    </plurals>
+    <plurals name="merge_other_content_already">
+        <item quantity="one">%1$d item já estava aqui com outro id</item>
+        <item quantity="other">%1$d itens já estavam aqui com outro id</item>
+    </plurals>
+    <plurals name="merge_other_folders_added">
+        <item quantity="one">%1$d pasta adicionada do outro cofre</item>
+        <item quantity="other">%1$d pastas adicionadas do outro cofre</item>
+    </plurals>
+    <plurals name="merge_other_folders_merged">
+        <item quantity="one">%1$d pasta unida a uma pasta deste cofre</item>
+        <item quantity="other">%1$d pastas unidas a pastas deste cofre</item>
+    </plurals>
 </resources>
