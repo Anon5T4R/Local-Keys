@@ -192,15 +192,148 @@ fn chave_desconhecida_com_valor_no_objeto_tipado_e_erro() {
 
 #[test]
 fn chave_desconhecida_vazia_nao_bloqueia() {
+    // `null`, só espaço, lista vazia e objeto vazio não carregam dado: não bloqueiam e somem com o objeto tipado.
     let item = json!({
         "id": "x",
         "kind": "login",
         "name": "n",
-        "login": {"username": "u", "extra": "  ", "outra": [], "outro": null}
+        "login": {"username": "u", "extra": "  ", "outra": [], "outro": null, "objeto": {}, "lista": []}
     });
     let converted = change_kind(&item, ItemKind::Note, &FieldLabels::default()).unwrap();
     assert_eq!(converted["kind"], "note");
+    assert!(converted.get("login").is_none(), "o objeto tipado saiu junto com as chaves vazias");
     assert_eq!(converted["customFields"][0]["value"], "u");
+    assert_eq!(names(converted["customFields"].as_array().unwrap_or_else(|| unreachable!("gerou campos"))), ["Username"]);
+}
+
+/// Cada variante de erro que ainda não tinha teste: o erro E o item/cofre intacto.
+#[test]
+fn erros_previstos_deixam_o_item_e_o_cofre_intactos() {
+    let default = FieldLabels::default();
+
+    // `NotAnObject`: o item (ou o cofre) não é objeto JSON.
+    for item in [json!("texto"), json!([{"id": "x"}]), json!(null)] {
+        assert_eq!(change_kind(&item, ItemKind::Note, &default), Err(ChangeKindError::NotAnObject), "{item}");
+    }
+
+    // `UnexpectedValue`: chave conhecida com tipo que o schema não prevê (`uris` sem ser lista / entrada não-string).
+    for login in [json!({"username": "u", "uris": "https://a"}), json!({"uris": ["https://a", 7]})] {
+        let item = json!({"id": "x", "kind": "login", "name": "n", "login": login});
+        let mut vault = json!({"items": [item.clone()]});
+        assert_eq!(
+            change_item_kind(&mut vault, "x", ItemKind::Note, &default),
+            Err(ChangeKindError::UnexpectedValue { object: "login", field: "uris" }),
+            "{login}"
+        );
+        assert_eq!(vault["items"][0], item, "{login}: item intacto");
+    }
+
+    // `MalformedCustomFields`: `customFields` que não é lista é erro mesmo quando nada seria gerado (o cartão está
+    // todo vazio, então a conversão não geraria campo nenhum).
+    for fields in [json!(null), json!({}), json!("nada")] {
+        let item = json!({
+            "id": "x", "kind": "card", "name": "n",
+            "card": {"cardholder": "", "brand": "", "number": "", "exp": "", "code": ""},
+            "customFields": fields
+        });
+        let mut vault = json!({"items": [item.clone()]});
+        assert_eq!(change_item_kind(&mut vault, "x", ItemKind::Note, &default), Err(ChangeKindError::MalformedCustomFields), "{fields}");
+        assert_eq!(vault["items"][0], item, "{fields}: item intacto");
+    }
+
+    // `MalformedVault`: cofre sem `items` (ou `items` que não é lista) é erro, não "item inexistente".
+    for raw in [json!({}), json!({"items": null}), json!({"items": {}}), json!({"items": "nada"}), json!("nada")] {
+        let mut raw = raw;
+        let before = raw.clone();
+        assert_eq!(change_item_kind(&mut raw, "x", ItemKind::Note, &default), Err(ChangeKindError::MalformedVault), "{raw}");
+        assert_eq!(raw, before, "{raw}: cofre intacto");
+    }
+    assert_eq!(ChangeKindError::MalformedVault.to_string(), "vault has no `items` list");
+}
+
+/// Objeto tipado que não é objeto (string, lista, número…) não atravessa mais intacto nem some em silêncio: é erro,
+/// e o item fica como estava.
+#[test]
+fn objeto_tipado_que_nao_e_objeto_e_erro() {
+    for value in [json!("texto"), json!(["https://a"]), json!(7)] {
+        let item = json!({"id": "x", "kind": "login", "name": "n", "login": value});
+        let mut vault = json!({"items": [item.clone()]});
+        assert_eq!(
+            change_item_kind(&mut vault, "x", ItemKind::Note, &FieldLabels::default()),
+            Err(ChangeKindError::MalformedTypedObject { object: "login" }),
+            "{value}"
+        );
+        assert_eq!(vault["items"][0], item, "{value}: item intacto");
+    }
+    assert_eq!(ChangeKindError::MalformedTypedObject { object: "card" }.to_string(), "cannot convert `card`: not a JSON object");
+}
+
+/// Objeto tipado `null` não carrega dado nenhum: conta como ausente e sai do item, sem erro e sem campo extra.
+#[test]
+fn objeto_tipado_null_conta_como_ausente() {
+    let item = json!({"id": "x", "kind": "note", "name": "n", "login": null, "card": null});
+    let converted = change_kind(&item, ItemKind::Identity, &FieldLabels::default()).unwrap();
+    assert!(converted.get("login").is_none());
+    assert!(converted.get("card").is_none());
+    assert!(converted.get("customFields").is_none());
+}
+
+/// Nome de campo gerado não repete um nome que o item já tem (nem os gerados antes no mesmo item): o sufixo avança
+/// até um livre. Vale para qualquer rótulo, não só para as `uris`.
+#[test]
+fn nome_de_campo_gerado_nao_repete_o_que_ja_existe() {
+    let item = json!({
+        "id": "x",
+        "kind": "login",
+        "name": "n",
+        "login": {"username": "u", "password": "p", "uris": ["https://a", "https://b", "https://c"]},
+        "customFields": [
+            {"id": "c1", "name": "Website 2", "value": "antigo", "hidden": false},
+            {"id": "c2", "name": "Password", "value": "antiga", "hidden": true}
+        ]
+    });
+    let converted = change_kind(&item, ItemKind::Note, &FieldLabels::default()).unwrap();
+    let fields = converted["customFields"].as_array().unwrap_or_else(|| unreachable!("tem campos"));
+    assert_eq!(names(fields), ["Website 2", "Password", "Username", "Password 2", "Website", "Website 3", "Website 4"]);
+    // Os campos antigos continuam na frente e intactos.
+    assert_eq!(fields[0]["value"], "antigo");
+    assert_eq!(fields[1]["value"], "antiga");
+}
+
+/// Itens reais dos importadores (CSV, Bitwarden JSON — o que o `bwdecrypt` entrega — e KeePass) convertem para os
+/// outros três tipos: nenhum importador grava chave desconhecida dentro de `login`/`card`/`identity`.
+#[test]
+fn itens_dos_importadores_convertem_para_todos_os_tipos() {
+    let csv = "name,username,password,url,totp,notes,banco\n\
+               \"Gmail, pessoal\",joao,\"sen,ha\",https://gmail.com,JBSWY3DPEHPK3PXP,linha 1,gmail\n";
+    let bitwarden = r#"{"items":[
+        {"type":1,"name":"GitHub","notes":"n","favorite":true,
+         "login":{"username":"hades","password":"p","totp":"JBSWY3DPEHPK3PXP",
+                  "uris":[{"uri":"https://github.com"},{"uri":""}]}},
+        {"type":2,"name":"Nota","notes":"texto","secureNote":{"type":0}}
+    ]}"#;
+    let entries = [localkeys_core::kdbx::KdbxEntry {
+        name: "KeePass".into(),
+        username: "joao".into(),
+        password: "p".into(),
+        url: "https://keepass.info".into(),
+        totp: String::new(),
+        notes: "n".into(),
+    }];
+    let mut items = localkeys_core::import::parse_csv_items(csv);
+    items.extend(localkeys_core::import::parse_bitwarden_json(bitwarden).expect("bitwarden").items);
+    items.extend(localkeys_core::import::kdbx_to_items(&entries));
+    assert_eq!(items.len(), 4, "as três fixtures viraram itens");
+
+    for item in &items {
+        let from = ItemKind::from_wire(item["kind"].as_str().unwrap_or_default()).expect("kind conhecido");
+        for to in KINDS {
+            if to == from {
+                continue;
+            }
+            change_kind(item, to, &FieldLabels::default()).unwrap_or_else(|e| panic!("{from:?} -> {to:?}: {e}"));
+        }
+    }
 }
 
 #[test]

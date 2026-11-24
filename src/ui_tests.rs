@@ -1182,13 +1182,60 @@ fn the_list_opens_in_the_remembered_folder() {
     assert_eq!(Prefs::load_from(&harness.state().config_file).folder, None, "todas foi gravado");
 }
 
-/// Pasta lembrada que não existe no cofre aberto (apagada aqui ou em outro aparelho) cai em "Todas".
+/// Pasta lembrada que não existe no cofre aberto (apagada aqui ou em outro aparelho) cai em "Todas" — e a
+/// preferência fica como estava: reabrir o cofre que tem essa pasta volta para ela.
 #[test]
 fn a_remembered_folder_that_is_gone_opens_in_all() {
     let (raw, _, _) = folders_vault();
-    let mut harness = harness(opened("folder-gone", Prefs::new("en", ThemeMode::Dark).with_folder("pasta-apagada"), raw));
+    let prefs = Prefs::new("en", ThemeMode::Dark).with_folder("pasta-apagada");
+    let mut app = app("folder-gone", prefs.clone());
+    // O config.json como ficou da sessão anterior: abrir o cofre não pode reescrevê-lo.
+    prefs.save_to(&app.config_file).expect("config do teste");
+    app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
+    app.adopt(crate::crypto::test_session(), raw);
+
+    let mut harness = harness(app);
     harness.run_steps(2);
     assert_eq!(harness.state().folder_filter, None, "pasta inexistente caiu em todas");
+    harness.get_by_label_contains("github");
+    harness.get_by_label_contains("banco");
+    assert_eq!(
+        Prefs::load_from(&harness.state().config_file).folder.as_deref(),
+        Some("pasta-apagada"),
+        "a preferência fica como estava (só a lista caiu em todas)"
+    );
+}
+
+/// Gravar uma sincronização em que a pasta do filtro não existe mais no cofre mesclado cai em "Todas" pela
+/// preferência (como no Android), em vez de deixar o filtro apontando para uma pasta que o cofre não tem.
+#[test]
+fn a_sync_that_loses_the_filtered_folder_falls_back_to_all() {
+    let (raw, work, _) = folders_vault();
+    let mut app = opened("sync-folder-gone", Prefs::new("en", ThemeMode::Dark).with_folder(&work), raw);
+    assert_eq!(app.folder_filter.as_deref(), Some(work.as_str()), "abriu na pasta lembrada");
+    let dir = scratch("sync-folder-gone");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("a.tkeys").display().to_string();
+    app.persist(app.raw.clone().expect("cofre")).then_some(()).expect("grava o cofre atual");
+
+    // O cofre mesclado sem a pasta do filtro (a outra cópia apagou a pasta).
+    let mut merged = app.raw.clone().expect("cofre");
+    merged["folders"].as_array_mut().expect("pastas").retain(|folder| folder["id"] != work.as_str());
+    let other_path = dir.join("other.tkeys");
+    tkeys_com(app.session.as_ref().expect("sessão"), &merged, &other_path);
+    app.sync_plan = Some(crate::SyncPlan {
+        other_path: other_path.display().to_string(),
+        merged,
+        summary: crate::merge::MergeSummary { added: 1, ..Default::default() },
+    });
+    app.sync_open = true;
+
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("Save to both copies").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().folder_filter, None, "a pasta sumiu do cofre mesclado: caiu em todas");
+    assert_eq!(Prefs::load_from(&harness.state().config_file).folder, None, "a preferência acompanhou");
     harness.get_by_label_contains("github");
     harness.get_by_label_contains("banco");
 }

@@ -28,9 +28,9 @@ pub enum FfiError {
     Decrypt,
     /// Estrutura inválida: a chave bruta não tem 32 bytes.
     Corrupted,
-    /// O item não pode ser convertido para o tipo pedido (kind desconhecido, JSON inválido ou uma chave que o
-    /// núcleo não sabe converter).
-    NotConvertible,
+    /// O item não pode ser convertido para o tipo pedido (kind desconhecido, JSON inválido, uma chave que o núcleo
+    /// não sabe converter…). A `reason` é o `Display` do erro do núcleo — o objeto/campo quando ele sabe dizer.
+    NotConvertible { reason: String },
 }
 
 impl std::fmt::Display for FfiError {
@@ -41,7 +41,7 @@ impl std::fmt::Display for FfiError {
             FfiError::Kdf => write!(f, "key derivation failed"),
             FfiError::Decrypt => write!(f, "wrong password or corrupted file"),
             FfiError::Corrupted => write!(f, "corrupted file"),
-            FfiError::NotConvertible => write!(f, "item cannot be converted to the requested kind"),
+            FfiError::NotConvertible { reason } => write!(f, "item cannot be converted to the requested kind: {reason}"),
         }
     }
 }
@@ -124,7 +124,7 @@ impl From<FieldLabelsFfi> for FieldLabels {
 /// convertido em JSON, com o que não existe no tipo novo virando campos extras.
 #[uniffi::export]
 pub fn change_item_kind(item_json: String, new_kind: String, labels: FieldLabelsFfi) -> Result<String, FfiError> {
-    change_kind::change_kind_json(&item_json, &new_kind, &labels.into()).map_err(|_| FfiError::NotConvertible)
+    change_kind::change_kind_json(&item_json, &new_kind, &labels.into()).map_err(|error| FfiError::NotConvertible { reason: error.to_string() })
 }
 
 /// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
@@ -292,9 +292,17 @@ mod tests {
     }
 
     #[test]
-    fn erro_de_conversao_chega_tipado() {
-        assert_eq!(change_item_kind("{}".into(), "note".into(), labels()), Err(FfiError::NotConvertible));
-        assert_eq!(change_item_kind("não é json".into(), "note".into(), labels()), Err(FfiError::NotConvertible));
-        assert_eq!(change_item_kind(r#"{"id":"x","kind":"login"}"#.into(), "otp".into(), labels()), Err(FfiError::NotConvertible));
+    fn erro_de_conversao_chega_tipado_com_a_razao() {
+        let reason = |result: Result<String, FfiError>| match result {
+            Err(FfiError::NotConvertible { reason }) => reason,
+            other => panic!("esperava NotConvertible, veio {other:?}"),
+        };
+        assert_eq!(reason(change_item_kind("{}".into(), "note".into(), labels())), "unknown item kind");
+        assert_eq!(reason(change_item_kind("[1]".into(), "note".into(), labels())), "item is not a JSON object");
+        assert!(reason(change_item_kind("não é json".into(), "note".into(), labels())).starts_with("invalid item JSON: "), "JSON inválido");
+        assert_eq!(reason(change_item_kind(r#"{"id":"x","kind":"login"}"#.into(), "otp".into(), labels())), "unknown item kind");
+        // A razão diz o objeto/campo quando o erro do núcleo sabe (é o que o Android mostra ao usuário).
+        let item = r#"{"id":"x","kind":"login","name":"n","login":{"username":"u","extra":"fica"}}"#;
+        assert_eq!(reason(change_item_kind(item.into(), "note".into(), labels())), "cannot convert `login.extra`: unknown field");
     }
 }

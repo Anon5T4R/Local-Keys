@@ -179,7 +179,9 @@
 	This item cannot change type: its current type is unknown.	No se puede cambiar el tipo de este elemento: su tipo actual es desconocido.
 	This item cannot change type: it has a field this app cannot convert.	No se puede cambiar el tipo de este elemento: tiene un campo que esta app no puede convertir.
 	This item cannot change type: one of its fields has an unexpected value.	No se puede cambiar el tipo de este elemento: uno de sus campos tiene un valor inesperado.
+	This item cannot change type: one of its parts is not a valid object.	No se puede cambiar el tipo de este elemento: una de sus partes no es un objeto válido.
 	This item cannot change type: its custom fields are not a valid list.	No se puede cambiar el tipo de este elemento: sus campos personalizados no son una lista válida.
+	This item cannot change type: the vault has no valid item list.	No se puede cambiar el tipo de este elemento: la bóveda no tiene una lista de elementos válida.
 	This item cannot change type: its data is not valid JSON.	No se puede cambiar el tipo de este elemento: sus datos no son un JSON válido.
 	Cardholder	Titular
 	Brand	Marca

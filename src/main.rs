@@ -297,7 +297,9 @@ fn change_kind_error_text(error: &change_kind::ChangeKindError) -> String {
         change_kind::ChangeKindError::UnknownKind => tr("This item cannot change type: its current type is unknown."),
         change_kind::ChangeKindError::UnknownField { .. } => tr("This item cannot change type: it has a field this app cannot convert."),
         change_kind::ChangeKindError::UnexpectedValue { .. } => tr("This item cannot change type: one of its fields has an unexpected value."),
+        change_kind::ChangeKindError::MalformedTypedObject { .. } => tr("This item cannot change type: one of its parts is not a valid object."),
         change_kind::ChangeKindError::MalformedCustomFields => tr("This item cannot change type: its custom fields are not a valid list."),
+        change_kind::ChangeKindError::MalformedVault => tr("This item cannot change type: the vault has no valid item list."),
         change_kind::ChangeKindError::InvalidJson(_) => tr("This item cannot change type: its data is not valid JSON."),
     }
     .to_string()
@@ -1771,6 +1773,15 @@ impl KeysApp {
         self.err = None;
         self.items = vault::items_view(&plan.merged);
         self.raw = Some(plan.merged);
+        // O cofre mesclado pode não ter mais a pasta do filtro (apagada na outra cópia): a lista cai em "Todas" e a
+        // preferência acompanha — como no Android —, em vez de ficar apontando para uma pasta que não existe.
+        let gone = self
+            .folder_filter
+            .as_deref()
+            .is_some_and(|id| !self.raw.as_ref().is_some_and(|raw| vault::folders(raw).iter().any(|folder| folder.id == id)));
+        if gone {
+            self.set_folder_filter(None);
+        }
         self.sync_plan = None;
         self.sync_open = false;
         self.notice(tr("synced: both copies identical").to_string());

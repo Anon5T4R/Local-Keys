@@ -6,6 +6,7 @@ import com.localkeys.android.ffi.changeItemKind
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -70,12 +71,26 @@ class ChangeKindTest {
     }
 
     @Test
-    fun erro_de_conversao_chega_como_not_convertible() {
-        assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("{}", "note", labels) }
-        assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("não é json", "note", labels) }
-        assertThrows(FfiException.NotConvertible::class.java) {
+    fun erro_de_conversao_chega_como_not_convertible_e_com_a_razao() {
+        val semKind = assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("{}", "note", labels) }
+        assertEquals("unknown item kind", semKind.reason)
+
+        val naoObjeto = assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("[1]", "note", labels) }
+        assertEquals("item is not a JSON object", naoObjeto.reason)
+
+        val jsonInvalido = assertThrows(FfiException.NotConvertible::class.java) { changeItemKind("não é json", "note", labels) }
+        assertTrue("razão do JSON inválido: ${jsonInvalido.reason}", jsonInvalido.reason.startsWith("invalid item JSON: "))
+
+        val tipoDesconhecido = assertThrows(FfiException.NotConvertible::class.java) {
             changeItemKind("""{"id":"i1","kind":"login"}""", "otp", labels)
         }
+        assertEquals("unknown item kind", tipoDesconhecido.reason)
+
+        // A razão diz o objeto/campo quando o erro do núcleo sabe (é o que a tela vai mostrar).
+        val campoDesconhecido = assertThrows(FfiException.NotConvertible::class.java) {
+            changeItemKind("""{"id":"i1","kind":"login","name":"n","login":{"username":"u","extra":"fica"}}""", "note", labels)
+        }
+        assertEquals("cannot convert `login.extra`: unknown field", campoDesconhecido.reason)
     }
 
     /** Os `customFields` como triplos (nome, valor, oculto) — os `id` são novos a cada conversão e ficam de fora. */
