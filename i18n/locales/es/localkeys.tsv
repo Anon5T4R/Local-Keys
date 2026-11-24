@@ -138,6 +138,19 @@
 	CSV (spreadsheet)	CSV (hoja de cálculo)
 	WARNING: the export is UNENCRYPTED — any app can read it. Use it only to migrate, then delete the file.	ATENCIÓN: la exportación sale SIN CIFRAR — cualquier app puede leerla. Úsala solo para migrar y borra el archivo después.
 	exported	exportado
+	Export to vault…	Exportar a una bóveda…
+	Export to vault	Exportar a una bóveda
+	The selected items go to a NEW encrypted vault (.tkeys). Only the folders they use go with them; attachments travel inside.	Los elementos seleccionados van a una bóveda NUEVA cifrada (.tkeys). Solo las carpetas que usan van con ellos; los adjuntos viajan dentro.
+	Create vault	Crear bóveda
+	the password cannot be empty	la contraseña no puede estar vacía
+	choose where to save the new vault	indica dónde guardar la bóveda nueva
+	creating the new vault…	creando la bóveda nueva…
+	new vault saved	bóveda nueva guardada
+	Select at least one item to export.	Selecciona al menos un elemento para exportar.
+	The selection has an item that is not valid; nothing was exported.	La selección tiene un elemento no válido; no se exportó nada.
+	One of the selected items no longer exists in the vault; nothing was exported.	Uno de los elementos seleccionados ya no existe en la bóveda; no se exportó nada.
+	The vault has no valid item list; nothing was exported.	La bóveda no tiene una lista de elementos válida; no se exportó nada.
+	The export could not be completed; nothing was exported.	No se pudo completar la exportación; no se exportó nada.
 	Trash	Papelera
 	trash is empty	papelera vacía
 	Restore	Restaurar

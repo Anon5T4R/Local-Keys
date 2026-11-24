@@ -138,6 +138,19 @@
 	CSV (spreadsheet)	CSV (planilha)
 	WARNING: the export is UNENCRYPTED — any app can read it. Use it only to migrate, then delete the file.	ATENÇÃO: o export sai EM CLARO, sem cifra — qualquer app lê. Use só para migrar e apague o arquivo depois.
 	exported	exportado
+	Export to vault…	Exportar para um cofre…
+	Export to vault	Exportar para um cofre
+	The selected items go to a NEW encrypted vault (.tkeys). Only the folders they use go with them; attachments travel inside.	Os itens selecionados vão para um cofre NOVO cifrado (.tkeys). Só as pastas que eles usam vão junto; os anexos viajam dentro.
+	Create vault	Criar cofre
+	the password cannot be empty	a senha não pode ser vazia
+	choose where to save the new vault	informe o destino do cofre novo
+	creating the new vault…	criando o cofre novo…
+	new vault saved	cofre novo salvo
+	Select at least one item to export.	Selecione pelo menos um item para exportar.
+	The selection has an item that is not valid; nothing was exported.	A seleção tem um item inválido; nada foi exportado.
+	One of the selected items no longer exists in the vault; nothing was exported.	Um dos itens selecionados não existe mais no cofre; nada foi exportado.
+	The vault has no valid item list; nothing was exported.	O cofre não tem uma lista de itens válida; nada foi exportado.
+	The export could not be completed; nothing was exported.	Não foi possível concluir a exportação; nada foi exportado.
 	Trash	Lixeira
 	trash is empty	lixeira vazia
 	Restore	Restaurar

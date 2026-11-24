@@ -7,16 +7,17 @@
 //! `JobResult` carrega só o que o `update` precisa pra adotar (sessão, JSON do
 //! cofre, itens do import…). Sem lock, sem corrida com o frame.
 //!
-//! O que NÃO vem pra cá (e por quê): `atomic_write` (gravar o cofre já cifrado
-//! são poucos KB e o retorno precisa decidir o estado na hora — falhou a
-//! gravação, o app NÃO muda) e o desbloqueio rápido do boot
-//! (`crypto::open_with_key` não roda KDF: é AEAD de poucos KB).
+//! O que NÃO vem pra cá (e por quê): `atomic_write` do cofre ABERTO (gravar o cofre já cifrado são poucos KB e o
+//! retorno precisa decidir o estado na hora — falhou a gravação, o app NÃO muda) e o desbloqueio rápido do boot
+//! (`crypto::open_with_key` não roda KDF: é AEAD de poucos KB). O cofre EXPORTADO é a exceção: ele carrega anexos e
+//! pode ir pra rede/OneDrive, então montar o JSON, cifrar (Argon2id) e gravar acontecem na thread, como os outros
+//! exports.
 
 use std::sync::mpsc::{Receiver, Sender};
 
 use zeroize::Zeroizing;
 
-use crate::{ImportKind, bitwarden_encrypted, bwdecrypt, crypto, import, kdbx, mime_by_ext, vault};
+use crate::{ImportKind, bitwarden_encrypted, bwdecrypt, crypto, import, kdbx, mime_by_ext, vault, vault_export};
 
 /// Cap de anexo do app: 10 MiB. O cofre INTEIRO é regravado (e recifrado) a
 /// cada save e o anexo viaja em base64 dentro do JSON — um anexo grande infla
@@ -60,6 +61,16 @@ pub enum Job {
     WriteExport {
         target: String,
         text: String,
+    },
+    /// Cofre NOVO a partir da seleção (unidade 6): monta o JSON com os itens escolhidos e as pastas que eles usam,
+    /// cifra com a senha nova (Argon2id) e grava. O cofre inteiro vai por valor (o chamador já o clonou) e a senha
+    /// viaja em `Zeroizing`: nada de segredo fica no `Job` depois de rodar.
+    ExportVault {
+        target: String,
+        raw: serde_json::Value,
+        ids: Vec<String>,
+        password: Zeroizing<String>,
+        params: crypto::KdfParams,
     },
 }
 
@@ -110,6 +121,8 @@ pub enum JobError {
     WrongPassword,
     /// Anexo acima do cap → `Key::AttachmentTooBig`.
     AttachmentTooBig { name: String },
+    /// A seleção do export não virou cofre novo (regra do núcleo): a UI traduz por variante.
+    VaultExport(vault_export::ExportVaultError),
 }
 
 impl From<String> for JobError {
@@ -129,6 +142,8 @@ pub enum JobResult {
     AttachmentSaved(Result<String, JobError>),
     /// `Ok(destino)` quando o export foi gravado.
     Exported(Result<String, JobError>),
+    /// `Ok(destino)` quando o cofre NOVO (`.tkeys`) foi gravado.
+    VaultExported(Result<String, JobError>),
 }
 
 /// Sobe a thread do job. `ctx` é um clone do `egui::Context` (Send+Sync): o
@@ -168,6 +183,7 @@ fn run(job: Job) -> JobResult {
         Job::ReadAttachment { item_id, source } => JobResult::AttachmentRead(read_attachment(item_id, &source)),
         Job::SaveAttachment { target, data_b64 } => JobResult::AttachmentSaved(save_attachment(target, &data_b64)),
         Job::WriteExport { target, text } => JobResult::Exported(write_export(target, &text)),
+        Job::ExportVault { target, raw, ids, password, params } => JobResult::VaultExported(export_vault(target, &raw, &ids, &password, params)),
     }
 }
 
@@ -252,6 +268,15 @@ fn save_attachment(target: String, data_b64: &str) -> Result<String, JobError> {
 /// Grava o texto do export (já pronto) no destino escolhido.
 fn write_export(target: String, text: &str) -> Result<String, JobError> {
     std::fs::write(&target, text).map_err(|e| JobError::Msg(format!("falha ao gravar '{target}': {e}")))?;
+    Ok(target)
+}
+
+/// O cofre NOVO da seleção (unidade 6): a regra do núcleo escolhe os itens/pastas, o `create_vault_with` cifra com a
+/// senha nova e o `atomic_write` grava (tmp + rename; a exportação nunca toca o cofre aberto).
+fn export_vault(target: String, raw: &serde_json::Value, ids: &[String], password: &str, params: crypto::KdfParams) -> Result<String, JobError> {
+    let json = vault_export::vault_from_items(raw, ids).map_err(JobError::VaultExport)?;
+    let (file, _session) = crypto::create_vault_with(password, json.as_bytes(), params).map_err(crypto_err)?;
+    vault::atomic_write(std::path::Path::new(&target), &file).map_err(JobError::Msg)?;
     Ok(target)
 }
 

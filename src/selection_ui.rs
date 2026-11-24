@@ -150,14 +150,17 @@ impl KeysApp {
         }
     }
 
-    /// A barra do rodapé quando há itens marcados: contagem, mover de pasta, apagar (confirmação) e limpar.
+    /// A barra do rodapé quando há itens marcados: contagem, mover de pasta, exportar para um cofre novo, apagar
+    /// (confirmação) e limpar.
     pub(crate) fn selection_bar(&mut self, ui: &mut Ui) {
         if self.selection.is_empty() {
             return;
         }
         let count = self.selection.len() as u64;
         let folders = self.raw.as_ref().map(vault::folders).unwrap_or_default();
+        let busy = self.job_label.is_some() || self.pickers.busy();
         let mut move_to: Option<Option<String>> = None;
+        let mut export_vault = false;
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new(tr_n(count, "{n} selected", "{n} selected")).strong());
             let menu = egui::Button::new(tr("Move to folder…"));
@@ -173,6 +176,10 @@ impl KeysApp {
                     }
                 }
             });
+            // Exportar um cofre NOVO com a seleção (o nome dele é o do arquivo; a senha vem no diálogo seguinte).
+            if ui.add_enabled_ui(!busy, |ui| crate::ghost(ui, tr("Export to vault…"))).inner.clicked() {
+                export_vault = true;
+            }
             if crate::pill_danger(ui, tr("Delete selected")).clicked() {
                 self.batch_delete_ask = Some(self.selection.len());
             }
@@ -182,6 +189,9 @@ impl KeysApp {
         });
         if let Some(folder) = move_to {
             self.move_selected(folder);
+        }
+        if export_vault {
+            self.export_vault_ask(ui.ctx());
         }
     }
 
@@ -229,6 +239,7 @@ impl KeysApp {
             || self.folder_new_open
             || self.trash_open
             || self.export_open
+            || self.export_vault_open
             || self.sync_open
             || self.settings_open
             // O prompt do atualizador (craft_update) é um modal do crate: enquanto ele está aberto, o teclado da

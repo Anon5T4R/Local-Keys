@@ -201,6 +201,19 @@ fn persist_now(app: &mut KeysApp) -> usize {
     app.persist_count
 }
 
+/// Espera o job (thread real) terminar e drena o resultado, com prazo — o job acorda a UI com `request_repaint`.
+fn wait_for_job(harness: &mut Harness<'_, KeysApp>) {
+    // O clique que dispara o job é processado no frame: roda um par de frames ANTES de esperar o `job_label`.
+    harness.run_steps(2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while harness.state().job_label.is_some() {
+        assert!(std::time::Instant::now() < deadline, "o job não terminou no prazo");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run_steps(2);
+}
+
 fn shot(harness: &mut Harness<'_, KeysApp>, name: &str) {
     if std::env::var_os("LOCALKEYS_QA_RENDER").is_none() {
         return;
@@ -2537,4 +2550,145 @@ fn an_open_popup_keeps_the_selection_keys_off_the_list() {
 
     press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
     assert_eq!(harness.state().selection.len(), 2, "o Esc fecha o menu, não limpa a seleção");
+}
+
+/// Um cofre com uma pasta, um item COM anexo nela e os outros fora — para o export levar só o escolhido.
+fn unlocked_for_vault_export(name: &str, prefs: Prefs) -> (KeysApp, String, String) {
+    let mut app = unlocked(name, prefs);
+    let mut raw = app.raw.clone().expect("cofre aberto");
+    crate::vault::add_folder(&mut raw, "Work");
+    let folder_id = crate::vault::folders(&raw).into_iter().next().map(|f| f.id).expect("pasta criada");
+    let item_id = raw["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["name"] == "192.168.1.34"))
+        .and_then(|item| item["id"].as_str())
+        .map(str::to_string)
+        .expect("item do fixture");
+    crate::vault::set_item_folder(&mut raw, &item_id, Some(&folder_id));
+    assert!(crate::vault::add_attachment(&mut raw, &item_id, "nota.txt", "text/plain", "aGk="), "anexo do fixture");
+    app.adopt(crate::crypto::test_session(), raw);
+    (app, item_id, folder_id)
+}
+
+/// KDF mínimo: o export não pode custar 1 s de Argon2id em cada rodada do gate.
+fn light_kdf() -> crate::crypto::KdfParams {
+    crate::crypto::KdfParams { m_cost: 512, t_cost: 1, p_cost: 1 }
+}
+
+/// A ação de exportar o cofre novo só existe com itens marcados (como as outras da barra de seleção).
+#[test]
+fn the_export_to_vault_action_only_appears_with_a_selection() {
+    let mut harness = harness(unlocked("vexport-action", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Export to vault…").is_none(), "sem seleção não há ação de exportar");
+
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+
+    harness.get_by_label("Export to vault…");
+}
+
+/// Senhas vazias ou diferentes ficam no diálogo com a mensagem: nenhum job começa e nada é escrito.
+#[test]
+fn exporting_checks_the_password_twice_before_starting() {
+    let (mut app, item_id, _folder) = unlocked_for_vault_export("vexport-check", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("vexport-check");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    let target = dir.join("nao-criado.tkeys");
+    app.export_vault_kdf = light_kdf();
+    app.selection.select_only(&item_id);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    // O seletor nativo não roda no kittest: o caminho entra pelo mesmo ponto da resposta dele.
+    harness.state_mut().export_vault_chosen(target.display().to_string());
+    harness.run_steps(2);
+    assert!(harness.state().export_vault_open, "o diálogo das senhas abriu");
+    // O campo da confirmação só existe neste diálogo (a lista de trás também tem um botão "Password").
+    harness.get_by_label("Confirm password");
+
+    harness.state_mut().export_vault_pass = "uma-senha".into();
+    harness.state_mut().export_vault_confirm = "outra-senha".into();
+    harness.get_by_label("Create vault").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().export_vault_err.as_deref(), Some("the passwords do not match"));
+    harness.get_by_label("the passwords do not match");
+    assert!(harness.state().job_label.is_none(), "senhas diferentes não disparam o job");
+    assert!(!target.exists(), "nada é escrito");
+
+    harness.state_mut().export_vault_pass.clear();
+    harness.state_mut().export_vault_confirm.clear();
+    harness.get_by_label("Create vault").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().export_vault_err.as_deref(), Some("the password cannot be empty"));
+    assert!(harness.state().job_label.is_none(), "senha vazia não dispara o job");
+    assert!(!target.exists());
+}
+
+/// Fluxo completo: o arquivo novo reabre com a senha, tem SÓ os itens selecionados (com o anexo junto) e só as
+/// pastas usadas — e o cofre aberto não é gravado nem muda.
+#[test]
+fn exporting_the_selection_writes_a_new_vault_that_reopens() {
+    let (mut app, item_id, folder_id) = unlocked_for_vault_export("vexport-flow", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("vexport-flow");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    let target = dir.join("novo-cofre.tkeys");
+    app.export_vault_kdf = light_kdf();
+    app.selection.select_only(&item_id);
+    let baseline = app.persist_count;
+    let before_items = app.items.len();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    harness.get_by_label("Export to vault…");
+    harness.state_mut().export_vault_chosen(target.display().to_string());
+    harness.run_steps(2);
+    harness.state_mut().export_vault_pass = "senha-do-cofre-novo".into();
+    harness.state_mut().export_vault_confirm = "senha-do-cofre-novo".into();
+    harness.get_by_label("Create vault").click();
+    wait_for_job(&mut harness);
+
+    assert!(harness.state().err.is_none(), "o export não deu erro: {:?}", harness.state().err);
+    assert!(!harness.state().export_vault_open, "o diálogo fecha ao disparar");
+    assert!(target.is_file(), "o cofre novo foi escrito");
+
+    let bytes = std::fs::read(&target).expect("o arquivo do cofre novo");
+    let (plaintext, _session) = crate::crypto::open_vault("senha-do-cofre-novo", &bytes).expect("o cofre novo reabre com a senha");
+    let exported: serde_json::Value = serde_json::from_slice(&plaintext).expect("o cofre novo é JSON");
+    let ids: Vec<&str> = exported["items"].as_array().expect("itens").iter().filter_map(|item| item["id"].as_str()).collect();
+    assert_eq!(ids, [item_id.as_str()], "só o item selecionado, com o mesmo id");
+    let folders: Vec<&str> = exported["folders"].as_array().expect("pastas").iter().filter_map(|folder| folder["id"].as_str()).collect();
+    assert_eq!(folders, [folder_id.as_str()], "só a pasta que o item usa");
+    let attachments = exported["items"][0]["attachments"].as_array().expect("anexos do item exportado");
+    assert_eq!(attachments.len(), 1, "o anexo vai junto");
+    assert_eq!(attachments[0]["name"], "nota.txt");
+
+    assert_eq!(harness.state().persist_count, baseline, "exportar não grava o cofre aberto");
+    assert_eq!(harness.state().items.len(), before_items, "a lista aberta não muda");
+    assert_eq!(harness.state().selection.len(), 1, "a seleção continua para o próximo passo");
+    assert!(harness.state().selection.contains(&item_id));
+}
+
+/// Um id marcado que não existe mais (o cofre mudou por fora) vira a mensagem traduzida e nenhum arquivo é criado.
+#[test]
+fn a_selection_that_no_longer_exists_reports_and_writes_nothing() {
+    let (mut app, _item_id, _folder) = unlocked_for_vault_export("vexport-missing", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("vexport-missing");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    let target = dir.join("nao-criado.tkeys");
+    app.export_vault_kdf = light_kdf();
+    app.selection.select_only("fantasma");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    harness.state_mut().export_vault_chosen(target.display().to_string());
+    harness.run_steps(2);
+    harness.state_mut().export_vault_pass = "senha-do-cofre-novo".into();
+    harness.state_mut().export_vault_confirm = "senha-do-cofre-novo".into();
+    harness.get_by_label("Create vault").click();
+    wait_for_job(&mut harness);
+
+    let error = harness.state().err.clone().expect("a mensagem do núcleo");
+    assert!(error.contains("no longer exists"), "mensagem traduzida da variante: {error}");
+    assert!(!target.exists(), "nada é gerado quando a seleção é inválida");
+    assert!(harness.state().job_label.is_none(), "o spinner sai depois da recusa");
 }

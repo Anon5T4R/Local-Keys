@@ -34,7 +34,9 @@ mod winctl;
 #[cfg(test)]
 mod ui_tests;
 
-use localkeys_core::{bwdecrypt, card, change_kind, cpf, crypto, export, filters, generator, import, kdbx, merge, otpauth, totp, vault};
+use localkeys_core::{
+    bwdecrypt, card, change_kind, cpf, crypto, export, filters, generator, import, kdbx, merge, otpauth, totp, vault, vault_export,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -292,6 +294,23 @@ fn field_labels() -> change_kind::FieldLabels {
         phone: tr("Phone").into(),
         address: tr("Address").into(),
     }
+}
+
+/// O motivo do export da SELEÇÃO recusado, no idioma da interface. O `Display` do núcleo é diagnóstico em inglês e
+/// não chega à tela; o id cru do item não aparece.
+fn export_vault_error_text(error: &vault_export::ExportVaultError) -> String {
+    match error {
+        vault_export::ExportVaultError::NoItems => tr("Select at least one item to export."),
+        vault_export::ExportVaultError::NotAnObject | vault_export::ExportVaultError::MissingId => {
+            tr("The selection has an item that is not valid; nothing was exported.")
+        }
+        vault_export::ExportVaultError::UnknownId { .. } => tr("One of the selected items no longer exists in the vault; nothing was exported."),
+        vault_export::ExportVaultError::MalformedVault => tr("The vault has no valid item list; nothing was exported."),
+        vault_export::ExportVaultError::InvalidJson { .. } | vault_export::ExportVaultError::Serialize(_) => {
+            tr("The export could not be completed; nothing was exported.")
+        }
+    }
+    .to_string()
 }
 
 /// O motivo da conversão recusada no idioma da interface. O `Display` do núcleo é diagnóstico em inglês e
@@ -962,6 +981,18 @@ struct KeysApp {
     export_open: bool,
     export_kind: ExportKind,
     export_path: String,
+    // unidade 6 — export da seleção para um cofre NOVO (nome = o do arquivo; senha pedida duas vezes)
+    export_vault_open: bool,
+    /// Caminho escolhido no "Salvar como" (o nome do cofre novo é o nome do arquivo).
+    export_vault_path: String,
+    export_vault_pass: String,
+    export_vault_confirm: String,
+    /// 👁 das senhas do cofre novo (volta a ocultar ao fechar/criar).
+    export_vault_reveal: bool,
+    /// Erro de validação do diálogo (senha vazia/diferente), mostrado DENTRO dele.
+    export_vault_err: Option<String>,
+    /// Parâmetros do Argon2id do cofre exportado: o padrão do app; os testes usam um leve.
+    export_vault_kdf: crypto::KdfParams,
     /// Verificação e instalação de atualização (craft_update): check no
     /// arranque/pedido, prompt egui próprio e self-update em thread própria.
     updater: craft_update::updater::Updater,
@@ -1086,6 +1117,13 @@ impl KeysApp {
             export_open: false,
             export_kind: ExportKind::Json,
             export_path: String::new(),
+            export_vault_open: false,
+            export_vault_path: String::new(),
+            export_vault_pass: String::new(),
+            export_vault_confirm: String::new(),
+            export_vault_reveal: false,
+            export_vault_err: None,
+            export_vault_kdf: crypto::KdfParams::default(),
             updater: craft_update::updater::Updater::new(&craft_update::suite::LOCALKEYS, CURRENT_VERSION),
             import_open: false,
             import_kind: ImportKind::Kdbx,
@@ -1184,6 +1222,12 @@ impl KeysApp {
         self.purge_ask = None;
         self.export_open = false;
         self.export_path.clear();
+        self.export_vault_open = false;
+        self.export_vault_path.clear();
+        self.export_vault_pass.clear();
+        self.export_vault_confirm.clear();
+        self.export_vault_reveal = false;
+        self.export_vault_err = None;
         // Onda 6: nenhum segredo de import/gerador/senha mestra sobrevive ao
         // trancar, e as janelas fecham junto.
         self.import_open = false;
@@ -1992,6 +2036,69 @@ impl KeysApp {
         self.start_job(ctx, tr("working…"), Job::WriteExport { target, text });
     }
 
+    // ── unidade 6: export da seleção para um cofre NOVO ─────────────────
+
+    /// "Export to vault…": abre o "Salvar como" nativo. O diálogo das senhas só abre com um caminho escolhido
+    /// (cancelar não faz nada). Um job ou um seletor em andamento bloqueiam o clique.
+    fn export_vault_ask(&mut self, ctx: &egui::Context) {
+        if self.job_label.is_some() || self.pickers.busy() {
+            return;
+        }
+        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("exported-vault.tkeys");
+        let _ = self.pickers.ask(
+            ctx,
+            pickers::Ask::Save(dialog),
+            Box::new(|app, paths| {
+                if let Some(path) = paths.first() {
+                    app.export_vault_chosen(path.display().to_string());
+                }
+            }),
+        );
+    }
+
+    /// Caminho escolhido no "Salvar como" (o nome do cofre novo é o do arquivo): abre o diálogo das senhas com o
+    /// destino à mostra. Caminho vazio (seletor cancelado) não faz nada.
+    fn export_vault_chosen(&mut self, path: String) {
+        if path.trim().is_empty() {
+            return;
+        }
+        self.export_vault_path = path;
+        self.export_vault_pass.clear();
+        self.export_vault_confirm.clear();
+        self.export_vault_reveal = false;
+        self.export_vault_err = None;
+        self.export_vault_open = true;
+    }
+
+    /// Valida as duas senhas e manda o trabalho pesado pra thread: a regra do núcleo (`vault_from_items`), a cifra
+    /// com a senha nova e a gravação. A seleção é lida AGORA; o cofre aberto não é tocado.
+    fn run_export_vault(&mut self, ctx: &egui::Context) {
+        if self.export_vault_pass.is_empty() {
+            self.export_vault_err = Some(tr("the password cannot be empty").into());
+            return;
+        }
+        if self.export_vault_pass != self.export_vault_confirm {
+            self.export_vault_err = Some(tr("the passwords do not match").into());
+            return;
+        }
+        let target = self.export_vault_path.trim().to_string();
+        if target.is_empty() {
+            self.export_vault_err = Some(tr("choose where to save the new vault").into());
+            return;
+        }
+        let Some(raw) = self.raw.clone() else {
+            return;
+        };
+        let ids: Vec<String> = self.selection.ids().map(str::to_string).collect();
+        // A senha sai do estado já: o job recebe uma cópia que se apaga sozinha quando ele termina.
+        let password = Zeroizing::new(std::mem::take(&mut self.export_vault_pass));
+        self.export_vault_confirm.clear();
+        self.export_vault_reveal = false;
+        self.export_vault_open = false;
+        self.export_vault_err = None;
+        self.start_job(ctx, tr("creating the new vault…"), Job::ExportVault { target, raw, ids, password, params: self.export_vault_kdf });
+    }
+
     // ── onda 6: importação ──────────────────────────────────────────────
 
     /// Manda ler/decifrar/parsear o arquivo escolhido pra thread (PBKDF2 600k e
@@ -2307,6 +2414,12 @@ impl KeysApp {
                 self.notice(msg);
             }
             JobResult::Exported(Err(e)) => self.err = Some(self.job_error(e)),
+            JobResult::VaultExported(Ok(target)) => {
+                self.err = None;
+                let msg = format!("{}: {target}", tr("new vault saved"));
+                self.notice(msg);
+            }
+            JobResult::VaultExported(Err(e)) => self.err = Some(self.job_error(e)),
         }
     }
 
@@ -2338,6 +2451,7 @@ impl KeysApp {
             JobError::AttachmentTooBig { name } => {
                 format!("{name}: {}", tr("attachment too large (max 10 MiB — the whole vault is rewritten on every save)"))
             }
+            JobError::VaultExport(error) => export_vault_error_text(&error),
         }
     }
 }
@@ -3681,6 +3795,70 @@ impl KeysApp {
             self.export_open = false;
         }
     }
+
+    /// Diálogo do cofre NOVO da seleção (unidade 6): o destino escolhido no "Salvar como" (só leitura — o nome do
+    /// cofre é o do arquivo) e a senha pedida duas vezes. Erros de validação aparecem DENTRO do diálogo.
+    fn export_vault_modal(&mut self, ctx: &egui::Context) {
+        if !self.export_vault_open {
+            return;
+        }
+        let busy = self.job_label.is_some();
+        let mut create = false;
+        let mut cancel = false;
+        let resp = egui::Modal::new(egui::Id::unique("export-vault")).frame(modal_frame(ctx)).show(ctx, |ui| {
+            begin_dialog(ui);
+            dialog_width(ui, 420.0);
+            ui.heading(tr("Export to vault"));
+            ui.add_space(8.0);
+            ui.add(
+                egui::Label::new(tr(
+                    "The selected items go to a NEW encrypted vault (.tkeys). Only the folders they use go with them; attachments travel inside.",
+                ))
+                .wrap(),
+            );
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(tr("File")).strong());
+                ui.add(egui::Label::new(egui::RichText::new(&self.export_vault_path).monospace()).wrap());
+            });
+            ui.add_space(10.0);
+            let field = (ui.available_width() - 130.0).clamp(120.0, 220.0);
+            egui::Grid::new("export-vault-grid").num_columns(3).spacing([10.0, 8.0]).show(ui, |ui| {
+                let label = ui.label(tr("Password"));
+                ui.add(line(&mut self.export_vault_pass).password(!self.export_vault_reveal).desired_width(field - 28.0)).labelled_by(label.id);
+                if ghost(ui, if self.export_vault_reveal { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
+                    self.export_vault_reveal = !self.export_vault_reveal;
+                }
+                ui.end_row();
+                let label = ui.label(tr("Confirm password"));
+                ui.add(line(&mut self.export_vault_confirm).password(!self.export_vault_reveal).desired_width(field - 28.0)).labelled_by(label.id);
+                ui.end_row();
+            });
+            if let Some(error) = &self.export_vault_err {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(error).small().color(egui::Color32::LIGHT_RED));
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let ready = !busy && !self.export_vault_path.trim().is_empty();
+                if ui.add_enabled_ui(ready, |ui| pill(ui, tr("Create vault"), true)).inner.clicked() {
+                    create = true;
+                }
+                if pill(ui, tr("Cancel"), false).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if create {
+            self.run_export_vault(ctx);
+        } else if cancel || resp.should_close() {
+            self.export_vault_open = false;
+            self.export_vault_pass.clear();
+            self.export_vault_confirm.clear();
+            self.export_vault_reveal = false;
+            self.export_vault_err = None;
+        }
+    }
 }
 
 impl KeysApp {
@@ -3785,6 +3963,7 @@ impl KeysApp {
         self.new_folder_modal(ctx);
         self.trash_modal(ctx);
         self.export_modal(ctx);
+        self.export_vault_modal(ctx);
         self.sync_modal(ctx);
 
         self.settings_modal(ctx);
