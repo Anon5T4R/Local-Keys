@@ -23,9 +23,12 @@ val keystoreProps = Properties().apply {
 // Precisa de: Rust (rustup) com os targets *-linux-android, `cargo install cargo-ndk` e o NDK do Android.
 // `-PskipNative` pula as três (quando os artefatos já foram gerados).
 val skipNative = providers.gradleProperty("skipNative").isPresent
+// Medição de cofre grande (LargeVaultMeasureTest): a lib do HOST vai em release, como o `.so` do aparelho
+// (em debug, Argon2id/XChaCha20 do Rust ficam ~100× mais lentos e o tempo não vale). Fora da medição, debug.
+val measureLargeVault = providers.gradleProperty("localkeys.measure").isPresent
 val ffiDir = rootProject.layout.projectDirectory.dir("../crates/ffi")
 val cargoTarget = layout.buildDirectory.dir("cargo")
-val hostLibDir = layout.buildDirectory.dir("cargo/debug")
+val hostLibDir = layout.buildDirectory.dir(if (measureLargeVault) "cargo/release" else "cargo/debug")
 val generatedKotlin = layout.projectDirectory.dir("src/generated/uniffi/kotlin")
 val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
 val hostLibName = System.getProperty("os.name").lowercase().let {
@@ -43,7 +46,7 @@ val cargoBuildHost = tasks.register<Exec>("cargoBuildHost") {
     group = "native"
     workingDir = ffiDir.asFile
     environment("CARGO_TARGET_DIR", cargoTarget.get().asFile.absolutePath)
-    commandLine("cargo", "build", "--locked")
+    commandLine(listOf("cargo", "build", "--locked") + if (measureLargeVault) listOf("--release") else emptyList())
     inputs.files(ffiSources)
     outputs.dir(hostLibDir)
     enabled = !skipNative
@@ -89,6 +92,13 @@ tasks.withType<Test>().configureEach {
     dependsOn(cargoBuildHost)
     // JNA acha a lib do computador por aqui (no Android, ela vem do jniLibs do APK).
     systemProperty("jna.library.path", hostLibDir.get().asFile.absolutePath)
+    // Medição de cofre grande (LargeVaultMeasureTest, fora do gate): só com -Plocalkeys.measure, e com heap de
+    // 256 MB — perto do limite de um app Android sem largeHeap. Sem a property nada muda (o teste se pula).
+    if (providers.gradleProperty("localkeys.measure").isPresent) {
+        maxHeapSize = "256m"
+        systemProperty("localkeys.measure", "true")
+        providers.gradleProperty("localkeys.measure.dir").orNull?.let { systemProperty("localkeys.measure.dir", it) }
+    }
 }
 
 android {
