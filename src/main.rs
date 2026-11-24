@@ -22,6 +22,8 @@ mod prefs;
 mod qr;
 mod shell;
 mod theme;
+#[cfg(any(windows, test))]
+mod tray;
 
 #[cfg(windows)]
 mod winctl;
@@ -41,6 +43,7 @@ use jobs::{AttachmentRead, Created, Job, JobError, JobResult, Renewed, Unlocked}
 use prefs::{Prefs, config_dir};
 use zeroize::Zeroizing;
 
+use tray::TrayCmd;
 #[cfg(windows)]
 use tray_icon::menu::{Menu, MenuItem};
 #[cfg(windows)]
@@ -56,14 +59,6 @@ const WINDOW_TITLE: &str = "Local Keys";
 /// Alvo dos anexos escolhidos no formulário de item: não é um id de item (os ids são UUIDs).
 const FORM_ATTACH: &str = "\u{0}form";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Comando vindo da bandeja (thread própria → handlers do tray-icon).
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg(windows)]
-enum TrayCmd {
-    ShowHide,
-    Quit,
-}
 
 /// Carrega o ícone da janela (title bar + taskbar) do `icon.ico` embutido.
 fn load_window_icon() -> egui::IconData {
@@ -699,30 +694,33 @@ fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
     let menu = Menu::new();
     let _ = menu.append(&show);
     let _ = menu.append(&quit_item);
-    let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Local Keys").with_icon(tray_icon().expect("ícone rgba")).build();
+    let tray = tray::configure(TrayIconBuilder::new())
+        .with_menu(Box::new(menu))
+        .with_tooltip("Local Keys")
+        .with_icon(tray_icon().expect("ícone rgba"))
+        .build();
 
     let tray = match tray {
         Ok(t) => {
             {
-                use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+                use tray_icon::{MouseButtonState, TrayIconEvent};
                 let tx = tx.clone();
                 tray_icon::TrayIconEvent::set_event_handler(Some(move |ev: TrayIconEvent| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
-                        let _ = tx.send(TrayCmd::ShowHide);
+                    if let TrayIconEvent::Click { button, button_state, .. } = ev {
+                        let released = button_state == MouseButtonState::Up;
+                        if let Some(cmd) = tray::click_cmd(button.into(), released) {
+                            let _ = tx.send(cmd);
+                        }
                     }
                 }));
             }
             {
                 use tray_icon::menu::MenuEvent;
                 let tx = tx.clone();
-                MenuEvent::set_event_handler(Some(move |ev: MenuEvent| match ev.id.0.as_str() {
-                    "show" => {
-                        let _ = tx.send(TrayCmd::ShowHide);
+                MenuEvent::set_event_handler(Some(move |ev: MenuEvent| {
+                    if let Some(cmd) = tray::menu_cmd(ev.id.0.as_str()) {
+                        let _ = tx.send(cmd);
                     }
-                    "quit" => {
-                        let _ = tx.send(TrayCmd::Quit);
-                    }
-                    _ => {}
                 }));
             }
             Some(t)
