@@ -109,5 +109,8 @@ private inline fun <T> translating(block: () -> T): T = try {
         is FfiException.Kdf -> TkeysError.Kdf
         is FfiException.Decrypt -> TkeysError.Decrypt
         is FfiException.Corrupted -> TkeysError.Corrupted
+        // Nenhum TkeysError existente descreve "item não convertível" e a peça da UI ainda não existe: o erro cai
+        // no "estrutura inválida" do item (a variante própria entra quando a tela precisar da mensagem).
+        is FfiException.NotConvertible -> TkeysError.Corrupted
     }
 }

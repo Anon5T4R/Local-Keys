@@ -7,6 +7,7 @@
 
 pub mod bwdecrypt;
 pub mod card;
+pub mod change_kind;
 pub mod cpf;
 pub mod crypto;
 pub mod export;

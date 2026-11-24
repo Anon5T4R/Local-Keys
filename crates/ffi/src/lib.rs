@@ -1,12 +1,15 @@
 //! Ponte UniFFI do `localkeys-core` para o Keys Android: o formato `.tkeys`, a criptografia (Argon2id +
-//! XChaCha20-Poly1305) e a sessão de gravação são o MESMO código do desktop. Aqui só se traduz tipos: nenhuma
-//! regra nova e nenhuma primitiva própria. Os bindings Kotlin saem de `uniffi-bindgen` (ver `uniffi.toml`).
+//! XChaCha20-Poly1305), a sessão de gravação e a conversão do tipo de um item são o MESMO código do desktop. Aqui
+//! só se traduz tipos: nenhuma regra nova e nenhuma primitiva própria — a conversão do `kind` é a regra do núcleo
+//! (`change_kind`), exposta com os rótulos e o erro traduzidos. Os bindings Kotlin saem de `uniffi-bindgen` (ver
+//! `uniffi.toml`).
 //!
 //! `panic = "abort"` no release: um panic dentro do `.so` derrubaria o processo de qualquer jeito, e abortar
 //! evita unwinding através do FFI. Os erros previstos viram [`FfiError`].
 
 use std::sync::Arc;
 
+use localkeys_core::change_kind::{self, FieldLabels};
 use localkeys_core::crypto::{self, CryptoError, KdfParams, SessionKey};
 
 uniffi::setup_scaffolding!();
@@ -25,6 +28,9 @@ pub enum FfiError {
     Decrypt,
     /// Estrutura inválida: a chave bruta não tem 32 bytes.
     Corrupted,
+    /// O item não pode ser convertido para o tipo pedido (kind desconhecido, JSON inválido ou uma chave que o
+    /// núcleo não sabe converter).
+    NotConvertible,
 }
 
 impl std::fmt::Display for FfiError {
@@ -35,6 +41,7 @@ impl std::fmt::Display for FfiError {
             FfiError::Kdf => write!(f, "key derivation failed"),
             FfiError::Decrypt => write!(f, "wrong password or corrupted file"),
             FfiError::Corrupted => write!(f, "corrupted file"),
+            FfiError::NotConvertible => write!(f, "item cannot be converted to the requested kind"),
         }
     }
 }
@@ -70,6 +77,54 @@ impl From<KdfParamsFfi> for KdfParams {
     fn from(p: KdfParamsFfi) -> Self {
         KdfParams { m_cost: p.m_cost, t_cost: p.t_cost, p_cost: p.p_cost }
     }
+}
+
+/// Os rótulos dos campos gerados ao mudar o tipo de um item, no idioma do usuário (o núcleo não tem i18n). Vazio
+/// cai no padrão em inglês.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FieldLabelsFfi {
+    pub username: String,
+    pub password: String,
+    pub website: String,
+    pub totp: String,
+    pub cardholder: String,
+    pub brand: String,
+    pub card_number: String,
+    pub expiry: String,
+    pub security_code: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub email: String,
+    pub phone: String,
+    pub address: String,
+}
+
+impl From<FieldLabelsFfi> for FieldLabels {
+    fn from(labels: FieldLabelsFfi) -> Self {
+        FieldLabels {
+            username: labels.username,
+            password: labels.password,
+            website: labels.website,
+            totp: labels.totp,
+            cardholder: labels.cardholder,
+            brand: labels.brand,
+            card_number: labels.card_number,
+            expiry: labels.expiry,
+            security_code: labels.security_code,
+            first_name: labels.first_name,
+            last_name: labels.last_name,
+            email: labels.email,
+            phone: labels.phone,
+            address: labels.address,
+        }
+    }
+}
+
+/// Converte um item do cofre (JSON bruto) para outro `kind` pela regra do núcleo (`change_kind`): devolve o item
+/// convertido em JSON, com o que não existe no tipo novo virando campos extras.
+#[uniffi::export]
+pub fn change_item_kind(item_json: String, new_kind: String, labels: FieldLabelsFfi) -> Result<String, FfiError> {
+    change_kind::change_kind_json(&item_json, &new_kind, &labels.into()).map_err(|_| FfiError::NotConvertible)
 }
 
 /// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
@@ -197,5 +252,49 @@ mod tests {
     #[test]
     fn os_parametros_padrao_sao_os_do_desktop() {
         assert_eq!(default_kdf_params(), KdfParamsFfi { m_cost: 65_536, t_cost: 3, p_cost: 1 });
+    }
+
+    /// Rótulos vazios: o núcleo cai nos padrões em inglês.
+    fn labels() -> FieldLabelsFfi {
+        FieldLabelsFfi {
+            username: String::new(),
+            password: String::new(),
+            website: String::new(),
+            totp: String::new(),
+            cardholder: String::new(),
+            brand: String::new(),
+            card_number: String::new(),
+            expiry: String::new(),
+            security_code: String::new(),
+            first_name: String::new(),
+            last_name: String::new(),
+            email: String::new(),
+            phone: String::new(),
+            address: String::new(),
+        }
+    }
+
+    #[test]
+    fn mudar_o_tipo_de_login_para_nota_devolve_os_campos_extras() {
+        let item = r#"{"id":"x","kind":"login","name":"Gmail","favorite":true,"folderId":"f1","notes":"n","createdAt":1,"updatedAt":2,"deletedAt":null,"login":{"username":"joao","password":"segredo","uris":["https://a","https://b"],"totp":"JBSWY3DPEHPK3PXP"},"customFields":[{"id":"c1","name":"Extra","value":"v","hidden":false}],"unknownKey":42}"#;
+        let out = change_item_kind(item.into(), "note".into(), labels()).unwrap();
+
+        assert!(out.contains("\"kind\":\"note\""), "{out}");
+        assert!(!out.contains("\"login\""), "objeto antigo ficou: {out}");
+        for name in ["Username", "Password", "Website", "Website 2", "TOTP", "Extra"] {
+            assert!(out.contains(&format!("\"name\":\"{name}\"")), "campo '{name}' sumiu: {out}");
+        }
+        assert!(out.contains("\"value\":\"joao\""), "{out}");
+        // Dois ocultos gerados (senha e TOTP) e quatro visíveis (o extra antigo + usuário + as duas URLs).
+        assert_eq!(out.matches("\"hidden\":true").count(), 2, "{out}");
+        assert_eq!(out.matches("\"hidden\":false").count(), 4, "{out}");
+        assert!(out.contains("\"unknownKey\":42"), "{out}");
+    }
+
+    #[test]
+    fn erro_de_conversao_chega_tipado() {
+        assert_eq!(change_item_kind("{}".into(), "note".into(), labels()), Err(FfiError::NotConvertible));
+        assert_eq!(change_item_kind("não é json".into(), "note".into(), labels()), Err(FfiError::NotConvertible));
+        assert_eq!(change_item_kind(r#"{"id":"x","kind":"login"}"#.into(), "otp".into(), labels()), Err(FfiError::NotConvertible));
     }
 }
