@@ -207,6 +207,61 @@ class VaultRepository(private val crypto: TkeysCrypto) {
      */
     fun deleteItem(id: String): Vault = mutate { v -> v.copy(items = v.items.filterNot { it.id == id }) }
 
+    // ── Lote da seleção múltipla (lixeira e pasta) ───────────────────────
+    //
+    // A regra é a do núcleo (`batch.rs`, a mesma do desktop) pela ponte: tudo ou nada, um `now` só para o lote e
+    // só os itens selecionados atravessam. O cofre em memória só é trocado depois do Ok da regra; quem grava é o
+    // chamador (`VaultViewModel.persistAndCommit`), UMA vez.
+
+    /** O que o lote fez no cofre em memória: o cofre novo e quantos itens mudaram de fato. */
+    class BatchResult(val vault: Vault, val changed: Int)
+
+    /**
+     * Manda os [ids] para a lixeira, pela regra do núcleo ([com.localkeys.android.data.crypto.trashItems]): tudo ou
+     * nada, um `now` só, `deletedAt` e `updatedAt` em todos. O cofre em memória só é trocado depois do Ok da regra;
+     * a gravação é do chamador. Id que não existe mais é recusa ([TkeysError.InvalidItems]), como no desktop.
+     */
+    fun trashSelected(ids: List<String>, now: Long = System.currentTimeMillis()): BatchResult {
+        val currentVault = current ?: throw IllegalStateException("vault não está destrancado")
+        val selected = selectedItems(currentVault, ids)
+        if (selected.isEmpty()) return BatchResult(currentVault, 0)
+        val updated = com.localkeys.android.data.crypto.trashItems(selected, now)
+        val result = replaceSelected(currentVault, updated)
+        current = result
+        return BatchResult(result, updated.size)
+    }
+
+    /**
+     * Põe os [ids] na pasta [folderId] (`null` = sem pasta), pela regra do núcleo
+     * ([com.localkeys.android.data.crypto.moveItems]). Item que já estava no destino não é recarimbado e não entra na
+     * contagem: com `changed == 0` o cofre (e o arquivo) fica como está.
+     */
+    fun moveSelected(ids: List<String>, folderId: String?, now: Long = System.currentTimeMillis()): BatchResult {
+        val currentVault = current ?: throw IllegalStateException("vault não está destrancado")
+        if (folderId != null && currentVault.folders.none { it.id == folderId }) {
+            throw TkeysError.InvalidItems("folder `$folderId` does not exist")
+        }
+        val selected = selectedItems(currentVault, ids)
+        if (selected.isEmpty()) return BatchResult(currentVault, 0)
+        val updated = com.localkeys.android.data.crypto.moveItems(selected, folderId, now)
+        val changed = updated.zip(selected).count { (after, before) -> after != before }
+        if (changed == 0) return BatchResult(currentVault, 0)
+        val result = replaceSelected(currentVault, updated)
+        current = result
+        return BatchResult(result, changed)
+    }
+
+    /** Os itens do lote, na ordem pedida e sem repetir id; id que não existe no cofre é a recusa do lote. */
+    private fun selectedItems(vault: Vault, ids: List<String>): List<Item> = ids.distinct().map { id ->
+        vault.items.firstOrNull { it.id == id } ?: throw TkeysError.InvalidItems("item `$id` does not exist")
+    }
+
+    /** O cofre com os itens do lote trocados pelos que a regra devolveu, na ordem do arquivo. */
+    private fun replaceSelected(vault: Vault, updated: List<Item>): Vault {
+        val byId = updated.associateBy { it.id }
+        return vault.copy(items = vault.items.map { byId[it.id] ?: it })
+    }
+
     /**
      * Manda o item para a lixeira: marca `deletedAt` e SÓ ele, como o `trashItem` do oficial e o `delete_login`
      * do desktop (não toca em `updatedAt`). O item continua no arquivo e volta com [restoreItem].

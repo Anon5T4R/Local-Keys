@@ -35,6 +35,11 @@ class ItemEditorState(
     defaultFolderId: String? = null,
     /** Item novo: o que foi escolhido no "+" (null = login, como antes). */
     preset: NewItemPreset? = null,
+    /**
+     * A conversão de tipo: a regra do núcleo pela ponte ([changeItemKind]). O teste de uma saída inesperada passa
+     * uma que falha de propósito — a regra não muda.
+     */
+    private val convert: (Item, ItemKind, FieldLabelsFfi) -> Item = ::changeItemKind,
 ) {
     val isNew: Boolean = initial == null
     private val id: String = initial?.id ?: UUID.randomUUID().toString()
@@ -239,29 +244,35 @@ class ItemEditorState(
         )
     }
 
-    /** O que o Salvar devolveu: o item pronto para gravar, ou a conversão recusada (nada é gravado). */
+    /** O que o Salvar devolveu: o item pronto para gravar, ou a recusa com o motivo (nada é gravado). */
     sealed interface Save {
         data class Ready(val item: Item) : Save
-        data class Refused(val error: TkeysError.NotConvertible) : Save
+        /** A conversão recusada — pela regra do núcleo ou por uma saída inesperada dela. */
+        data class Refused(val reason: String) : Save
     }
 
     /**
      * O item para gravar: as edições como hoje ([build]); com o tipo trocado, a conversão da ponte roda por
-     * cima do item JÁ editado ([changeItemKind] — a regra do núcleo, a mesma do desktop). Tudo ou nada: no erro
-     * o seletor volta ao tipo original (as edições ficam) e nada chega ao cofre.
+     * cima do item JÁ editado ([convert] — a regra do núcleo, a mesma do desktop). Tudo ou nada: na recusa o
+     * seletor volta ao tipo original (as edições ficam) e nada chega ao cofre.
      *
-     * [labels] são os rótulos dos campos gerados, nos textos que o formulário já mostra.
+     * [labels] são os rótulos dos campos gerados, com os mesmos textos do desktop.
      */
     fun prepareSave(now: Long, labels: FieldLabelsFfi): Save {
         val edited = build(now)
         val target = targetKind ?: return Save.Ready(edited)
         if (target == kind) return Save.Ready(edited)
         return try {
-            Save.Ready(changeItemKind(edited, target, labels))
+            Save.Ready(convert(edited, target, labels))
         } catch (e: TkeysError.NotConvertible) {
             // Como no desktop: o formulário continua aberto no tipo ORIGINAL, com o que a pessoa editou.
             targetKind = kind
-            Save.Refused(e)
+            Save.Refused(e.reason)
+        } catch (e: Exception) {
+            // Uma saída inesperada da ponte (o item convertido não volta a ser um `Item` válido) também não pode
+            // derrubar o salvar: mesma recusa, nada é gravado e as edições ficam.
+            targetKind = kind
+            Save.Refused(e.message?.takeIf { it.isNotBlank() } ?: "the converted item could not be read")
         }
     }
 }

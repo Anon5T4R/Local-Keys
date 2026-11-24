@@ -1,7 +1,9 @@
 package com.localkeys.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +21,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.AttachFile
@@ -30,9 +34,11 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.SyncAlt
@@ -69,7 +75,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -77,6 +86,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.localkeys.android.R
 import com.localkeys.android.data.store.ListFolder
+import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.Vault
 import com.localkeys.android.ui.theme.FavoriteAmber
@@ -174,6 +184,8 @@ fun VaultListPane(
     vault: Vault,
     filters: ListFilterState,
     selectedId: String?,
+    /** A seleção múltipla (modo, ids marcados); as regras do toque moram nela. */
+    selection: ListSelectionMode,
     busy: Boolean,
     totpClock: State<Long>,
     snackbarHostState: SnackbarHostState,
@@ -182,6 +194,10 @@ fun VaultListPane(
     onNew: () -> Unit,
     onToggleFavorite: (String) -> Unit,
     onLock: () -> Unit,
+    /** Mover a seleção para uma pasta (`null` = sem pasta); grava uma vez no `VaultViewModel`. */
+    onMoveSelected: (String?) -> Unit,
+    /** Apagar a seleção (depois da confirmação): manda para a lixeira. */
+    onTrashSelected: () -> Unit,
     /** Cartão do atualizador no topo da lista (null = nada a mostrar). */
     banner: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -190,23 +206,45 @@ fun VaultListPane(
         VaultFilters.visible(vault.items, filters.filter, filters.folder, filters.query)
     }
     val anyLive = remember(vault.items) { vault.items.any { !it.inTrash } }
+    var confirmingTrash by remember { mutableStateOf(false) }
+
+    // Trocar a busca, o filtro de tipo ou a pasta zera a seleção: os ids marcados podem nem estar na lista nova.
+    // A assinatura é comparada dentro do modo, então uma recomposição (ou a volta da rotação) não perde nada.
+    val filterSignature = "${filters.query}\u0000${filters.filter.encode()}\u0000${filters.folderKey ?: "todas"}"
+    SideEffect { selection.syncFilter(filterSignature) }
 
     // Pasta apagada (aqui ou por outro aparelho): volta para "todas".
     LaunchedEffect(vault.folders, filters.folderKey) {
         val f = filters.folder
         if (f is FolderFilter.In && vault.folders.none { it.id == f.id }) filters.folderKey = null
     }
+    // A seleção esvaziou (apagou, moveu, fechou): a confirmação pendente some junto.
+    LaunchedEffect(selection.active) {
+        if (!selection.active) confirmingTrash = false
+    }
 
     BackHandler(enabled = filters.searching) {
         filters.searching = false
         filters.query = ""
     }
+    BackHandler(enabled = selection.active) { selection.clear() }
 
     Scaffold(
         modifier = modifier,
         topBar = {
             Column {
-                ListTopBar(filters = filters, busy = busy, menu = menu, onLock = onLock)
+                if (selection.active) {
+                    SelectionTopBar(
+                        selection = selection,
+                        folders = vault.folders,
+                        visibleIds = visible.map { it.id },
+                        busy = busy,
+                        onMove = onMoveSelected,
+                        onTrash = { confirmingTrash = true },
+                    )
+                } else {
+                    ListTopBar(filters = filters, busy = busy, menu = menu, onLock = onLock)
+                }
                 if (busy) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else {
@@ -251,10 +289,14 @@ fun VaultListPane(
                     items(visible, key = { it.id }) { item ->
                         ItemRow(
                             item = item,
-                            selected = item.id == selectedId,
+                            inSelection = selection.active,
+                            batchSelected = selection.contains(item.id),
+                            detailSelected = item.id == selectedId,
                             showTotp = rowTotp,
                             totpClock = totpClock,
-                            onClick = { onOpen(item.id) },
+                            // Fora do modo de seleção o toque abre o item; no modo ele alterna (regra do modo).
+                            onClick = { if (selection.onTap(item.id)) onOpen(item.id) },
+                            onLongClick = { selection.onLongPress(item.id) },
                             onToggleFavorite = { onToggleFavorite(item.id) },
                         )
                     }
@@ -263,6 +305,89 @@ fun VaultListPane(
             }
         }
     }
+
+    if (confirmingTrash && selection.active) {
+        val count = selection.len
+        ConfirmDialog(
+            title = stringResource(R.string.selection_delete),
+            message = pluralStringResource(R.plurals.selection_delete_message, count, count),
+            confirmLabel = stringResource(R.string.selection_delete_confirm),
+            destructive = true,
+            onConfirm = {
+                confirmingTrash = false
+                onTrashSelected()
+            },
+            onDismiss = { confirmingTrash = false },
+        )
+    }
+}
+
+/**
+ * A barra de topo no modo de seleção: contagem, "selecionar tudo" (os visíveis), mover para pasta (com "sem
+ * pasta") e apagar. Fechar é a seta/X da esquerda; o back do aparelho faz o mesmo.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(
+    selection: ListSelectionMode,
+    folders: List<Folder>,
+    visibleIds: List<String>,
+    busy: Boolean,
+    onMove: (String?) -> Unit,
+    onTrash: () -> Unit,
+) {
+    var moveOpen by remember { mutableStateOf(false) }
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = { selection.clear() }) {
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.selection_close))
+            }
+        },
+        title = {
+            Text(
+                text = pluralStringResource(R.plurals.selection_count, selection.len, selection.len),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        actions = {
+            IconButton(onClick = { selection.selectAll(visibleIds) }, enabled = !busy) {
+                Icon(Icons.Outlined.SelectAll, contentDescription = stringResource(R.string.selection_all))
+            }
+            Box {
+                IconButton(onClick = { moveOpen = true }, enabled = !busy) {
+                    Icon(Icons.AutoMirrored.Outlined.DriveFileMove, contentDescription = stringResource(R.string.selection_move))
+                }
+                DropdownMenu(expanded = moveOpen, onDismissRequest = { moveOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.folder_sem)) },
+                        leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+                        onClick = {
+                            moveOpen = false
+                            onMove(null)
+                        },
+                    )
+                    folders.sortedBy { it.name.lowercase() }.forEach { folder ->
+                        DropdownMenuItem(
+                            text = { Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+                            onClick = {
+                                moveOpen = false
+                                onMove(folder.id)
+                            },
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = onTrash, enabled = !busy) {
+                Icon(
+                    Icons.Outlined.Delete,
+                    contentDescription = stringResource(R.string.selection_delete),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -373,25 +498,45 @@ private fun ListTopBar(filters: ListFilterState, busy: Boolean, menu: VaultMenuA
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ItemRow(
     item: Item,
-    selected: Boolean,
+    /** O modo de seleção está ligado: a linha mostra a marca de seleção no lugar do avatar. */
+    inSelection: Boolean,
+    /** Esta linha está marcada. */
+    batchSelected: Boolean,
+    /** Esta linha é a que está aberta no painel de detalhe (tablet). */
+    detailSelected: Boolean,
     showTotp: Boolean,
     totpClock: State<Long>,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onToggleFavorite: () -> Unit,
 ) {
     val subtitle = remember(item) { VaultFilters.subtitle(item) }
     val hasTotp = VaultFilters.hasTotp(item)
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
-        colors = if (selected) {
+        modifier = Modifier
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            // O leitor de tela anuncia "selecionado"; a marca visual é o ícone da esquerda.
+            .semantics { selected = batchSelected },
+        colors = if (batchSelected || detailSelected) {
             ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         } else {
             ListItemDefaults.colors()
         },
-        leadingContent = { KindAvatar(item.kind) },
+        leadingContent = {
+            if (inSelection) {
+                Icon(
+                    imageVector = if (batchSelected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (batchSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                KindAvatar(item.kind)
+            }
+        },
         headlineContent = {
             Text(
                 text = item.name.ifBlank { stringResource(R.string.item_untitled) },
@@ -416,12 +561,15 @@ private fun ItemRow(
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (hasTotp && showTotp) RowTotp(item.login?.totp.orEmpty(), totpClock)
-                IconButton(onClick = onToggleFavorite) {
-                    Icon(
-                        imageVector = if (item.favorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = stringResource(if (item.favorite) R.string.item_unfavorite else R.string.item_favorite),
-                        tint = if (item.favorite) FavoriteAmber else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                // No modo de seleção o favorito sai da linha: um toque ali não pode mudar o cofre sem querer.
+                if (!inSelection) {
+                    IconButton(onClick = onToggleFavorite) {
+                        Icon(
+                            imageVector = if (item.favorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            contentDescription = stringResource(if (item.favorite) R.string.item_unfavorite else R.string.item_favorite),
+                            tint = if (item.favorite) FavoriteAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         },

@@ -75,6 +75,12 @@
     <string name="field_totp">Chave TOTP (2FA)</string>
     <string name="field_folder">Pasta</string>
 
+    <!-- Rótulos dos campos que a mudança de tipo GERA. São dado gravado no cofre, não rótulo de tela: os mesmos
+         textos do desktop (`field_labels()`), para o mesmo item nascer com os mesmos campos nos dois apps. -->
+    <string name="kind_field_website">URL</string>
+    <string name="kind_field_totp">TOTP</string>
+    <string name="kind_field_email">E-mail</string>
+
     <!-- Campos personalizados -->
     <string name="custom_fields">Campos personalizados</string>
     <string name="custom_field_name">Nome</string>
@@ -135,6 +141,7 @@
     <string name="op_save">Falha ao salvar</string>
     <string name="op_save_item">Falha ao salvar o item</string>
     <string name="op_delete_item">Falha ao remover o item</string>
+    <string name="op_move_item">Falha ao mover o item</string>
     <string name="op_favorite">Falha ao atualizar o favorito</string>
     <string name="op_create_folder">Falha ao criar a pasta</string>
     <string name="op_rename_folder">Falha ao renomear a pasta</string>
@@ -357,6 +364,29 @@
     <string name="msg_item_trashed">Item movido para a lixeira.</string>
     <string name="msg_item_restored">Item restaurado.</string>
     <string name="msg_item_deleted_forever">Item excluído de vez.</string>
+
+    <!-- Seleção múltipla da lista (apagar e mover em lote) -->
+    <plurals name="selection_count">
+        <item quantity="one">%1$d selecionado</item>
+        <item quantity="other">%1$d selecionados</item>
+    </plurals>
+    <string name="selection_close">Fechar seleção</string>
+    <string name="selection_all">Selecionar tudo</string>
+    <string name="selection_move">Mover para pasta…</string>
+    <string name="selection_delete">Apagar selecionados</string>
+    <string name="selection_delete_confirm">Apagar</string>
+    <plurals name="selection_delete_message">
+        <item quantity="one">Mover %1$d item para a lixeira?</item>
+        <item quantity="other">Mover %1$d itens para a lixeira?</item>
+    </plurals>
+    <plurals name="msg_items_trashed">
+        <item quantity="one">Item movido para a lixeira.</item>
+        <item quantity="other">%1$d itens movidos para a lixeira.</item>
+    </plurals>
+    <plurals name="msg_items_moved">
+        <item quantity="one">Item movido para %2$s.</item>
+        <item quantity="other">%1$d itens movidos para %2$s.</item>
+    </plurals>
     <string name="msg_attachment_trashed">Anexo movido para a lixeira de anexos.</string>
     <string name="msg_attachment_restored">Anexo restaurado.</string>
     <string name="msg_attachment_deleted">Anexo excluído de vez.</string>

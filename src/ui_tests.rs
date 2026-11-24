@@ -170,6 +170,21 @@ fn unlocked_folder(name: &str, folder: &str, prefs: Prefs) -> KeysApp {
     app
 }
 
+/// Um cofre destrancado com uma pasta e TODOS os itens já nela (o teste de mover para a pasta em que já estão).
+fn unlocked_in_folder(name: &str, folder: &str, prefs: Prefs) -> (KeysApp, String) {
+    let mut app = unlocked(name, prefs);
+    let mut raw = app.raw.clone().expect("cofre aberto");
+    crate::vault::add_folder(&mut raw, folder);
+    let folder_id = crate::vault::folders(&raw).into_iter().next().map(|f| f.id).expect("pasta criada");
+    if let Some(items) = raw.get_mut("items").and_then(serde_json::Value::as_array_mut) {
+        for item in items {
+            item["folderId"] = serde_json::Value::String(folder_id.clone());
+        }
+    }
+    app.adopt(crate::crypto::test_session(), raw);
+    (app, folder_id)
+}
+
 /// O item de um menu (a pasta tem o mesmo nome do chip da toolbar; o do popup é o último da árvore).
 fn click_menu_item(harness: &mut Harness<'_, KeysApp>, label: &str) {
     {
@@ -2385,4 +2400,91 @@ fn a_missing_selected_item_reports_the_error_and_writes_nothing() {
     assert!(erro.contains("no longer exists"), "mensagem traduzida da variante: {erro}");
     assert_eq!(harness.state().persist_count, baseline, "nada foi gravado");
     assert_eq!(std::fs::read(&harness.state().path).expect("cofre em disco"), antes, "o arquivo ficou byte a byte igual");
+}
+
+/// Uma release falsa só para o prompt do atualizador abrir (nada é baixado, nada instala).
+fn fake_release() -> craft_update::Release {
+    craft_update::Release {
+        tag: "v99.0.0".into(),
+        version: craft_update::parse_version("99.0.0"),
+        name: "Local Keys v99.0.0".into(),
+        published_at: None,
+        html_url: "https://github.com/Anon5T4R/Local-Keys/releases/tag/v99.0.0".into(),
+        notes: String::new(),
+        prerelease: false,
+        assets: Vec::new(),
+    }
+}
+
+/// O prompt do atualizador aberto é um modal como os outros: o teclado da seleção (`Delete` inclusive) não age
+/// por baixo dele.
+#[test]
+fn the_open_update_prompt_keeps_the_selection_keys_off_the_list() {
+    let mut app = unlocked("select-update-prompt", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-update-prompt");
+    // Sem o arquivo do launcher: o prompt pode abrir.
+    app.updater = app.updater.with_pins_path(dir.join("pins.json"));
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 2);
+
+    harness.state_mut().updater.offer(fake_release());
+    harness.run_steps(2);
+    assert!(harness.state().updater.prompt_open(), "o prompt do atualizador está aberto");
+    assert!(harness.state().any_modal_open(), "e conta como modal para o teclado da seleção");
+
+    press(&mut harness, egui::Key::Delete, egui::Modifiers::NONE);
+    assert!(harness.state().batch_delete_ask.is_none(), "o Delete não abre a confirmação por baixo do prompt");
+    assert_eq!(harness.state().selection.len(), 2, "a seleção fica intacta");
+}
+
+/// Mover a seleção para a pasta em que os itens JÁ estão não muda nada: nada é gravado e a seleção continua para
+/// a pessoa escolher outro destino.
+#[test]
+fn moving_the_selection_into_the_folder_it_is_already_in_writes_nothing() {
+    let (mut app, folder_id) = unlocked_in_folder("select-same-move", "Work", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-same-move");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    harness.get_by_label("Move to folder…").click();
+    harness.run_steps(2);
+    click_menu_item(&mut harness, "Work");
+    assert_eq!(harness.state().persist_count, baseline, "os itens já estavam na pasta: nada é gravado");
+    assert_eq!(harness.state().selection.len(), 2, "sem mudança nenhuma, a seleção fica");
+    assert!(harness.state().err.is_none(), "e nenhum erro aparece: {:?}", harness.state().err);
+    for name in ["192.168.1.34", "1lib.sk"] {
+        let id = item_id(harness.state(), name);
+        assert_eq!(item_by_id(harness.state(), &id)["folderId"], serde_json::Value::String(folder_id.clone()), "{name} continua na pasta");
+    }
+}
+
+/// "No folder" no menu de mover é uma operação como as outras: tira os itens da pasta com UMA gravação e limpa a
+/// seleção.
+#[test]
+fn moving_the_selection_to_no_folder_takes_them_out_of_the_folder() {
+    let (mut app, _folder_id) = unlocked_in_folder("select-no-folder", "Work", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-no-folder");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    harness.get_by_label("Move to folder…").click();
+    harness.run_steps(2);
+    click_menu_item(&mut harness, "No folder");
+    assert_eq!(harness.state().persist_count - baseline, 1, "o lote grava uma vez só");
+    assert!(harness.state().selection.is_empty(), "a barra some com a seleção vazia");
+    for name in ["192.168.1.34", "1lib.sk"] {
+        let id = item_id(harness.state(), name);
+        assert!(item_by_id(harness.state(), &id)["folderId"].is_null(), "{name} saiu da pasta");
+    }
 }

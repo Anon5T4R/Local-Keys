@@ -20,20 +20,20 @@ import org.junit.Test
  */
 class ItemKindChangeTest {
 
-    /** Os rótulos que o editor manda (o inglês do formulário). */
+    /** Os rótulos que o editor manda: os do desktop (`field_labels()`), que é o que vai gravado no cofre. */
     private val labels = FieldLabelsFfi(
         username = "Username",
         password = "Password",
-        website = "Website",
+        website = "URL",
         totp = "TOTP",
         cardholder = "Cardholder",
         brand = "Brand",
         cardNumber = "Card number",
-        expiry = "Expiry",
+        expiry = "Expiry (MM/YY)",
         securityCode = "Security code",
         firstName = "First name",
         lastName = "Last name",
-        email = "Email",
+        email = "E-mail",
         phone = "Phone",
         address = "Address",
     )
@@ -123,7 +123,7 @@ class ItemKindChangeTest {
             listOf(
                 Triple("Username", "joao", false),
                 Triple("Password", "segredo", true),
-                Triple("Website", "https://gmail.com", false),
+                Triple("URL", "https://gmail.com", false),
                 Triple("TOTP", "JBSWY3DPEHPK3PXP", true),
             ),
             fieldsOf(item),
@@ -146,7 +146,7 @@ class ItemKindChangeTest {
                 Triple("Cardholder", "João da Silva", false),
                 Triple("Brand", "Elo", false),
                 Triple("Card number", "6362970000457013", true),
-                Triple("Expiry", "01/27", false),
+                Triple("Expiry (MM/YY)", "01/27", false),
                 Triple("Security code", "123", true),
             ),
             fieldsOf(item),
@@ -162,9 +162,27 @@ class ItemKindChangeTest {
         state.targetKind = ItemKind.NOTE
 
         val refused = state.prepareSave(now = 1, labels = labels) as ItemEditorState.Save.Refused
-        assertTrue("a razão do núcleo vem no erro: ${refused.error.reason}", refused.error.reason.contains("passkeyId"))
+        assertTrue("a razão do núcleo vem no erro: ${refused.reason}", refused.reason.contains("passkeyId"))
 
         // Como no desktop: o seletor voltou ao tipo original e as edições da pessoa continuam no formulário.
+        assertEquals(ItemKind.LOGIN, state.targetKind)
+        assertEquals("Gmail editado", state.name)
+        assertEquals(ItemKind.LOGIN, state.build(now = 1).kind)
+    }
+
+    @Test
+    fun a_saida_inesperada_da_ponte_recusa_o_salvar_e_nao_derruba_o_editor() {
+        // O núcleo devolvendo algo que não vira um `Item` (JSON quebrado, campo faltando) não pode derrubar o
+        // salvar: vira a mesma recusa da conversão, sem gravar nada e sem fechar o formulário.
+        val state = ItemEditorState(
+            initial = login(),
+            convert = { _, _, _ -> throw org.json.JSONException("saída inesperada do núcleo") },
+        )
+        state.name = "Gmail editado"
+        state.targetKind = ItemKind.NOTE
+
+        val refused = state.prepareSave(now = 1, labels = labels) as ItemEditorState.Save.Refused
+        assertTrue("o motivo vem preenchido: ${refused.reason}", refused.reason.isNotBlank())
         assertEquals(ItemKind.LOGIN, state.targetKind)
         assertEquals("Gmail editado", state.name)
         assertEquals(ItemKind.LOGIN, state.build(now = 1).kind)

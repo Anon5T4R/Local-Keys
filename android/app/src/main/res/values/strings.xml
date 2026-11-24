@@ -76,6 +76,12 @@
     <string name="field_totp">TOTP key (2FA)</string>
     <string name="field_folder">Folder</string>
 
+    <!-- Rótulos dos campos que a mudança de tipo GERA. São dado gravado no cofre, não rótulo de tela: os mesmos
+         textos do desktop (`field_labels()`), para o mesmo item nascer com os mesmos campos nos dois apps. -->
+    <string name="kind_field_website">URL</string>
+    <string name="kind_field_totp">TOTP</string>
+    <string name="kind_field_email">E-mail</string>
+
     <!-- Campos personalizados -->
     <string name="custom_fields">Custom fields</string>
     <string name="custom_field_name">Name</string>
@@ -136,6 +142,7 @@
     <string name="op_save">Save failed</string>
     <string name="op_save_item">Could not save the item</string>
     <string name="op_delete_item">Could not remove the item</string>
+    <string name="op_move_item">Could not move the item</string>
     <string name="op_favorite">Could not update the favorite</string>
     <string name="op_create_folder">Could not create the folder</string>
     <string name="op_rename_folder">Could not rename the folder</string>
@@ -358,6 +365,29 @@
     <string name="msg_item_trashed">Item moved to trash.</string>
     <string name="msg_item_restored">Item restored.</string>
     <string name="msg_item_deleted_forever">Item deleted forever.</string>
+
+    <!-- Seleção múltipla da lista (apagar e mover em lote) -->
+    <plurals name="selection_count">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <string name="selection_close">Close selection</string>
+    <string name="selection_all">Select all</string>
+    <string name="selection_move">Move to folder…</string>
+    <string name="selection_delete">Delete selected</string>
+    <string name="selection_delete_confirm">Delete</string>
+    <plurals name="selection_delete_message">
+        <item quantity="one">Move %1$d item to the trash?</item>
+        <item quantity="other">Move %1$d items to the trash?</item>
+    </plurals>
+    <plurals name="msg_items_trashed">
+        <item quantity="one">Item moved to trash.</item>
+        <item quantity="other">%1$d items moved to trash.</item>
+    </plurals>
+    <plurals name="msg_items_moved">
+        <item quantity="one">Item moved to %2$s.</item>
+        <item quantity="other">%1$d items moved to %2$s.</item>
+    </plurals>
     <string name="msg_attachment_trashed">Attachment moved to the attachment trash.</string>
     <string name="msg_attachment_restored">Attachment restored.</string>
     <string name="msg_attachment_deleted">Attachment deleted forever.</string>

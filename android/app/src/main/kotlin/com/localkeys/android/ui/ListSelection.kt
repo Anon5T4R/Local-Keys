@@ -3,9 +3,9 @@ package com.localkeys.android.ui
 /**
  * A seleção de itens da lista (Android): um conjunto ORDENADO de ids, sem Compose e sem cofre.
  *
- * A tela (peça 2 desta unidade) chama [toggle] no Ctrl+clique, [range] no Shift+clique com a ordem visível da lista e
- * [resetForFilterChange] quando o filtro, a busca ou a pasta mudam — a seleção não pode sobreviver a uma lista
- * diferente da que a pessoa está vendo. Espelho do `src/selection.rs` do desktop.
+ * A tela chama [toggle]/[selectOnly] pelo toque, via [ListSelectionMode] (o modo de seleção, as regras do toque e a
+ * limpeza quando a lista muda); [range] marca o intervalo entre dois ids na ordem visível. Espelho do
+ * `src/selection.rs` do desktop.
  */
 class ListSelection {
 

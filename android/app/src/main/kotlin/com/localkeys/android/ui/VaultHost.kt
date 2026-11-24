@@ -136,6 +136,7 @@ fun VaultHost(
                 vault = vault,
                 filters = filters,
                 selectedId = selectedId,
+                selection = viewModel.selection,
                 busy = state.busy,
                 totpClock = totpClock,
                 snackbarHostState = snackbar,
@@ -144,6 +145,8 @@ fun VaultHost(
                 onNew = { newItemOpen = true },
                 onToggleFavorite = viewModel::toggleFavorite,
                 onLock = viewModel::lock,
+                onMoveSelected = viewModel::moveSelected,
+                onTrashSelected = viewModel::trashSelected,
                 banner = if (updateState.showBanner) {
                     { UpdateBanner(updateState, updateActions) }
                 } else {

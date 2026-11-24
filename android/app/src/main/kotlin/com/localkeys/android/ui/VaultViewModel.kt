@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.security.keystore.KeyPermanentlyInvalidatedException
+import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.credentials.providerevents.ProviderEventsManager
 import androidx.credentials.providerevents.exception.ImportCredentialsCancellationException
@@ -143,6 +144,13 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * A seleção múltipla da lista principal (unidade 5): a tela da lista lê e muda este estado (toque longo
+     * entra no modo, toque alterna, "selecionar tudo", fechar, trocar a busca/filtro/pasta) e as duas operações
+     * que gravam passam por aqui, porque dependem do repositório e do arquivo. Trancar limpa (ver [lock]).
+     */
+    val selection = ListSelectionMode()
 
     /**
      * Últimos bytes conhecidos do arquivo no disco. Serve tanto para o unlock
@@ -663,6 +671,58 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Seleção múltipla da lista (lixeira e pasta em lote) ──────────────
+
+    /**
+     * Manda a seleção para a lixeira com UMA gravação, pela regra do núcleo ([VaultRepository.trashSelected]).
+     * A recusa do lote (um item inválido, um item que já está na lixeira) ou a falha da gravação deixam o cofre
+     * como estava; nada muda no arquivo e a seleção continua para a pessoa tentar de novo.
+     */
+    fun trashSelected() {
+        val ids = selection.ids()
+        if (ids.isEmpty() || _state.value.vaultUri == null) return
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val result = repository.trashSelected(ids)
+                persistAndCommit(result.vault, notice = plural(R.plurals.msg_items_trashed, ids.size))
+                // A seleção é estado de tela (Compose): fecha na thread da UI, não na que gravou.
+                withContext(Dispatchers.Main) { selection.clear() }
+            } catch (e: Exception) {
+                failSave(e, R.string.op_delete_item)
+            }
+        }
+    }
+
+    /**
+     * Move a seleção para [folderId] (`null` = sem pasta) com UMA gravação. Os itens que já estavam na pasta não
+     * são recarimbados; se nenhum mudou de fato, não há gravação e a seleção fica (nada aconteceu).
+     */
+    fun moveSelected(folderId: String?) {
+        val ids = selection.ids()
+        if (ids.isEmpty() || _state.value.vaultUri == null) return
+        val target = if (folderId == null) {
+            str(R.string.folder_sem)
+        } else {
+            _state.value.vault?.folders?.firstOrNull { it.id == folderId }?.name ?: str(R.string.folder_sem)
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val result = repository.moveSelected(ids, folderId)
+                if (result.changed == 0) {
+                    // Já estavam nessa pasta: nada mudou, nada é gravado (nem a seleção, que continua útil).
+                    _state.update { it.copy(busy = false) }
+                    return@launch
+                }
+                persistAndCommit(result.vault, notice = plural(R.plurals.msg_items_moved, ids.size, target))
+                withContext(Dispatchers.Main) { selection.clear() }
+            } catch (e: Exception) {
+                failSave(e, R.string.op_move_item)
+            }
+        }
+    }
+
     // ── Importar de outro gerenciador (Credential Exchange da FIDO) ──────
 
     /**
@@ -831,6 +891,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun str(@StringRes id: Int, vararg args: Any): String =
         getApplication<Application>().getString(id, *args)
+
+    /** O texto de um plural no idioma da interface; a contagem vai também nos argumentos (`%1$d`). */
+    private fun plural(@PluralsRes id: Int, count: Int, vararg args: Any): String =
+        getApplication<Application>().resources.getQuantityString(id, count, count, *args)
 
     /** O que ficou gravado (relido) reabre com a sessão e bate com o vault atual? Null = não deu para reler. */
     private fun writtenIsSane(blob: ByteArray?): Boolean =
@@ -1158,6 +1222,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     // ── Travar / limpar ──────────────────────────────────────────────────
 
     fun lock() {
+        // Trancar também fecha o modo de seleção: o cofre que volta não tem os ids marcados.
+        selection.clear()
         repository.lock()
         syncAutofillCache(null)
         _state.update { it.copy(vault = null, screen = Screen.Unlock) }

@@ -107,13 +107,16 @@ fun ItemEditorScreen(
     var confirmDiscard by remember { mutableStateOf(false) }
     var generatorOpen by remember { mutableStateOf(false) }
     var kindError by remember { mutableStateOf(false) }
-    // Os rótulos dos campos que a conversão gera: os MESMOS do formulário, para o campo extra nascer com o nome
-    // que a pessoa conhece. O número do cartão tem chave própria ("Card number"), sem a ambiguidade do "Number".
+    // Os rótulos dos campos que a conversão gera: os MESMOS textos do desktop (`field_labels()`), porque eles
+    // vão gravados no cofre como nome do campo extra. Onde o rótulo do formulário difere ("Website", "Chave TOTP
+    // (2FA)"), o campo gerado usa o recurso próprio `kind_field_*`. O número do cartão tem chave própria ("Card
+    // number"), sem a ambiguidade do "Number". O teste `KindFieldLabelsTest` compara os dois `strings.xml` com a
+    // tabela do desktop.
     val kindLabels = FieldLabelsFfi(
         username = stringResource(R.string.field_username),
         password = stringResource(R.string.field_password),
-        website = stringResource(R.string.field_uri),
-        totp = stringResource(R.string.field_totp),
+        website = stringResource(R.string.kind_field_website),
+        totp = stringResource(R.string.kind_field_totp),
         cardholder = stringResource(R.string.field_cardholder),
         brand = stringResource(R.string.field_brand),
         cardNumber = stringResource(R.string.field_card_number),
@@ -121,7 +124,7 @@ fun ItemEditorScreen(
         securityCode = stringResource(R.string.field_code),
         firstName = stringResource(R.string.field_first_name),
         lastName = stringResource(R.string.field_last_name),
-        email = stringResource(R.string.field_email),
+        email = stringResource(R.string.kind_field_email),
         phone = stringResource(R.string.field_phone),
         address = stringResource(R.string.field_address),
     )

@@ -120,6 +120,9 @@ impl KeysApp {
             return;
         };
         match batch::move_many(&mut next, &ids, folder_id.as_deref(), now_ms()) {
+            // Nada mudou de fato (os itens já estavam nessa pasta): não há o que gravar, e a seleção fica para a
+            // pessoa escolher outro destino.
+            Ok(0) => {}
             Ok(_) => {
                 if self.persist(next) {
                     self.clear_selection();
@@ -210,6 +213,9 @@ impl KeysApp {
             || self.export_open
             || self.sync_open
             || self.settings_open
+            // O prompt do atualizador (craft_update) é um modal do crate: enquanto ele está aberto, o teclado da
+            // seleção não pode apagar por baixo dele.
+            || self.updater.prompt_open()
             || self.batch_delete_ask.is_some()
     }
 }
