@@ -19,8 +19,8 @@ Rust puro + egui: o app (`src/`) e o núcleo sem UI (`crates/core`, `localkeys-c
 - `crates/core` — `localkeys-core`, o núcleo sem UI: formato `.tkeys` (`crypto.rs`), cofre em JSON bruto com
   escrita conservadora (`vault.rs`), importadores, exportação, TOTP e gerador. O Keys Android o usa por UniFFI
   (`crates/ffi`); nada de UI ou i18n entra aqui.
-- `crates/ffi` — `localkeys-ffi`, a ponte UniFFI do núcleo para o Kotlin (hoje: o formato `.tkeys`, a cripto e a sessão
-  de gravação). **Workspace próprio** (fora do `Cargo.lock` e do `cargo-deny` do desktop: o UniFFI é MPL-2.0 e só entra
+- `crates/ffi` — `localkeys-ffi`, a ponte UniFFI do núcleo para o Kotlin (hoje: o formato `.tkeys`, a cripto, a sessão
+  de gravação, a conversão do tipo de um item e o lote de lixeira/pasta). **Workspace próprio** (fora do `Cargo.lock` e do `cargo-deny` do desktop: o UniFFI é MPL-2.0 e só entra
   no `.so` do Android). O Gradle o compila sozinho (`cargoBuildHost`, `generateUniffi`, `cargoNdk` em
   `android/app/build.gradle.kts`); precisa de Rust com os targets `*-linux-android`, `cargo install cargo-ndk` e o NDK.
   Os bindings Kotlin e os `.so` ficam fora do git. `cargo test` na pasta testa a ponte.

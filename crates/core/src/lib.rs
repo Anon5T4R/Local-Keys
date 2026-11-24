@@ -5,6 +5,7 @@
 //! O app desktop usa esta crate direto; o Android vai usá-la por UniFFI, para o formato e as regras serem o
 //! mesmo código nos dois lados.
 
+pub mod batch;
 pub mod bwdecrypt;
 pub mod card;
 pub mod change_kind;

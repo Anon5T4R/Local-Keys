@@ -8,8 +8,11 @@ import com.localkeys.android.ffi.KdfParamsFfi
 import com.localkeys.android.ffi.Session
 import com.localkeys.android.ffi.changeItemKind as ffiChangeItemKind
 import com.localkeys.android.ffi.createVault as ffiCreateVault
+import com.localkeys.android.ffi.moveItems as ffiMoveItems
 import com.localkeys.android.ffi.openVault as ffiOpenVault
 import com.localkeys.android.ffi.openVaultWithKey as ffiOpenVaultWithKey
+import com.localkeys.android.ffi.trashItems as ffiTrashItems
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -35,6 +38,13 @@ sealed class TkeysError : Exception() {
     /** O item não pode mudar para o tipo pedido (regra do núcleo). A [reason] é o diagnóstico em inglês do núcleo. */
     class NotConvertible(val reason: String) : TkeysError() {
         override val message: String get() = "item não pode ser convertido para o tipo pedido: $reason"
+    }
+    /**
+     * O lote (lixeira/pasta) foi recusado inteiro pela regra do núcleo: um item inválido, um item já na lixeira ou
+     * uma pasta que não existe. A [reason] é o diagnóstico em inglês do núcleo; nada foi alterado.
+     */
+    class InvalidItems(val reason: String) : TkeysError() {
+        override val message: String get() = "itens não podem ser alterados: $reason"
     }
 }
 
@@ -116,6 +126,28 @@ private fun KdfParams.toFfi() = KdfParamsFfi(mCost = mCostKib.toUInt(), tCost = 
 fun changeItemKind(item: Item, newKind: ItemKind, labels: FieldLabelsFfi): Item =
     translating { Item.parse(JSONObject(ffiChangeItemKind(item.toJson().toString(), newKind.wire, labels))) }
 
+/**
+ * Manda para a lixeira os [items] SELECIONADOS (não o cofre inteiro: num cofre grande o JSON custa memória) pela
+ * regra do núcleo, com o mesmo [now] em todos. Lote é tudo ou nada: um item inválido e nada muda
+ * ([TkeysError.InvalidItems]). Devolve os itens atualizados, na mesma ordem.
+ */
+fun trashItems(items: List<Item>, now: Long): List<Item> =
+    batchItems(items) { json -> ffiTrashItems(json, now.toULong()) }
+
+/**
+ * Põe os [items] SELECIONADOS na pasta [folderId] (`null` = sem pasta) pela regra do núcleo. Lote é tudo ou nada
+ * ([TkeysError.InvalidItems]); devolve os itens atualizados, na mesma ordem.
+ */
+fun moveItems(items: List<Item>, folderId: String?, now: Long): List<Item> =
+    batchItems(items) { json -> ffiMoveItems(json, folderId, now.toULong()) }
+
+/** O lote só atravessa a ponte com os itens selecionados; o resultado volta como lista de [Item]. */
+private inline fun batchItems(items: List<Item>, bridge: (itemsJson: String) -> String): List<Item> {
+    val json = JSONArray(items.map { it.toJson() }).toString()
+    val out = translating { JSONArray(bridge(json)) }
+    return (0 until out.length()).map { Item.parse(out.getJSONObject(it)) }
+}
+
 /** O erro do núcleo vira o [TkeysError] que o resto do app já trata. */
 private inline fun <T> translating(block: () -> T): T = try {
     block()
@@ -127,5 +159,6 @@ private inline fun <T> translating(block: () -> T): T = try {
         is FfiException.Decrypt -> TkeysError.Decrypt
         is FfiException.Corrupted -> TkeysError.Corrupted
         is FfiException.NotConvertible -> TkeysError.NotConvertible(e.reason)
+        is FfiException.InvalidItems -> TkeysError.InvalidItems(e.reason)
     }
 }

@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use localkeys_core::batch;
 use localkeys_core::change_kind::{self, FieldLabels};
 use localkeys_core::crypto::{self, CryptoError, KdfParams, SessionKey};
 
@@ -31,6 +32,9 @@ pub enum FfiError {
     /// O item não pode ser convertido para o tipo pedido (kind desconhecido, JSON inválido, uma chave que o núcleo
     /// não sabe converter…). A `reason` é o `Display` do erro do núcleo — o objeto/campo quando ele sabe dizer.
     NotConvertible { reason: String },
+    /// O lote (lixeira/pasta) não pode ser aplicado: um id ausente ou inexistente, um item que já está na lixeira,
+    /// JSON que não é uma lista… A `reason` é o `Display` do erro do núcleo.
+    InvalidItems { reason: String },
 }
 
 impl std::fmt::Display for FfiError {
@@ -42,6 +46,7 @@ impl std::fmt::Display for FfiError {
             FfiError::Decrypt => write!(f, "wrong password or corrupted file"),
             FfiError::Corrupted => write!(f, "corrupted file"),
             FfiError::NotConvertible { reason } => write!(f, "item cannot be converted to the requested kind: {reason}"),
+            FfiError::InvalidItems { reason } => write!(f, "items cannot be changed: {reason}"),
         }
     }
 }
@@ -125,6 +130,20 @@ impl From<FieldLabelsFfi> for FieldLabels {
 #[uniffi::export]
 pub fn change_item_kind(item_json: String, new_kind: String, labels: FieldLabelsFfi) -> Result<String, FfiError> {
     change_kind::change_kind_json(&item_json, &new_kind, &labels.into()).map_err(|error| FfiError::NotConvertible { reason: error.to_string() })
+}
+
+/// Manda para a lixeira os itens de um array JSON (só os SELECIONADOS — o cofre inteiro não atravessa a ponte) e
+/// devolve o array atualizado, com o mesmo `now_ms` em todos. Lote é tudo ou nada: um item inválido e nada muda.
+#[uniffi::export]
+pub fn trash_items(items_json: String, now_ms: u64) -> Result<String, FfiError> {
+    batch::trash_items_json(&items_json, now_ms).map_err(|error| FfiError::InvalidItems { reason: error.to_string() })
+}
+
+/// Põe na pasta `folder_id` (`None` = sem pasta) os itens de um array JSON (só os SELECIONADOS) e devolve o array
+/// atualizado. Lote é tudo ou nada: um item inválido e nada muda.
+#[uniffi::export]
+pub fn move_items(items_json: String, folder_id: Option<String>, now_ms: u64) -> Result<String, FfiError> {
+    batch::move_items_json(&items_json, folder_id.as_deref(), now_ms).map_err(|error| FfiError::InvalidItems { reason: error.to_string() })
 }
 
 /// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
@@ -304,5 +323,40 @@ mod tests {
         // A razão diz o objeto/campo quando o erro do núcleo sabe (é o que o Android mostra ao usuário).
         let item = r#"{"id":"x","kind":"login","name":"n","login":{"username":"u","extra":"fica"}}"#;
         assert_eq!(reason(change_item_kind(item.into(), "note".into(), labels())), "cannot convert `login.extra`: unknown field");
+    }
+
+    /// Um array do cofre só com os itens selecionados — o que a ponte recebe do Android.
+    const SELECTED: &str = r#"[{"id":"a","kind":"note","name":"A","folderId":null,"createdAt":1,"updatedAt":2,"deletedAt":null},{"id":"b","kind":"login","name":"B","folderId":"work","createdAt":1,"updatedAt":2,"deletedAt":null,"login":{"username":"b","password":"p"}}]"#;
+
+    #[test]
+    fn lote_manda_os_itens_para_a_lixeira_com_o_mesmo_agora() {
+        let out = trash_items(SELECTED.into(), 1_700).unwrap();
+        assert_eq!(out.matches("\"deletedAt\":1700").count(), 2, "{out}");
+        assert_eq!(out.matches("\"updatedAt\":1700").count(), 2, "{out}");
+        assert!(out.contains("\"id\":\"a\"") && out.contains("\"id\":\"b\""), "{out}");
+        assert!(out.contains("\"username\":\"b\""), "o resto do item atravessa: {out}");
+    }
+
+    #[test]
+    fn lote_move_para_uma_pasta_e_para_sem_pasta() {
+        let out = move_items(SELECTED.into(), Some("home".into()), 1_700).unwrap();
+        assert_eq!(out.matches("\"folderId\":\"home\"").count(), 2, "{out}");
+        assert_eq!(out.matches("\"updatedAt\":1700").count(), 2, "{out}");
+
+        let out = move_items(SELECTED.into(), None, 1_700).unwrap();
+        assert_eq!(out.matches("\"folderId\":null").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn erro_do_lote_chega_tipado_com_a_razao() {
+        let reason = |result: Result<String, FfiError>| match result {
+            Err(FfiError::InvalidItems { reason }) => reason,
+            other => panic!("esperava InvalidItems, veio {other:?}"),
+        };
+        assert!(reason(trash_items("não é json".into(), 1)).starts_with("invalid items JSON: "), "JSON inválido");
+        assert!(reason(move_items("{}".into(), None, 1)).starts_with("invalid items JSON: "), "JSON que não é array");
+        assert_eq!(reason(trash_items(r#"[{"name":"sem id"}]"#.into(), 1)), "item has no `id`");
+        assert_eq!(reason(trash_items(r#"[{"id":"a","deletedAt":9}]"#.into(), 1)), "item `a` is already in the trash");
+        assert_eq!(FfiError::InvalidItems { reason: "x".into() }.to_string(), "items cannot be changed: x");
     }
 }

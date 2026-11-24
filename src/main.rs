@@ -20,6 +20,10 @@ mod jobs;
 mod pickers;
 mod prefs;
 mod qr;
+// O modelo de seleção da lista só entra no app de verdade na peça da tela (unidade 5, peça 2); até lá, existe para os
+// testes que travam a regra.
+#[cfg(test)]
+mod selection;
 mod shell;
 mod theme;
 #[cfg(any(windows, test))]
