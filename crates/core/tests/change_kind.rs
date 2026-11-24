@@ -446,4 +446,7 @@ fn json_invalido_e_tipo_desconhecido_pela_entrada_de_json() {
     let value: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(value["kind"], "note");
     assert_eq!(value["customFields"][0]["name"], "Username");
+
+    // A falha ao ESCREVER a saída tem variante própria: não se confunde com JSON de entrada inválido.
+    assert_eq!(ChangeKindError::Serialize("boom".into()).to_string(), "could not serialize the converted item: boom");
 }

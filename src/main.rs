@@ -20,10 +20,9 @@ mod jobs;
 mod pickers;
 mod prefs;
 mod qr;
-// O modelo de seleção da lista só entra no app de verdade na peça da tela (unidade 5, peça 2); até lá, existe para os
-// testes que travam a regra.
-#[cfg(test)]
+// O modelo de seleção da lista (unidade 5, peça 2): a tela usa o estado e a barra em `selection_ui.rs`.
 mod selection;
+mod selection_ui;
 mod shell;
 mod theme;
 #[cfg(any(windows, test))]
@@ -273,7 +272,9 @@ fn filter_kind_label(kind: filters::KindFilter) -> &'static str {
 }
 
 /// Os rótulos dos campos que a mudança de tipo gera (a regra do núcleo): as MESMAS chaves que o formulário
-/// já mostra para esses campos, para o campo extra nascer com o nome que a pessoa conhece.
+/// já mostra para esses campos, para o campo extra nascer com o nome que a pessoa conhece — com uma exceção:
+/// o número do cartão vira "Card number", embora o formulário o rotule "Number"; sozinho, fora do cartão, o
+/// rótulo curto não diz o que é.
 fn field_labels() -> change_kind::FieldLabels {
     change_kind::FieldLabels {
         username: tr("Username").into(),
@@ -305,6 +306,7 @@ fn change_kind_error_text(error: &change_kind::ChangeKindError) -> String {
         change_kind::ChangeKindError::MalformedCustomFields => tr("This item cannot change type: its custom fields are not a valid list."),
         change_kind::ChangeKindError::MalformedVault => tr("This item cannot change type: the vault has no valid item list."),
         change_kind::ChangeKindError::InvalidJson(_) => tr("This item cannot change type: its data is not valid JSON."),
+        change_kind::ChangeKindError::Serialize(_) => tr("This item cannot change type: its data could not be written."),
     }
     .to_string()
 }
@@ -883,6 +885,13 @@ struct KeysApp {
     filters: filters::Filters,
     /// Pasta selecionada nos chips da toolbar (None = todas).
     folder_filter: Option<String>,
+    /// Itens marcados na lista principal (Ctrl+clique alterna, Shift+clique faz o intervalo, Ctrl+A pega os
+    /// visíveis). Trocar filtro/pasta/busca, trancar ou fechar zera.
+    selection: selection::Selection,
+    /// Âncora do Shift+clique: o último item marcado (por Ctrl+clique) na ordem visível.
+    selection_anchor: Option<String>,
+    /// Apagar a seleção esperando confirmação (quantos itens); `None` = sem confirmação na tela.
+    batch_delete_ask: Option<usize>,
     // formulário de adição/edição
     form_open: bool,
     /// O tipo do item no formulário — escolhido no seletor do "+" (novo) ou o do próprio item (edição); é
@@ -893,8 +902,8 @@ struct KeysApp {
     /// acontece ao salvar. `None` = sem seletor: item novo (o tipo veio do "+") ou `kind` desconhecido no
     /// arquivo, que fica fixo como antes.
     form_target_kind: Option<vault::ItemKind>,
-    /// Erro da última gravação do formulário (conversão de tipo recusada pelo núcleo): aparece DENTRO do
-    /// modal, que continua aberto — a tela de trás fica coberta por ele.
+    /// Erro da última gravação do formulário (conversão de tipo recusada pelo núcleo ou falha do `persist`):
+    /// aparece DENTRO do modal, que continua aberto — a tela de trás fica coberta por ele.
     form_err: Option<String>,
     /// Seletor de tipo do "+" (Login, Cartão, Identidade, Nota, Item livre) antes de abrir o form.
     new_kind_open: bool,
@@ -1013,6 +1022,9 @@ struct KeysApp {
     palette: craft_palette::Palette,
     /// Onde o config.json é gravado (os testes apontam para uma pasta temporária).
     config_file: std::path::PathBuf,
+    /// Quantas gravações deram certo (só nos testes: afirma que o lote grava UMA vez).
+    #[cfg(test)]
+    pub(crate) persist_count: usize,
 }
 
 impl KeysApp {
@@ -1033,6 +1045,9 @@ impl KeysApp {
             search: String::new(),
             filters: filters::Filters::default(),
             folder_filter: None,
+            selection: selection::Selection::new(),
+            selection_anchor: None,
+            batch_delete_ask: None,
             form_open: false,
             form_kind: vault::ItemKind::Login,
             form_target_kind: None,
@@ -1105,6 +1120,8 @@ impl KeysApp {
             sync_open: false,
             palette: craft_palette::Palette::default(),
             config_file: config_dir(APP_ID).join("config.json"),
+            #[cfg(test)]
+            persist_count: 0,
         }
     }
 
@@ -1194,10 +1211,12 @@ impl KeysApp {
         self.sync_open = false;
         // O cofre seguinte abre sem filtro nenhum ligado (como a pasta, zerada no `adopt`).
         self.filters.clear();
+        self.clear_selection();
         self.toast = None;
     }
 
     fn adopt(&mut self, session: crypto::SessionKey, raw: serde_json::Value) {
+        self.clear_selection();
         self.items = vault::items_view(&raw);
         // O cofre pode ser OUTRO (destrancar depois de trancar): a pasta lembrada só vale se este cofre ainda
         // tem essa pasta; senão a lista começa em "todas" (a preferência fica como está).
@@ -1214,6 +1233,8 @@ impl KeysApp {
     fn set_folder_filter(&mut self, folder: Option<String>) {
         self.prefs.folder = folder.clone();
         self.folder_filter = folder;
+        // A lista muda de conteúdo: a seleção da lista antiga não vale para a nova.
+        self.reset_selection_for_filter_change();
         self.save_prefs();
     }
 
@@ -1376,6 +1397,10 @@ impl KeysApp {
                 self.err = None;
                 self.items = vault::items_view(&next);
                 self.raw = Some(next);
+                #[cfg(test)]
+                {
+                    self.persist_count += 1;
+                }
                 true
             }
             Err(e) => {
@@ -1539,9 +1564,9 @@ impl KeysApp {
             self.close_form_buffers();
             self.form_open = false;
             self.form_edit_id = None;
-        } else if self.form_target_kind.is_some_and(|target| target != self.form_kind) {
-            // Gravação falhou com a conversão pendente: o motivo aparece também DENTRO do modal (a linha de erro
-            // da tela de trás fica coberta por ele enquanto o formulário está aberto).
+        } else {
+            // Qualquer gravação que falhe com o formulário aberto mostra o motivo DENTRO do modal: a linha de erro
+            // da tela de trás fica coberta por ele (edição comum ou conversão de tipo pendente).
             self.form_err = self.err.clone();
         }
     }
@@ -1787,6 +1812,8 @@ impl KeysApp {
         self.err = None;
         self.items = vault::items_view(&plan.merged);
         self.raw = Some(plan.merged);
+        // A mescla pode apagar/mover itens: a seleção da lista antiga não vale para o resultado.
+        self.clear_selection();
         // O cofre mesclado pode não ter mais a pasta do filtro (apagada na outra cópia): a lista cai em "Todas" e a
         // preferência acompanha — como no Android —, em vez de ficar apontando para uma pasta que não existe.
         let gone = self
@@ -1876,8 +1903,15 @@ impl KeysApp {
         let Some(mut next) = self.raw.clone() else {
             return;
         };
-        if vault::delete_login(&mut next, id) {
-            self.persist(next);
+        if vault::delete_login(&mut next, id) && self.persist(next) {
+            // O item apagado pela linha pode estar marcado: a seleção não guarda id que saiu da lista.
+            if self.selection.contains(id) {
+                self.selection.toggle(id);
+                self.selection_anchor = None;
+                if self.selection.is_empty() {
+                    self.batch_delete_ask = None;
+                }
+            }
         }
     }
 
@@ -3648,6 +3682,8 @@ impl KeysApp {
             let quitting = self.quit.load(Ordering::Relaxed);
             if !quitting {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                // Fechar esconde a janela: a seleção da lista não fica esperando na memória.
+                self.clear_selection();
                 winctl::hide();
                 return; // não processa o resto do frame
             }
@@ -3724,6 +3760,7 @@ impl KeysApp {
         self.new_kind_modal(ctx);
         self.form_modal(ctx);
         self.delete_modal(ctx);
+        self.batch_delete_modal(ctx);
         self.import_modal(ctx);
         self.report_modal(ctx);
         self.generator_modal(ctx);
@@ -3954,6 +3991,7 @@ impl KeysApp {
         ui.add_space(4.0);
         // "Filtrar (n)" com os chips dos filtros ligados ao lado; a busca fica na linha de baixo para os
         // chips quebrarem linha na janela estreita sem empurrá-la para fora.
+        let filtros_antes = self.filters;
         ui.horizontal_wrapped(|ui| {
             let ligados = self.filters.active_count();
             let rotulo = if ligados > 0 { tr_fmt("Filter ({n})", &[("n", &ligados.to_string())]) } else { tr("Filter").to_string() };
@@ -4014,14 +4052,23 @@ impl KeysApp {
             if let Some(chip) = desligar {
                 self.filters.remove(chip);
             }
+            // Trocar o filtro troca a lista: a seleção antiga não vale para a nova.
+            if self.filters != filtros_antes {
+                self.reset_selection_for_filter_change();
+            }
         });
+        let mut busca_mudou = false;
         ui.horizontal(|ui| {
-            ui.add(line(&mut self.search).hint_text(tr("Search…")).desired_width(ui.available_width() - 24.0));
+            busca_mudou = ui.add(line(&mut self.search).hint_text(tr("Search…")).desired_width(ui.available_width() - 24.0)).changed();
             // Botão "X" pra limpar a busca sem precisar de backspace.
             if !self.search.is_empty() && craft_icons::ui::close_button(ui, tr("Clear")).clicked() {
                 self.search.clear();
+                busca_mudou = true;
             }
         });
+        if busca_mudou {
+            self.reset_selection_for_filter_change();
+        }
         ui.add_space(6.0);
 
         if let Some(e) = &self.err {
@@ -4035,6 +4082,9 @@ impl KeysApp {
             // Pasta: `None` no filtro = todas; igualdade por id.
             .filter(|r| self.folder_filter.is_none() || r.folder_id.as_deref() == self.folder_filter.as_deref())
             .collect();
+        // A ordem visível é a da lista (filtro, busca e pasta aplicados): é ela que o Shift e o Ctrl+A usam.
+        let visible_ids: Vec<String> = view.iter().map(|row| row.id.clone()).collect();
+        self.selection_keys(ctx, &visible_ids);
 
         if view.is_empty() {
             if self.items.is_empty() {
@@ -4059,88 +4109,109 @@ impl KeysApp {
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for row in view {
-                    ui.horizontal(|ui| {
-                        // ★ agora é BOTÃO: liga/desliga o favorito (o oficial
-                        // faz isso pelo editor, que passa no updateItem).
-                        let star = if row.favorite { "★" } else { "☆" };
-                        let star_ink = if row.favorite { skin.accent } else { skin.muted };
-                        if ghost_ink(ui, star, star_ink).on_hover_text(tr("Favorite")).clicked() {
-                            self.toggle_favorite(&row.id);
-                        }
-                        ui.vertical(|ui| {
-                            ui.strong(format!("{} {}", kind_icon(row.kind), row.name));
-                            if let Some(s) = &row.summary {
-                                ui.label(egui::RichText::new(s).small().weak());
-                            }
-                            // TOTP ao vivo: código + contagem (o repaint de
-                            // 500ms já está ligado quando há algum).
-                            if let Some(secret) = &row.totp {
-                                match totp::now(secret) {
-                                    Ok(code) => {
-                                        ui.horizontal(|ui| {
-                                            ui.label(egui::RichText::new(code.code.clone()).monospace().strong());
-                                            ui.label(egui::RichText::new(format!("{}{}", code.seconds_remaining, tr("s"))).small().weak());
-                                            if ghost(ui, tr("TOTP")).on_hover_text(tr("Copy")).clicked() {
-                                                // código é efêmero, mas marcar
-                                                // exclusão de histórico não custa
-                                                if clipboard::copy_secret(code.code).is_ok() {
-                                                    self.copied(&row.name);
-                                                }
+                    let selected = self.selection.contains(&row.id);
+                    // A linha marcada ganha fundo (marca visual) e o estado de seleção vai também na árvore de
+                    // acessibilidade pelo `selectable_label`.
+                    let fill = if selected { skin.accent.gamma_multiply(0.16) } else { egui::Color32::TRANSPARENT };
+                    egui::Frame::NONE.fill(fill).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(5, 3)).show(
+                        ui,
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                // ★ agora é BOTÃO: liga/desliga o favorito (o oficial
+                                // faz isso pelo editor, que passa no updateItem).
+                                let star = if row.favorite { "★" } else { "☆" };
+                                let star_ink = if row.favorite { skin.accent } else { skin.muted };
+                                if ghost_ink(ui, star, star_ink).on_hover_text(tr("Favorite")).clicked() {
+                                    self.toggle_favorite(&row.id);
+                                }
+                                ui.vertical(|ui| {
+                                    let title =
+                                        ui.selectable_label(selected, egui::RichText::new(format!("{} {}", kind_icon(row.kind), row.name)).strong());
+                                    if title.clicked() {
+                                        let modifiers = ui.input(|i| i.modifiers);
+                                        self.row_click(&row.id, &visible_ids, modifiers);
+                                    }
+                                    if let Some(s) = &row.summary {
+                                        ui.label(egui::RichText::new(s).small().weak());
+                                    }
+                                    // TOTP ao vivo: código + contagem (o repaint de
+                                    // 500ms já está ligado quando há algum).
+                                    if let Some(secret) = &row.totp {
+                                        match totp::now(secret) {
+                                            Ok(code) => {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(egui::RichText::new(code.code.clone()).monospace().strong());
+                                                    ui.label(egui::RichText::new(format!("{}{}", code.seconds_remaining, tr("s"))).small().weak());
+                                                    if ghost(ui, tr("TOTP")).on_hover_text(tr("Copy")).clicked() {
+                                                        // código é efêmero, mas marcar
+                                                        // exclusão de histórico não custa
+                                                        if clipboard::copy_secret(code.code).is_ok() {
+                                                            self.copied(&row.name);
+                                                        }
+                                                    }
+                                                });
                                             }
-                                        });
+                                            Err(e) => {
+                                                ui.label(egui::RichText::new(format!("TOTP: {e}")).small().color(egui::Color32::LIGHT_RED));
+                                            }
+                                        }
                                     }
-                                    Err(e) => {
-                                        ui.label(egui::RichText::new(format!("TOTP: {e}")).small().color(egui::Color32::LIGHT_RED));
-                                    }
-                                }
-                            }
-                            // Ações do item: ghost buttons (transparentes até
-                            // o hover), como no local-pdf. Copiar usuário/senha
-                            // só existe em login (os outros tipos não têm).
-                            ui.horizontal_wrapped(|ui| {
-                                if row.kind == vault::ItemKind::Login
-                                    && row.username.is_some()
-                                    && ghost(ui, tr("Username")).on_hover_text(tr("Copy")).clicked()
-                                    && let Some((user, _, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
-                                {
-                                    // usuário não é segredo: cópia simples
-                                    if arboard::Clipboard::new().and_then(|mut c| c.set_text(user)).is_ok() {
-                                        self.copied(&row.name);
-                                    }
-                                }
-                                if row.kind == vault::ItemKind::Login
-                                    && ghost(ui, tr("Password")).on_hover_text(tr("Copy")).clicked()
-                                    && let Some((_, pass, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
-                                    && clipboard::copy_secret(pass).is_ok()
-                                {
-                                    self.copied(&row.name);
-                                }
-                                if ghost(ui, tr("Attachments")).clicked() {
-                                    self.attach_item = Some(row.id.clone());
-                                    self.attach_path.clear();
-                                }
-                                if ghost(ui, tr("Edit")).clicked() {
-                                    self.open_edit_form(&row.id);
-                                }
-                                if ghost(ui, tr("Delete")).on_hover_text(tr("The item goes to the Trash, where you can restore it.")).clicked() {
-                                    // Confirmação: exclusão é reversível só na
-                                    // lixeira — clique sem querer não apaga.
-                                    self.delete_ask = Some((row.id.clone(), row.name.clone()));
-                                }
+                                    // Ações do item: ghost buttons (transparentes até
+                                    // o hover), como no local-pdf. Copiar usuário/senha
+                                    // só existe em login (os outros tipos não têm).
+                                    ui.horizontal_wrapped(|ui| {
+                                        if row.kind == vault::ItemKind::Login
+                                            && row.username.is_some()
+                                            && ghost(ui, tr("Username")).on_hover_text(tr("Copy")).clicked()
+                                            && let Some((user, _, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
+                                        {
+                                            // usuário não é segredo: cópia simples
+                                            if arboard::Clipboard::new().and_then(|mut c| c.set_text(user)).is_ok() {
+                                                self.copied(&row.name);
+                                            }
+                                        }
+                                        if row.kind == vault::ItemKind::Login
+                                            && ghost(ui, tr("Password")).on_hover_text(tr("Copy")).clicked()
+                                            && let Some((_, pass, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
+                                            && clipboard::copy_secret(pass).is_ok()
+                                        {
+                                            self.copied(&row.name);
+                                        }
+                                        if ghost(ui, tr("Attachments")).clicked() {
+                                            self.attach_item = Some(row.id.clone());
+                                            self.attach_path.clear();
+                                        }
+                                        if ghost(ui, tr("Edit")).clicked() {
+                                            self.open_edit_form(&row.id);
+                                        }
+                                        if ghost(ui, tr("Delete"))
+                                            .on_hover_text(tr("The item goes to the Trash, where you can restore it."))
+                                            .clicked()
+                                        {
+                                            // Confirmação: exclusão é reversível só na
+                                            // lixeira — clique sem querer não apaga.
+                                            self.delete_ask = Some((row.id.clone(), row.name.clone()));
+                                        }
+                                    });
+                                });
                             });
-                        });
-                    });
+                        },
+                    );
                     ui.separator();
                 }
             });
         }
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            ui.horizontal(|ui| {
-                // O rodapé conta o cofre inteiro (não o que o popup/busca deixou na tela).
-                ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), self.items.len())).small().weak());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {});
-            });
+            if self.selection.is_empty() {
+                ui.horizontal(|ui| {
+                    // O rodapé conta o cofre inteiro (não o que o popup/busca deixou na tela).
+                    ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), self.items.len())).small().weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {});
+                });
+            } else {
+                self.selection_bar(ui);
+            }
         });
         // ctx fica no parâmetro pra manter a assinatura simétrica às outras telas.
         let _ = ctx;
@@ -4168,9 +4239,13 @@ mod tests {
     fn lock_clears_the_list_filters() {
         let mut app = KeysApp::bare(Prefs::default());
         app.filters = filters::Filters { kind: filters::KindFilter::Cards, only: filters::Only { favorites: true, totp: true, attachments: false } };
+        app.selection.toggle("a");
+        app.selection_anchor = Some("a".into());
         assert!(!app.filters.is_clear());
         app.lock();
         assert!(app.filters.is_clear(), "trancar deixa os filtros limpos");
+        assert!(app.selection.is_empty(), "trancar limpa a seleção da lista");
+        assert!(app.selection_anchor.is_none());
     }
 
     /// `--finish-update` (o helper de update do Windows, tratado antes de tudo) não é cofre, mesmo

@@ -320,7 +320,8 @@ mod tests {
         assert_eq!(reason(change_item_kind("[1]".into(), "note".into(), labels())), "item is not a JSON object");
         assert!(reason(change_item_kind("não é json".into(), "note".into(), labels())).starts_with("invalid item JSON: "), "JSON inválido");
         assert_eq!(reason(change_item_kind(r#"{"id":"x","kind":"login"}"#.into(), "otp".into(), labels())), "unknown item kind");
-        // A razão diz o objeto/campo quando o erro do núcleo sabe (é o que o Android mostra ao usuário).
+        // A razão diz o objeto/campo quando o erro do núcleo sabe. O Android mostra ao usuário só a mensagem
+        // traduzida; a razão fica no diagnóstico.
         let item = r#"{"id":"x","kind":"login","name":"n","login":{"username":"u","extra":"fica"}}"#;
         assert_eq!(reason(change_item_kind(item.into(), "note".into(), labels())), "cannot convert `login.extra`: unknown field");
     }

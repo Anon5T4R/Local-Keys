@@ -140,7 +140,7 @@ mod tests {
     /// contexto no idioma. Lê as fontes do app, então texto novo sem tradução quebra aqui.
     #[test]
     fn every_text_is_translated() {
-        let sources = [include_str!("main.rs"), include_str!("shell.rs")];
+        let sources = [include_str!("main.rs"), include_str!("shell.rs"), include_str!("selection_ui.rs")];
         let mut missing = Vec::new();
         for code in ["pt-br", "es"] {
             set_language(code);

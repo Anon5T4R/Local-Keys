@@ -7,8 +7,9 @@
 //!
 //! Decisões da regra:
 //! - o núcleo não converte o que não conhece: chave desconhecida com valor, objeto tipado que não é objeto (string,
-//!   lista, número…) e `customFields` que não é lista dão erro, e aí o item fica intacto. Chave desconhecida vazia
-//!   (`null`, `"  "`, `[]`, `{}`) não bloqueia — nada se perde ao descartá-la — e some junto com o objeto;
+//!   lista, número…) e `customFields` que não é lista dão erro numa CONVERSÃO, e aí o item fica intacto. Tipo igual
+//!   não é conversão: a regra devolve o item como veio, sem validar `customFields` nem os objetos. Chave desconhecida
+//!   vazia (`null`, `"  "`, `[]`, `{}`) não bloqueia — nada se perde ao descartá-la — e some junto com o objeto;
 //! - objeto tipado `null` não carrega dado nenhum: conta como ausente e sai do item;
 //! - valor vazio (ou só espaço) não gera campo extra, e o nome de um campo gerado nunca repete um nome que o item
 //!   já tem: o sufixo avança até um livre (`Website`, `Website 2`, `Website 3`…);
@@ -91,6 +92,8 @@ pub enum ChangeKindError {
     MalformedVault,
     /// O JSON do item não parseia (só no caminho [`change_kind_json`]).
     InvalidJson(String),
+    /// O item convertido não vira JSON de saída (só no caminho [`change_kind_json`]).
+    Serialize(String),
 }
 
 impl std::fmt::Display for ChangeKindError {
@@ -104,6 +107,7 @@ impl std::fmt::Display for ChangeKindError {
             Self::MalformedCustomFields => write!(f, "item customFields is not a list"),
             Self::MalformedVault => write!(f, "vault has no `items` list"),
             Self::InvalidJson(error) => write!(f, "invalid item JSON: {error}"),
+            Self::Serialize(error) => write!(f, "could not serialize the converted item: {error}"),
         }
     }
 }
@@ -161,8 +165,9 @@ impl TakenNames {
 }
 
 /// Os campos extras que o item já tem (na ordem do arquivo) e os nomes que os gerados não podem repetir.
-/// `customFields` que não é lista é erro SEMPRE — inclusive quando a conversão não geraria campo nenhum: a regra
-/// não pode prometer que o item atravessou intacto carregando um `customFields` que ela não sabe ler.
+/// `customFields` que não é lista é erro em TODA conversão — inclusive quando ela não geraria campo nenhum: a regra
+/// não pode prometer que o item atravessou intacto carregando um `customFields` que ela não sabe ler. Tipo igual
+/// não é conversão: a regra devolve o item como veio, sem passar por aqui.
 fn existing_custom_fields(item: &Map<String, Value>) -> Result<(Vec<Value>, TakenNames), ChangeKindError> {
     let Some(value) = item.get("customFields") else {
         return Ok((Vec::new(), TakenNames::default()));
@@ -329,5 +334,5 @@ pub fn change_kind_json(item_json: &str, new_kind: &str, labels: &FieldLabels) -
     let item: Value = serde_json::from_str(item_json).map_err(|error| ChangeKindError::InvalidJson(error.to_string()))?;
     let new_kind = ItemKind::from_wire(new_kind).ok_or(ChangeKindError::UnknownKind)?;
     let converted = change_kind(&item, new_kind, labels)?;
-    serde_json::to_string(&converted).map_err(|error| ChangeKindError::InvalidJson(error.to_string()))
+    serde_json::to_string(&converted).map_err(|error| ChangeKindError::Serialize(error.to_string()))
 }

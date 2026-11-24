@@ -22,6 +22,16 @@
 	Pin	Fixar
 	Unpin	Desafixar
 	Delete	Excluir
+	Delete selected	Excluir selecionados
+	Move to folder…	Mover para a pasta…
+	Clear selection	Limpar seleção
+	The selection has an item that is not valid; nothing was changed.	A seleção tem um item que não é válido; nada foi alterado.
+	One of the selected items no longer exists in the vault; nothing was changed.	Um dos itens selecionados não existe mais no cofre; nada foi alterado.
+	One of the selected items is already in the trash; nothing was changed.	Um dos itens selecionados já está na lixeira; nada foi alterado.
+	The destination folder no longer exists; nothing was changed.	A pasta de destino não existe mais; nada foi alterado.
+	The vault has no valid item list; nothing was changed.	O cofre não tem uma lista de itens válida; nada foi alterado.
+	The operation could not be completed; nothing was changed.	Não foi possível concluir a operação; nada foi alterado.
+	This item cannot change type: its data could not be written.	Este item não pode mudar de tipo: os dados dele não puderam ser gravados.
 	empty — copy something	vazio — copie algo
 	No items match these filters	Nenhum item com estes filtros
 	No items match the search	Nenhum item com esta busca
@@ -232,6 +242,8 @@
 @plural	{n} folder added|{n} folders added	{n} pasta adicionada|{n} pastas adicionadas
 @plural	{n} item goes to the other copy|{n} items go to the other copy	{n} item vai para a outra cópia|{n} itens vão para a outra cópia
 @plural	{n} folder goes to the other copy|{n} folders go to the other copy	{n} pasta vai para a outra cópia|{n} pastas vão para a outra cópia
+@plural	{n} selected|{n} selected	{n} selecionado|{n} selecionados
+@plural	Move {n} item to the trash?|Move {n} items to the trash?	Mover {n} item para a lixeira?|Mover {n} itens para a lixeira?
 	Filter ({n})	Filtrar ({n})
 filter	All	Todos
 	Logins	Logins

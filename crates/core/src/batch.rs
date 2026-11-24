@@ -112,6 +112,9 @@ fn parse_items(items_json: &str) -> Result<Vec<Value>, BatchError> {
 
 /// Manda os itens para a lixeira: `deletedAt` e `updatedAt` = `now` em todos. Devolve quantos mudaram (todos).
 ///
+/// Carimba **os dois** campos porque o lote é uma edição do item; o apagar de um item só
+/// ([`crate::vault::delete_login`]) toca apenas em `deletedAt`.
+///
 /// # Errors
 /// [`BatchError::MissingId`] (item que não é objeto com id) ou [`BatchError::AlreadyTrashed`] — e aí a lista fica
 /// inteira como estava.

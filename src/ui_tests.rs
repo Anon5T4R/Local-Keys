@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use craft_icons::ThemeMode;
-use egui::accesskit::Role;
+use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -150,6 +150,40 @@ fn press(harness: &mut Harness<'_, KeysApp>, key: egui::Key, modifiers: egui::Mo
         harness.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
     }
     harness.run_steps(2);
+}
+
+/// O clique numa linha da lista, com os modificadores do Ctrl/Shift (o mesmo caminho do ponteiro).
+fn click_row(harness: &mut Harness<'_, KeysApp>, name: &str, modifiers: egui::Modifiers) {
+    {
+        let node = harness.get_by_label_contains(name);
+        node.click_modifiers(modifiers);
+    }
+    harness.run_steps(2);
+}
+
+/// Um cofre destrancado com uma pasta a mais (os testes de mover para pasta).
+fn unlocked_folder(name: &str, folder: &str, prefs: Prefs) -> KeysApp {
+    let mut app = unlocked(name, prefs);
+    let mut raw = app.raw.clone().expect("cofre aberto");
+    crate::vault::add_folder(&mut raw, folder);
+    app.adopt(crate::crypto::test_session(), raw);
+    app
+}
+
+/// O item de um menu (a pasta tem o mesmo nome do chip da toolbar; o do popup é o último da árvore).
+fn click_menu_item(harness: &mut Harness<'_, KeysApp>, label: &str) {
+    {
+        let node = harness.get_all_by_label(label).last().expect("item do menu");
+        node.click();
+    }
+    harness.run_steps(2);
+}
+
+/// Grava o cofre do app no caminho de teste e devolve a contagem de gravações (a base do "uma gravação só").
+fn persist_now(app: &mut KeysApp) -> usize {
+    let raw = app.raw.clone().expect("cofre aberto");
+    assert!(app.persist(raw), "o cofre de teste grava: {:?}", app.err);
+    app.persist_count
 }
 
 fn shot(harness: &mut Harness<'_, KeysApp>, name: &str) {
@@ -1004,6 +1038,31 @@ fn a_failed_save_with_a_pending_conversion_shows_the_error_in_the_form() {
     assert!(na_tela >= 2, "o motivo aparece no modal e na tela de trás: {na_tela}");
     assert!(selector_text(&harness).contains("Note"), "o tipo escolhido continua no seletor para tentar de novo");
     assert_eq!(item_by_id(harness.state(), &id)["kind"], "login", "nada foi convertido em memória");
+}
+
+/// Gravação que falha numa edição COMUM (sem troca de tipo): o motivo aparece também DENTRO do
+/// formulário aberto, não só na linha de erro da tela de trás (que fica coberta pelo modal).
+#[test]
+fn a_failed_save_of_a_plain_edit_shows_the_error_in_the_form() {
+    let mut app = unlocked("plain-save-fail", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("plain-save-fail");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    // A pasta não existe: a gravação atômica falha (nada chega ao disco em lugar nenhum).
+    app.path = dir.join("sem-pasta/cofre.tkeys").display().to_string();
+    let id = item_id(&app, "192.168.1.34");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().open_edit_form(&id);
+    harness.run_steps(2);
+    harness.state_mut().add_name = "192.168.1.34 editado".into();
+    harness.state_mut().save_form();
+    harness.run_steps(2);
+    assert!(harness.state().form_open, "a falha mantém o formulário aberto");
+    let na_tela_de_tras = harness.state().err.clone().expect("o erro da gravação");
+    assert_eq!(harness.state().form_err.as_deref(), Some(na_tela_de_tras.as_str()), "o mesmo motivo aparece no modal");
+    let na_tela = harness.get_all_by_label_contains("falha ao gravar").count();
+    assert!(na_tela >= 2, "o motivo aparece no modal e na tela de trás: {na_tela}");
+    assert_eq!(item_by_id(harness.state(), &id)["name"], "192.168.1.34", "a edição não foi aplicada");
 }
 
 /// Campo personalizado com a chave "Oculto": o valor sai mascarado (👁 revela), o botão de copiar
@@ -2158,4 +2217,172 @@ fn review_shots() {
             shot(&mut harness, &format!("vault-folders-{name}-{label}"));
         }
     }
+}
+
+/// Ctrl+clique marca uma linha e desmarca na segunda; a barra conta os marcados e a linha marcada
+/// expõe o estado de seleção para o leitor de tela. Clique simples não mexe na seleção.
+#[test]
+fn ctrl_click_selects_two_rows_and_the_bar_counts_them() {
+    let mut harness = harness(unlocked("select-ctrl", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 2);
+    let id = item_id(harness.state(), "1lib.sk");
+    assert!(harness.state().selection.contains(&id));
+    harness.get_by_label("2 selected");
+    let node = harness.get_by_label_contains("1lib.sk");
+    assert_eq!(node.accesskit_node().data().toggled(), Some(Toggled::True), "a linha marcada expõe o estado de seleção");
+    // O clique simples na linha continua como hoje: não mexe na seleção.
+    click_row(&mut harness, "account.matrix.org", egui::Modifiers::NONE);
+    assert_eq!(harness.state().selection.len(), 2);
+}
+
+/// Shift+clique seleciona o intervalo pela ordem visível (a mesma da lista filtrada).
+#[test]
+fn shift_click_selects_the_visible_range() {
+    let mut harness = harness(unlocked("select-shift", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "account.matrix.org", egui::Modifiers::SHIFT);
+    // Ordem visível: 192.168.1.34 (favorito), 1lib.sk, account.matrix.org.
+    assert_eq!(harness.state().selection.len(), 3, "as {:?}", harness.state().selection.ids().collect::<Vec<_>>());
+    harness.get_by_label("3 selected");
+}
+
+/// Ctrl+A pega tudo que está visível e `Esc` limpa; a barra some com a seleção vazia.
+#[test]
+fn ctrl_a_selects_visible_items_and_escape_clears() {
+    let mut harness = harness(unlocked("select-all", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    press(&mut harness, egui::Key::A, egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 3);
+    harness.get_by_label("3 selected");
+    press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(harness.state().selection.is_empty());
+    assert!(harness.query_by_label("3 selected").is_none(), "a barra some com a seleção vazia");
+}
+
+/// Trocar a busca zera a seleção: os ids marcados podem nem estar na lista nova.
+#[test]
+fn changing_the_search_clears_the_selection() {
+    let mut harness = harness(unlocked("select-search", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 2);
+    harness.get_by_role(Role::TextInput).click();
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::Text("1lib".into()));
+    harness.run_steps(2);
+    assert_eq!(harness.state().search, "1lib", "o texto entrou no campo de busca");
+    assert!(harness.state().selection.is_empty(), "a busca nova não herda a seleção da lista antiga");
+}
+
+/// Trocar o filtro de tipo também zera a seleção (a lista visível muda).
+#[test]
+fn changing_the_filter_clears_the_selection() {
+    let mut harness = harness(unlocked("select-filter", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    assert_eq!(harness.state().selection.len(), 2);
+    harness.get_by_label("Filter").click();
+    harness.run_steps(2);
+    harness.get_by_label("Cards").click();
+    harness.run_steps(2);
+    assert!(!harness.state().filters.is_clear(), "o filtro mudou");
+    assert!(harness.state().selection.is_empty(), "a lista filtrada não herda a seleção da anterior");
+}
+
+/// "Move to folder…" põe os dois itens na pasta com UMA gravação; com o filtro por pasta a lista
+/// passa a mostrar só eles.
+#[test]
+fn moving_the_selection_to_a_folder_updates_both_items_in_one_write() {
+    let mut app = unlocked_folder("select-move", "Work", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-move");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let folder_id = app.raw.as_ref().and_then(|r| crate::vault::folders(r).into_iter().next()).map(|f| f.id).expect("pasta criada");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    harness.get_by_label("Move to folder…").click();
+    harness.run_steps(2);
+    click_menu_item(&mut harness, "Work");
+    assert_eq!(harness.state().persist_count - baseline, 1, "o lote grava uma vez só");
+    for name in ["192.168.1.34", "1lib.sk"] {
+        let id = item_id(harness.state(), name);
+        assert_eq!(item_by_id(harness.state(), &id)["folderId"], serde_json::Value::String(folder_id.clone()), "{name} foi para a pasta");
+    }
+    assert!(harness.state().selection.is_empty());
+    // Com o filtro por pasta, só os dois aparecem.
+    harness.get_by_label("Work").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().folder_filter.as_deref(), Some(folder_id.as_str()));
+    assert!(harness.query_by_label_contains("192.168.1.34").is_some());
+    assert!(harness.query_by_label_contains("1lib.sk").is_some());
+    assert!(harness.query_by_label_contains("account.matrix.org").is_none(), "o que ficou fora da pasta sai da lista");
+}
+
+/// "Delete selected" pede confirmação com a contagem, manda os dois para a lixeira com UMA gravação e
+/// limpa a seleção; o `Delete` do teclado abre a mesma confirmação.
+#[test]
+fn deleting_the_selection_asks_with_the_count_and_moves_items_to_the_trash() {
+    let mut app = unlocked("select-delete", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-delete");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let ids = [item_id(&app, "192.168.1.34"), item_id(&app, "1lib.sk")];
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    click_row(&mut harness, "192.168.1.34", egui::Modifiers::COMMAND);
+    click_row(&mut harness, "1lib.sk", egui::Modifiers::COMMAND);
+    // O teclado aciona a mesma confirmação; cancelar não muda nada.
+    press(&mut harness, egui::Key::Delete, egui::Modifiers::NONE);
+    harness.get_by_label("Move 2 items to the trash?");
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().selection.len(), 2, "cancelar preserva a seleção");
+    harness.get_by_label("Delete selected").click();
+    harness.run_steps(2);
+    harness.get_by_label("Move 2 items to the trash?");
+    harness.get_by_label("Confirm").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().persist_count - baseline, 1, "o lote grava uma vez só");
+    assert!(harness.state().selection.is_empty());
+    assert!(harness.query_by_label("2 selected").is_none(), "a barra some com a seleção vazia");
+    for (name, id) in [("192.168.1.34", &ids[0]), ("1lib.sk", &ids[1])] {
+        assert!(harness.state().items.iter().all(|item| &item.id != id), "{name} saiu da lista principal");
+        let item = item_by_id(harness.state(), id);
+        assert!(item.get("deletedAt").is_some_and(|v| !v.is_null()), "{name} foi para a lixeira");
+        assert_eq!(item["deletedAt"], item["updatedAt"], "o lote carimba os dois campos com o mesmo now");
+    }
+    assert!(harness.query_by_label_contains("192.168.1.34").is_none(), "a linha apagada sai da tela");
+}
+
+/// Um item da seleção que sumiu do cofre: mensagem de erro traduzida e NADA gravado.
+#[test]
+fn a_missing_selected_item_reports_the_error_and_writes_nothing() {
+    let mut app = unlocked("select-missing", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("select-missing");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let baseline = persist_now(&mut app);
+    let antes = std::fs::read(&app.path).expect("cofre em disco");
+    app.selection.select_only("fantasma");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.get_by_label("Delete selected").click();
+    harness.run_steps(2);
+    harness.get_by_label("Move 1 item to the trash?");
+    harness.get_by_label("Confirm").click();
+    harness.run_steps(2);
+    let erro = harness.state().err.clone().expect("a mensagem do lote");
+    assert!(erro.contains("no longer exists"), "mensagem traduzida da variante: {erro}");
+    assert_eq!(harness.state().persist_count, baseline, "nada foi gravado");
+    assert_eq!(std::fs::read(&harness.state().path).expect("cofre em disco"), antes, "o arquivo ficou byte a byte igual");
 }
