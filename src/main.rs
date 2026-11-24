@@ -43,6 +43,7 @@ use jobs::{AttachmentRead, Created, Job, JobError, JobResult, Renewed, Unlocked}
 use prefs::{Prefs, config_dir};
 use zeroize::Zeroizing;
 
+#[cfg(windows)]
 use tray::TrayCmd;
 #[cfg(windows)]
 use tray_icon::menu::{Menu, MenuItem};

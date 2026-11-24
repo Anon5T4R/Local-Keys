@@ -36,7 +36,7 @@ import com.localkeys.android.data.vault.VaultAutofillCache
  * entrada passa pela [AutofillTotpActivity], que registra o último uso, monta o código TOTP na hora (quando o
  * login tem) e, se ligado, o copia.
  * Roda no processo do app: enquanto o cofre está destrancado o [VaultAutofillCache]
- * tem o vault em memória e os campos são preenchidos direto; se estiver trancado,
+ * tem o vault em memória e a entrada escolhida é preenchida sem pedir desbloqueio; se estiver trancado,
  * o picker oferece "Desbloquear o LocalKeys" (abre o app).
  *
  * Preenchimento e salvamento (SaveRequest) de credenciais novas — v0.2.0 só
