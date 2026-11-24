@@ -458,6 +458,12 @@
     <string name="settings_copy_totp_body">Ao preencher um login que tem TOTP, o código atual vai para a área de transferência (marcado como sensível), pronto para colar.</string>
     <string name="autofill_totp_label">Código TOTP</string>
     <string name="autofill_totp_copied">Código TOTP copiado</string>
+    <!-- Última linha da lista quando o site tem mais logins do que cabem. -->
+    <plurals name="autofill_more">
+        <item quantity="one">+%1$d mais</item>
+        <item quantity="other">+%1$d mais</item>
+    </plurals>
+    <string name="autofill_more_open">Abrir o Local Keys</string>
 
     <!-- serviço preferencial e Play services -->
     <string name="settings_credentials_preferred_yes">O Local Keys é o serviço preferencial.</string>

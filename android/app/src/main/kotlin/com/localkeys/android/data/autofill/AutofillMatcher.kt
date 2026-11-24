@@ -57,11 +57,25 @@ object AutofillMatcher {
     fun loginsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Login> =
         itemsFor(vault, packageName, webDomain).mapNotNull { it.login }
 
+    /** Como [loginsFor], mas devolve os itens (nome para a lista do autofill, id para achar o TOTP na hora de
+     * preencher), sem lembrar do último uso. */
+    fun itemsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Item> =
+        suggestionsFor(vault, packageName, webDomain, emptyMap()).shown
+
     /**
-     * Como [loginsFor], mas devolve os itens (nome para a lista do autofill, id para achar o TOTP na hora de
-     * preencher). Mesmas regras de casamento: site ou app, nada além disso.
+     * As sugestões de um pedido: [Suggestions.shown] é o que a lista mostra (até [MAX_DATASETS]) e
+     * [Suggestions.hidden] é quantas casaram e ficaram fora da lista. Ordem: favorito primeiro; entre iguais, o
+     * último uso mais recente ([lastUsed] por id do item; sem registro = nunca usado); empatados, a ordem do
+     * cofre.
      */
-    fun itemsFor(vault: Vault?, packageName: String?, webDomain: String?): List<Item> {
+    fun suggestionsFor(vault: Vault?, packageName: String?, webDomain: String?, lastUsed: Map<String, Long>): Suggestions {
+        val ranked = matchingItems(vault, packageName, webDomain)
+            .sortedWith(compareByDescending<Item> { it.favorite }.thenByDescending { lastUsed[it.id] ?: 0L })
+        return Suggestions(ranked.take(MAX_DATASETS), (ranked.size - MAX_DATASETS).coerceAtLeast(0))
+    }
+
+    /** Os itens que casam com o site ou com o app, na ordem do cofre. */
+    private fun matchingItems(vault: Vault?, packageName: String?, webDomain: String?): List<Item> {
         val v = vault ?: return emptyList()
         val logins = v.items
             .filter { it.kind == ItemKind.LOGIN && it.login != null && it.deletedAt == null }
@@ -87,6 +101,11 @@ object AutofillMatcher {
 
         // Só o que casa com o site ou com o app. Sem "sugestões" de outras contas: um app malicioso não pode
         // ver na lista as senhas que não são dele.
-        return (matched + byPackage).distinctBy { it.id }.take(MAX_DATASETS)
+        return (matched + byPackage).distinctBy { it.id }
+    }
+
+    /** O que a lista do autofill mostra quando há mais do que [MAX_DATASETS]. */
+    data class Suggestions(val shown: List<Item>, val hidden: Int) {
+        val hasMore: Boolean get() = hidden > 0
     }
 }

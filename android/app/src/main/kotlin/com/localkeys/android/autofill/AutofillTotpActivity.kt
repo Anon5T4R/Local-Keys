@@ -9,13 +9,15 @@ import android.view.autofill.AutofillManager
 import android.widget.Toast
 import com.localkeys.android.R
 import com.localkeys.android.data.totp.Totp
+import com.localkeys.android.data.vault.AutofillUsage
 import com.localkeys.android.data.vault.VaultAutofillCache
 import com.localkeys.android.ui.copyToClipboard
 
 /**
- * Tela invisível que o sistema abre quando o usuário escolhe, na lista do autofill, um login que tem TOTP.
- * Monta o preenchimento na hora (com o código TOTP **atual**, não o de quando a lista apareceu), devolve ao
- * sistema e, se a opção estiver ligada, copia o código para a área de transferência (marcado como sensível).
+ * Tela invisível que o sistema abre quando o usuário escolhe uma entrada na lista do autofill. Monta o
+ * preenchimento na hora (com o código TOTP **atual**, não o de quando a lista apareceu), devolve ao
+ * sistema e, se o login tem TOTP e a opção estiver ligada, copia o código para a área de transferência
+ * (marcado como sensível). É também onde o último uso do item é registrado (a ordem da próxima lista).
  *
  * Nada de segredo viaja no Intent: só o id do item e os ids dos campos; os valores vêm do cofre aberto
  * ([VaultAutofillCache]). Cofre trancado no meio do caminho = nada é preenchido.
@@ -28,6 +30,7 @@ class AutofillTotpActivity : Activity() {
         if (result == null) {
             setResult(RESULT_CANCELED)
         } else {
+            AutofillUsage.record(applicationContext, intent.getStringExtra(EXTRA_ITEM).orEmpty())
             setResult(RESULT_OK, Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, result.first))
             if (result.second != null && intent.getBooleanExtra(EXTRA_COPY, false)) {
                 copyToClipboard(this, getString(R.string.autofill_totp_label), result.second!!, sensitive = true)

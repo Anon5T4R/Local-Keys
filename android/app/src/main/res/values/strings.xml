@@ -459,6 +459,12 @@
     <string name="settings_copy_totp_body">When a login with a TOTP is filled, its current code goes to the clipboard (marked sensitive), ready to paste.</string>
     <string name="autofill_totp_label">TOTP code</string>
     <string name="autofill_totp_copied">TOTP code copied</string>
+    <!-- Última linha da lista quando o site tem mais logins do que cabem. -->
+    <plurals name="autofill_more">
+        <item quantity="one">+%1$d more</item>
+        <item quantity="other">+%1$d more</item>
+    </plurals>
+    <string name="autofill_more_open">Open Local Keys</string>
 
     <!-- serviço preferencial e Play services -->
     <string name="settings_credentials_preferred_yes">Local Keys is the preferred service.</string>

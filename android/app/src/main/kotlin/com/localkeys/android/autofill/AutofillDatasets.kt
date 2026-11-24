@@ -7,6 +7,7 @@ import android.service.autofill.Dataset
 import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
+import com.localkeys.android.MainActivity
 import com.localkeys.android.R
 import com.localkeys.android.data.totp.Totp
 import com.localkeys.android.data.vault.Item
@@ -70,4 +71,26 @@ internal object AutofillDatasets {
     /** O item tem um TOTP que gera código? */
     fun hasTotp(item: Item): Boolean =
         item.login?.totp?.let { Totp.atOrNull(it, System.currentTimeMillis() / 1000) } != null
+
+    /**
+     * A última linha da lista quando há mais logins do que cabem: "+N mais — abrir o Local Keys". Não
+     * preenche nada: ao tocar, abre o app (onde a lista inteira do site está).
+     */
+    @Suppress("DEPRECATION")
+    fun more(context: Context, fields: Fields, hidden: Int, requestCode: Int): Dataset {
+        val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val sender = PendingIntent.getActivity(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        ).intentSender
+        val view = RemoteViews(context.packageName, R.layout.autofill_item).apply {
+            setTextViewText(R.id.autofill_title, context.resources.getQuantityString(R.plurals.autofill_more, hidden, hidden))
+            setTextViewText(R.id.autofill_subtitle, context.getString(R.string.autofill_more_open))
+        }
+        val builder = Dataset.Builder(view)
+        listOfNotNull(fields.usernameId, fields.passwordId, fields.otpId).forEach { builder.setValue(it, null) }
+        return builder.setAuthentication(sender).build()
+    }
 }

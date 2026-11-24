@@ -26,6 +26,7 @@ import com.localkeys.android.data.autofill.FieldKind
 import com.localkeys.android.data.autofill.FieldSignals
 import com.localkeys.android.data.autofill.FillPlan
 import com.localkeys.android.data.vault.AutofillPrefs
+import com.localkeys.android.data.vault.AutofillUsage
 import com.localkeys.android.data.vault.AutofillSaveBridge
 import com.localkeys.android.data.vault.VaultAutofillCache
 
@@ -72,7 +73,10 @@ class LocalKeysAutofillService : AutofillService() {
         val packageName = structure.activityComponent?.packageName
 
         // Mesmas regras de casamento para senha e TOTP: só o site ou o app que pediu, nunca outros.
-        val items = AutofillMatcher.itemsFor(vault, packageName, webDomain)
+        // Favorito e último usado primeiro; o que passa de MAX_DATASETS vira a linha "+N mais".
+        AutofillUsage.prune(this, vault.items.map { it.id })
+        val suggestions = AutofillMatcher.suggestionsFor(vault, packageName, webDomain, AutofillUsage.lastUsed(this))
+        val items = suggestions.shown
         val response = FillResponse.Builder()
         var count = 0
         items.forEachIndexed { index, item ->
@@ -82,15 +86,21 @@ class LocalKeysAutofillService : AutofillService() {
                 itemHasTotp = AutofillDatasets.hasTotp(item),
                 copySetting = AutofillPrefs.copyTotp,
             )
+            // Todas as entradas passam pela AutofillTotpActivity: é lá que o último uso é registrado (e,
+            // com TOTP, o código sai fresco).
             val dataset = when (plan) {
                 FillPlan.Skip -> null
-                FillPlan.Direct -> AutofillDatasets.filled(this, item, fields, code = null)
+                FillPlan.Direct -> AutofillDatasets.deferred(this, item, fields, copy = false, REQUEST_BASE + index)
                 is FillPlan.Deferred -> AutofillDatasets.deferred(this, item, fields, plan.copyTotp, REQUEST_BASE + index)
             }
             if (dataset != null) {
                 response.addDataset(dataset)
                 count++
             }
+        }
+        if (suggestions.hasMore) {
+            response.addDataset(AutofillDatasets.more(this, fields, suggestions.hidden, REQUEST_MORE))
+            count++
         }
         saveInfo?.let { response.setSaveInfo(it) }
         callback.onSuccess(if (count > 0 || saveInfo != null) response.build() else null)
@@ -168,6 +178,9 @@ class LocalKeysAutofillService : AutofillService() {
 
         /** Base dos requestCodes dos PendingIntents das entradas com TOTP (um por entrada da lista). */
         private const val REQUEST_BASE = 100
+
+        /** requestCode da linha "+N mais" (fora da faixa das entradas com TOTP). */
+        private const val REQUEST_MORE = 1000
     }
 
     /**
