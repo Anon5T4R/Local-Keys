@@ -78,7 +78,9 @@ import com.localkeys.android.data.vault.Attachment
 import com.localkeys.android.data.vault.Folder
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
+import com.localkeys.android.data.vault.PendingAttachment
 import com.localkeys.android.data.vault.VaultSizeLimit
+import com.localkeys.android.data.vault.gateAttachment
 import com.localkeys.android.ffi.FieldLabelsFfi
 import com.localkeys.android.ui.theme.FavoriteAmber
 import kotlinx.coroutines.Dispatchers
@@ -570,7 +572,7 @@ private fun AttachmentsEditor(state: ItemEditorState, busy: Boolean, vaultBytes:
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tooLarge = stringResource(R.string.attach_too_large)
-    var pendingLarge by remember { mutableStateOf<PendingLargeAttachment?>(null) }
+    var pendingLarge by remember { mutableStateOf<PendingAttachment.Confirm?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
@@ -578,15 +580,9 @@ private fun AttachmentsEditor(state: ItemEditorState, busy: Boolean, vaultBytes:
             when (read) {
                 AttachmentRead.TooLarge -> Toast.makeText(context, tooLarge, Toast.LENGTH_LONG).show()
                 AttachmentRead.Failed -> Toast.makeText(context, R.string.attach_read_failed, Toast.LENGTH_SHORT).show()
-                is AttachmentRead.Ok -> {
-                    // Unidade 8: o cofre INTEIRO é regravado a cada save; acima do teto o aviso vem antes de guardar.
-                    // Só os anexos que ainda não estão no arquivo entram na conta além do novo.
-                    val predicted = VaultSizeLimit.attachWarning(vaultBytes, state.pendingAttachmentBytes, read.attachment.size)
-                    if (predicted == null) {
-                        state.attachments += read.attachment
-                    } else {
-                        pendingLarge = PendingLargeAttachment(read.attachment, predicted)
-                    }
+                is AttachmentRead.Ok -> when (val gate = gateAttachment(vaultBytes, state.pendingAttachmentBytes, read.attachment)) {
+                    is PendingAttachment.Ready -> state.applyAttachment(gate, proceed = true)
+                    is PendingAttachment.Confirm -> pendingLarge = gate
                 }
             }
         }
@@ -599,7 +595,7 @@ private fun AttachmentsEditor(state: ItemEditorState, busy: Boolean, vaultBytes:
             confirmButton = {
                 TextButton(
                     onClick = {
-                        state.attachments += pending.attachment
+                        state.applyAttachment(pending, proceed = true)
                         pendingLarge = null
                     },
                 ) { Text(stringResource(R.string.attach_total_continue)) }
@@ -639,9 +635,6 @@ private sealed interface AttachmentRead {
     data object TooLarge : AttachmentRead
     data object Failed : AttachmentRead
 }
-
-/** Um anexo já lido esperando o "Continuar" do aviso de tamanho: só entra no item se a pessoa confirmar. */
-private data class PendingLargeAttachment(val attachment: Attachment, val predictedBytes: Long)
 
 /** Lê o arquivo escolhido. Confere o tamanho antes (pelo provedor) e de novo depois de ler. */
 private fun readAttachment(context: android.content.Context, uri: Uri): AttachmentRead = try {

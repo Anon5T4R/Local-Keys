@@ -100,6 +100,13 @@ private fun SummaryStep(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (stage.changed) {
+                    Text(
+                        stringResource(R.string.merge_other_summary_changed),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 if (stage.nothingChanges) {
                     Text(stringResource(R.string.merge_other_summary_nothing))
                 } else {

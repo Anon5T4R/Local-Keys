@@ -154,11 +154,10 @@ class VaultSaverTest {
         assertTrue("o cofre anterior tinha um conteúdo conhecido", saver.known != null)
         // O SAF acabou de criar o documento: está vazio.
         val fresh = MemoryDocument(ByteArray(0))
-        val file = repository.create(Vault.empty(), password)
-        // O passo do "criar cofre" no ViewModel: o conhecido do cofre anterior não vale para o documento novo.
-        saver.beginNewVault()
-
-        saver.write(file, repository.vault, fresh)
+        val session = VaultSession(repository, saver)
+        val file = session.createFile(Vault.empty(), password)
+        // O passo do "criar cofre" no ViewModel: grava com force (o SAF acabou de criar o arquivo).
+        session.writeCreated(file, fresh)
 
         assertEquals("o vazio do documento não é mudança externa", repository.vault, Vault.parse(String(crypto.openVault(password, fresh.stored!!).plaintext)))
         assertArrayEquals("o documento ficou com o cofre novo", fresh.stored, saver.known)

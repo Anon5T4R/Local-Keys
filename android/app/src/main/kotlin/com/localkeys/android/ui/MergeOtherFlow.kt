@@ -42,7 +42,13 @@ sealed class MergeOtherStage {
     data class NeedsPassword(val name: String, val error: String? = null) : MergeOtherStage()
 
     /** A junção foi calculada: o resumo espera confirmar; cancelar não grava nada. */
-    data class Ready(val name: String, val counts: MergeOtherCounts, val nothingChanges: Boolean) : MergeOtherStage()
+    data class Ready(
+        val name: String,
+        val counts: MergeOtherCounts,
+        val nothingChanges: Boolean,
+        /** O cofre mudou depois do resumo anterior: as contagens são novas e o diálogo avisa; nada foi gravado. */
+        val changed: Boolean = false,
+    ) : MergeOtherStage()
 }
 
 /**
@@ -100,9 +106,9 @@ class MergeOtherFlow {
     }
 
     /** Junção calculada: o resumo espera a confirmação (nada foi gravado). */
-    fun ready(name: String, counts: MergeOtherCounts, nothingChanges: Boolean) {
+    fun ready(name: String, counts: MergeOtherCounts, nothingChanges: Boolean, changed: Boolean = false) {
         working = false
-        stage = MergeOtherStage.Ready(name, counts, nothingChanges)
+        stage = MergeOtherStage.Ready(name, counts, nothingChanges, changed)
     }
 
     /** Fim de qualquer caminho (aplicado, cancelado ou um passo que falhou): nada fica pendente. */

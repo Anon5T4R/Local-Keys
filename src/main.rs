@@ -462,11 +462,10 @@ struct FormCustomField {
     revealed: bool,
 }
 
-/// O aviso de tamanho antes de ler os anexos (unidade 8): os caminhos escolhidos, o item de destino e o tamanho
-/// previsto do cofre. "Continuar" chama [`KeysApp::begin_attachments`]; "Cancelar" só descarta.
+/// O aviso de tamanho antes de GUARDAR o anexo já lido (unidade 8): o anexo (cap de 10 MiB já conferido) e o
+/// tamanho previsto do cofre. "Continuar" aplica o anexo e segue a fila; "Cancelar" descarta os dois.
 struct AttachWarning {
-    item_id: String,
-    sources: Vec<String>,
+    read: AttachmentRead,
     predicted: u64,
 }
 
@@ -1101,6 +1100,10 @@ struct KeysApp {
     attach_queue: Vec<(String, String)>,
     /// Anexos escolhidos que fariam o cofre passar do aviso de tamanho: o diálogo Continuar/Cancelar (unidade 8).
     attach_warn: Option<AttachWarning>,
+    /// O "Continuar" do aviso vale para o resto da seleção múltipla: um aviso por seleção, não por arquivo.
+    attach_warn_confirmed: bool,
+    /// Tamanho do `.tkeys` em disco, guardado ao abrir/salvar (o aviso evita `metadata` na thread da UI).
+    vault_bytes: u64,
     // onda 24 — pastas (gerência e criação, ambos os modais usam `folder_new`)
     folders_open: bool,
     folder_new_open: bool,
@@ -1113,9 +1116,12 @@ struct KeysApp {
     toast: Option<(String, std::time::Instant)>,
     /// Canal do job pesado em andamento (`jobs.rs`). Um por vez: enquanto
     /// `job_label` é Some, os gatilhos de job ficam desabilitados.
-    job_rx: Option<Receiver<JobResult>>,
+    job_rx: Option<Receiver<jobs::Sent>>,
     /// O que está rodando (chave i18n do spinner).
     job_label: Option<&'static str>,
+    /// Geração do job em andamento: o resultado só é aplicado se veio desta geração (um resultado de job cancelado
+    /// é descartado em vez de reabrir um diálogo).
+    job_generation: u64,
     /// Viva enquanto o app viver: derruba a bandeja no drop.
     #[cfg(windows)]
     _tray: Option<TrayIcon>,
@@ -1235,6 +1241,8 @@ impl KeysApp {
             attach_path: String::new(),
             attach_queue: Vec::new(),
             attach_warn: None,
+            attach_warn_confirmed: false,
+            vault_bytes: 0,
             folders_open: false,
             folder_new_open: false,
             folder_new: String::new(),
@@ -1243,6 +1251,7 @@ impl KeysApp {
             toast: None,
             job_rx: None,
             job_label: None,
+            job_generation: 0,
             #[cfg(windows)]
             _tray: None,
             quit: Arc::new(AtomicBool::new(false)),
@@ -1344,6 +1353,8 @@ impl KeysApp {
         self.attach_path.clear();
         self.attach_queue.clear();
         self.attach_warn = None;
+        self.attach_warn_confirmed = false;
+        self.vault_bytes = 0;
         // onda 24: gerência/criação de pastas fecha junto, e a fila de anexos
         // multi-selecionados não sobrevive ao trancar (o raw já era).
         self.folders_open = false;
@@ -1545,6 +1556,8 @@ impl KeysApp {
         match vault::atomic_write(std::path::Path::new(self.path.trim()), &sealed) {
             Ok(()) => {
                 self.err = None;
+                // O tamanho guardado é o do arquivo que acabou de ser gravado: o aviso de anexo não faz `metadata`.
+                self.vault_bytes = sealed.len() as u64;
                 self.items = vault::items_view(&next);
                 // A lista pode ter mudado (o ★ com o filtro "Favoritos" ligado, pasta/tipo trocados): a seleção é da
                 // lista VISÍVEL, então item marcado que saiu da tela sai junto.
@@ -1977,6 +1990,7 @@ impl KeysApp {
             return;
         }
         self.err = None;
+        self.vault_bytes = sealed.len() as u64;
         self.items = vault::items_view(&plan.merged);
         self.raw = Some(plan.merged);
         // A mescla pode apagar/mover itens: a seleção da lista antiga não vale para o resultado.
@@ -2391,27 +2405,34 @@ impl KeysApp {
             self.err = Some(tr("choose the attachment file").into());
             return;
         }
-        // O aviso vem ANTES da leitura (o anexo pode ter 10 MiB e o job só roda depois do "Continuar").
-        let predicted = self.predicted_size_with(item_id, &sources);
-        if size_limit::exceeds_warn_limit(predicted) {
-            self.attach_warn = Some(AttachWarning { item_id: item_id.to_string(), sources, predicted });
-            return;
-        }
+        // O aviso de tamanho vem DEPOIS da leitura (o cap de 10 MiB por anexo atua primeiro); aqui só zera a
+        // confirmação da seleção anterior.
+        self.attach_warn_confirmed = false;
         self.begin_attachments(item_id, sources, ctx);
     }
 
-    /// O tamanho previsto do `.tkeys` depois destes anexos: o arquivo aberto (0 quando é um cofre novo) + o base64
-    /// dos anexos pendentes do formulário + o base64 dos arquivos escolhidos. Metadado de arquivo inacessível conta
-    /// como 0 aqui: o job da leitura é quem reporta o motivo real.
-    fn predicted_size_with(&self, item_id: &str, sources: &[String]) -> u64 {
-        let vault_bytes = std::fs::metadata(self.path.trim()).map_or(0, |meta| meta.len());
+    /// O anexo lido (o cap de 10 MiB já passou): calcula o previsto e, se passar do teto e esta seleção ainda não
+    /// foi confirmada, segura o anexo para o modal em vez de guardar/gravar.
+    fn on_attachment_read(&mut self, read: AttachmentRead, ctx: &egui::Context) {
+        let predicted = self.predicted_size_with(&read);
+        if !self.attach_warn_confirmed && size_limit::exceeds_warn_limit(predicted) {
+            self.attach_warn = Some(AttachWarning { read, predicted });
+            return;
+        }
+        self.apply_attachment(read);
+        self.continua_fila_anexos(ctx);
+    }
+
+    /// O tamanho previsto depois deste anexo: o do cofre aberto (guardado ao abrir/salvar) + o dos pendentes do
+    /// formulário + o lido — tudo em bytes crus, a fórmula é a do núcleo.
+    fn predicted_size_with(&self, read: &AttachmentRead) -> u64 {
         let mut extra: Vec<u64> = Vec::new();
         // Só o formulário tem anexos PENDENTES; num item existente, os anexos dele já estão dentro do arquivo aberto.
-        if item_id == FORM_ATTACH {
-            extra.extend(self.form_attachments.iter().map(|attachment| attachment.data_b64.len() as u64));
+        if read.item_id == FORM_ATTACH {
+            extra.extend(self.form_attachments.iter().map(|attachment| attachment.size as u64));
         }
-        extra.extend(sources.iter().filter_map(|source| std::fs::metadata(source).ok()).map(|meta| size_limit::base64_bytes(meta.len())));
-        size_limit::predicted_vault_bytes(vault_bytes, extra)
+        extra.push(read.size as u64);
+        size_limit::predicted_vault_bytes(self.vault_bytes, extra)
     }
 
     /// Começa a leitura dos anexos escolhidos (o primeiro já, o resto na fila).
@@ -2531,9 +2552,12 @@ impl KeysApp {
     /// gatilhos só chamam isto com `job_label` vazio.
     fn start_job(&mut self, ctx: &egui::Context, label: &'static str, job: Job) {
         let (tx, rx) = std::sync::mpsc::channel();
+        // Cada job tem a sua geração: cancelar um diálogo incrementa a atual, e o resultado que chegar depois é
+        // descartado (rede fora do ar pode levar minutos).
+        self.job_generation = self.job_generation.wrapping_add(1);
         // O `Context` é Send+Sync: a thread chama `request_repaint()` no fim e
         // o resultado aparece sem o usuário mexer no mouse.
-        jobs::spawn(job, tx, ctx.clone());
+        jobs::spawn(job, self.job_generation, tx, ctx.clone());
         self.job_rx = Some(rx);
         self.job_label = Some(label);
         self.err = None;
@@ -2547,8 +2571,11 @@ impl KeysApp {
             return;
         };
         let (results, closed) = jobs::drain(&rx);
-        for result in results {
-            self.apply_job(result, ctx);
+        for sent in results {
+            // Resultado de uma geração antiga (o usuário cancelou): ignora.
+            if sent.generation == self.job_generation {
+                self.apply_job(sent.result, ctx);
+            }
         }
         if closed {
             // Thread terminou sem resultado (spawn falhou / panic): não deixa o
@@ -2570,7 +2597,8 @@ impl KeysApp {
         self.job_label = None;
         match result {
             JobResult::Unlocked(Ok(unlocked)) => {
-                let Unlocked { path, raw, session, quick } = unlocked;
+                let Unlocked { path, raw, session, quick, file_bytes } = unlocked;
+                self.vault_bytes = file_bytes;
                 if quick {
                     self.store_quick_key(&session);
                 }
@@ -2586,6 +2614,7 @@ impl KeysApp {
                 // cofre novo é adotado (disco e memória não divergem).
                 match vault::atomic_write(std::path::Path::new(&path), &file) {
                     Ok(()) => {
+                        self.vault_bytes = file.len() as u64;
                         if quick {
                             self.store_quick_key(&session);
                         }
@@ -2601,6 +2630,7 @@ impl KeysApp {
                 let Renewed { path, file } = renewed;
                 match vault::atomic_write(std::path::Path::new(&path), &file) {
                     Ok(()) => {
+                        self.vault_bytes = file.len() as u64;
                         // A sessão em memória foi derivada do salt ANTIGO: um
                         // save reescreveria o arquivo com a senha velha.
                         // Trancar força o destrancar com a nova (o "vault
@@ -2631,11 +2661,7 @@ impl KeysApp {
                 }
             }
             JobResult::Imported(Err(e)) => self.err = Some(self.job_error(e)),
-            JobResult::AttachmentRead(Ok(read)) => {
-                self.apply_attachment(read);
-                // Próximo da fila (se houver) — aplica e recusa consomem a fila.
-                self.continua_fila_anexos(ctx);
-            }
+            JobResult::AttachmentRead(Ok(read)) => self.on_attachment_read(read, ctx),
             JobResult::AttachmentRead(Err(e)) => {
                 self.err = Some(self.job_error(e));
                 // Um arquivo ruim não para a fila — os próximos seguem.
@@ -3740,10 +3766,15 @@ impl KeysApp {
         });
         if proceed {
             if let Some(warning) = self.attach_warn.take() {
-                self.begin_attachments(&warning.item_id, warning.sources, ctx);
+                // Um "Continuar" vale para o resto da seleção múltipla: os próximos anexos entram sem outro aviso.
+                self.attach_warn_confirmed = true;
+                self.apply_attachment(warning.read);
+                self.continua_fila_anexos(ctx);
             }
         } else if cancel || resp.should_close() {
+            // Cancelar descarta o anexo lido E a fila: o resto da seleção não entra sem o usuário ver.
             self.attach_warn = None;
+            self.attach_queue.clear();
         }
     }
 
@@ -4071,21 +4102,31 @@ impl KeysApp {
                 if ui.add_enabled_ui(ready, |ui| pill(ui, tr("Open"), true)).inner.clicked() {
                     open = true;
                 }
-                // Cancelar também trava durante o job: fechar agora não cancela o Argon2id, e o resultado reabriria
-                // o diálogo (ou abriria o resumo) depois.
-                if ui.add_enabled_ui(!busy, |ui| pill(ui, tr("Cancel"), false)).inner.clicked() {
+                // Cancelar fecha SEMPRE: com o outro cofre numa pasta de rede fora do ar, o job pode demorar minutos e
+                // o modal bloqueia o app. O resultado que chegar depois é descartado pela geração do job.
+                if pill(ui, tr("Cancel"), false).clicked() {
                     cancel = true;
                 }
             });
         });
         if open {
             self.merge_other_open(ctx);
-        } else if !busy && (cancel || resp.should_close()) {
-            self.merge_open = false;
-            self.merge_path.clear();
-            drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
-            self.merge_reveal = false;
-            self.merge_error = None;
+        } else if cancel || resp.should_close() {
+            self.cancel_merge_password();
+        }
+    }
+
+    /// Fecha o diálogo da senha do outro cofre e invalida o job que estiver rodando para ele: o resultado tardio não
+    /// reabre o diálogo nem abre o resumo.
+    fn cancel_merge_password(&mut self) {
+        self.merge_open = false;
+        self.merge_path.clear();
+        drop(Zeroizing::new(std::mem::take(&mut self.merge_password)));
+        self.merge_reveal = false;
+        self.merge_error = None;
+        if self.job_label.is_some() {
+            self.job_generation = self.job_generation.wrapping_add(1);
+            self.job_label = None;
         }
     }
 

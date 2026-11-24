@@ -609,6 +609,7 @@
     <string name="merge_other_summary_title">Merge %1$s into this vault?</string>
     <string name="merge_other_summary_nothing_title">%1$s is already here</string>
     <string name="merge_other_summary_nothing">Nothing to merge: this vault already has everything from the other vault.</string>
+    <string name="merge_other_summary_changed">This vault changed while the summary was open; the numbers below are new.</string>
     <string name="merge_other_summary_note">The other vault is only read; this vault is saved once.</string>
     <string name="merge_other_confirm">Merge</string>
     <string name="merge_other_close">Close</string>

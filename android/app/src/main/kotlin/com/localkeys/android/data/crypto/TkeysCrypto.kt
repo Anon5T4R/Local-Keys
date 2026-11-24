@@ -8,14 +8,17 @@ import com.localkeys.android.ffi.FfiException
 import com.localkeys.android.ffi.FieldLabelsFfi
 import com.localkeys.android.ffi.KdfParamsFfi
 import com.localkeys.android.ffi.Session
+import com.localkeys.android.ffi.attachmentBase64Len as ffiAttachmentBase64Len
 import com.localkeys.android.ffi.changeItemKind as ffiChangeItemKind
 import com.localkeys.android.ffi.createVault as ffiCreateVault
 import com.localkeys.android.ffi.mergeOtherVault as ffiMergeOtherVault
 import com.localkeys.android.ffi.moveItems as ffiMoveItems
 import com.localkeys.android.ffi.openVault as ffiOpenVault
 import com.localkeys.android.ffi.openVaultWithKey as ffiOpenVaultWithKey
+import com.localkeys.android.ffi.predictedVaultBytes as ffiPredictedVaultBytes
 import com.localkeys.android.ffi.subsetVault as ffiSubsetVault
 import com.localkeys.android.ffi.trashItems as ffiTrashItems
+import com.localkeys.android.ffi.vaultSizeExceeds as ffiVaultSizeExceeds
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -159,6 +162,17 @@ fun trashItems(items: List<Item>, now: Long): List<Item> =
  */
 fun moveItems(items: List<Item>, folderId: String?, folderIds: List<String>, now: Long): List<Item> =
     batchItems(items) { json -> ffiMoveItems(json, folderId, folderIds, now.toULong()) }
+
+/** O que o anexo ocupa em base64 no JSON do cofre: a fórmula do NÚCLEO, pela ponte (o Kotlin não reescreve a conta). */
+fun attachmentBase64Size(bytes: Long): Long = ffiAttachmentBase64Len(bytes.toULong()).toLong()
+
+/** Tamanho previsto do `.tkeys` depois dos anexos (arquivo + base64 de cada um): a mesma conta do desktop. */
+fun vaultSizeAfterAttachments(vaultBytes: Long, rawAttachmentBytes: List<Long>): Long =
+    ffiPredictedVaultBytes(vaultBytes.toULong(), rawAttachmentBytes.map { it.toULong() }).toLong()
+
+/** O previsto passou do teto (que é de cada plataforma)? Exatamente no teto ainda não. */
+fun exceedsVaultLimit(predictedBytes: Long, limitBytes: Long): Boolean =
+    ffiVaultSizeExceeds(predictedBytes.toULong(), limitBytes.toULong())
 
 /**
  * Gera o JSON de um cofre NOVO com os [items] SELECIONADOS e só as [folders] que eles referenciam, pela regra do

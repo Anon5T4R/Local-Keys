@@ -608,6 +608,7 @@
     <string name="merge_other_summary_title">Juntar %1$s neste cofre?</string>
     <string name="merge_other_summary_nothing_title">%1$s já está aqui</string>
     <string name="merge_other_summary_nothing">Nada a juntar: este cofre já tem tudo do outro cofre.</string>
+    <string name="merge_other_summary_changed">Este cofre mudou com o resumo aberto; os números abaixo são novos.</string>
     <string name="merge_other_summary_note">O outro cofre é só lido; este cofre é gravado uma vez.</string>
     <string name="merge_other_confirm">Juntar</string>
     <string name="merge_other_close">Fechar</string>

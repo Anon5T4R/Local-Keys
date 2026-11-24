@@ -2,20 +2,21 @@ package com.localkeys.android.ui
 
 import com.localkeys.android.data.vault.Attachment
 import com.localkeys.android.data.vault.Item
+import com.localkeys.android.data.vault.PendingAttachment
 import com.localkeys.android.data.vault.VaultSizeLimit
+import com.localkeys.android.data.vault.gateAttachment
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * O aviso de tamanho ao anexar (unidade 8) no estado do editor: item novo conta os anexos pendentes, item existente
- * não conta duas vezes os que já estão no arquivo, e o aviso em si não mexe na lista — só o "Continuar" guarda.
- * Os botões do diálogo em si (Compose) ficam para o emulador.
+ * A fiação do aviso de tamanho ao anexar (unidade 8): a decisão (`gateAttachment`) e a aplicação no estado
+ * (`applyAttachment`) — item novo conta os pendentes, item existente não conta duas vezes, "Cancelar" não guarda e
+ * "Continuar" guarda. Os botões do diálogo em si (Compose) ficam para o emulador.
  */
 class AttachSizeWarningTest {
 
@@ -41,10 +42,10 @@ class AttachSizeWarningTest {
         state.attachments += attachment(1L * 1024 * 1024)
 
         // Cofre de 18 MiB + pendente de 1 MiB + o novo de 1 MiB (cada um ~1,33 MiB em base64) passa de 20 MiB.
-        val predicted = VaultSizeLimit.attachWarning(18L * 1024 * 1024, state.pendingAttachmentBytes, 1L * 1024 * 1024)
+        val gate = gateAttachment(18L * 1024 * 1024, state.pendingAttachmentBytes, attachment(1L * 1024 * 1024))
 
-        assertNotNull("o aviso aparece", predicted)
-        assertTrue(predicted!! > VaultSizeLimit.MAX_BYTES)
+        assertTrue("o aviso aparece", gate is PendingAttachment.Confirm)
+        assertTrue((gate as PendingAttachment.Confirm).predictedBytes > VaultSizeLimit.MAX_BYTES)
     }
 
     @Test
@@ -55,6 +56,7 @@ class AttachSizeWarningTest {
 
         // O arquivo aberto já tem o anexo de 5 MiB; só o novo entra na conta (19 MiB + 100 B não passa dos 20 MiB).
         assertNull(VaultSizeLimit.attachWarning(19L * 1024 * 1024, state.pendingAttachmentBytes, 100))
+        assertTrue(gateAttachment(19L * 1024 * 1024, state.pendingAttachmentBytes, attachment(100)) is PendingAttachment.Ready)
     }
 
     @Test
@@ -63,8 +65,10 @@ class AttachSizeWarningTest {
         state.attachments += attachment(1L * 1024 * 1024)
 
         assertEquals("só o que foi adicionado nesta sessão conta", listOf(1L * 1024 * 1024), state.pendingAttachmentBytes)
-        val predicted = VaultSizeLimit.attachWarning(18L * 1024 * 1024, state.pendingAttachmentBytes, 1L * 1024 * 1024)
-        assertNotNull("18 MiB + dois pendentes de 1 MiB passam de 20 MiB", predicted)
+        assertTrue(
+            "18 MiB + dois pendentes de 1 MiB passam de 20 MiB",
+            gateAttachment(18L * 1024 * 1024, state.pendingAttachmentBytes, attachment(1L * 1024 * 1024)) is PendingAttachment.Confirm,
+        )
     }
 
     @Test
@@ -72,22 +76,25 @@ class AttachSizeWarningTest {
         val state = ItemEditorState(null, preset = NewItemPreset.LOGIN)
         val read = attachment(1L * 1024 * 1024)
 
-        val predicted = VaultSizeLimit.attachWarning(25L * 1024 * 1024, emptyList(), read.size)
-        assertNotNull(predicted)
-        assertEquals("o aviso não mexe no estado", 0, state.attachments.size)
+        val gate = gateAttachment(25L * 1024 * 1024, emptyList(), read)
+        assertTrue(gate is PendingAttachment.Confirm)
 
-        // O que o botão "Continuar" faz: guarda o anexo já lido no item.
-        state.attachments += read
-        assertEquals(1, state.attachments.size)
+        state.applyAttachment(gate, proceed = false)
+        assertEquals("Cancelar não guarda", 0, state.attachments.size)
+
+        state.applyAttachment(gate, proceed = true)
+        assertEquals("Continuar guarda", 1, state.attachments.size)
+        assertEquals(read, state.attachments.first())
     }
 
     @Test
-    fun `below the cap a small attachment is added without the warning`() {
+    fun `below the cap the attachment is applied without the warning`() {
         val state = ItemEditorState(null, preset = NewItemPreset.LOGIN)
         val read = attachment(1024)
 
-        assertNull(VaultSizeLimit.attachWarning(18L * 1024 * 1024, emptyList(), read.size))
-        state.attachments += read
+        val gate = gateAttachment(18L * 1024 * 1024, emptyList(), read)
+        assertTrue(gate is PendingAttachment.Ready)
+        state.applyAttachment(gate, proceed = true)
         assertEquals(1, state.attachments.size)
     }
 }

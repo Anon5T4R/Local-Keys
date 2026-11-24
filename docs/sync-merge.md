@@ -52,14 +52,15 @@ outra cópia: `toOther` (itens que só existiam aqui ou aqui eram mais novos, in
 ## Juntar um cofre DIFERENTE (pedido 027, unidade 7)
 
 Juntar outro `.tkeys` no aberto não é sincronizar: são cofres distintos, não existe "o mais novo", o outro cofre é
-**somente leitura** (a sincronização grava nos dois; esta não grava em nenhum) e o resultado é um cofre novo que só é
+**somente leitura** (a sincronização grava nos dois; esta não grava no outro) e o resultado é um cofre novo que só é
 gravado depois do resumo confirmado. A regra vive em `crates/core/src/merge_other.rs` (desktop) e na ponte
 `merge_other_vault` (Android).
 
 - Item com id só no outro cofre → entra **inteiro**, com o mesmo id (anexos, passkeys, histórico e chaves
   desconhecidas vêm juntos).
-- Mesmo id e **conteúdo igual** → nada a fazer ("já estava"). Chave ausente e `null` valem o mesmo (o modelo do
-  Android grava `folderId`/`deletedAt` como `null` onde o desktop omite a chave; a comparação é do núcleo).
+- Mesmo id e **conteúdo igual** → nada a fazer ("já estava"). Para toda chave, em qualquer nível, **chave ausente e
+  `null` valem o mesmo** — o modelo do Android grava `folderId`/`deletedAt` como `null` onde o desktop omite a chave,
+  e a normalização é global (não só nesses dois campos).
 - Mesmo id e **conteúdo diferente** → ficam os dois: o que entra ganha um **id novo** (o do aberto não muda). Se o
   conteúdo do outro já existe no aberto sob OUTRO id — a duplicata de uma junção anterior **ou uma edição que ficou
   idêntica a outro item** —, não entra de novo e conta em `content_already_present` ("já estava com outro id"). O

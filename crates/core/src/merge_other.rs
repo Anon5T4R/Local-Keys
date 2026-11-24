@@ -7,8 +7,9 @@
 //! Decisões da regra:
 //! - item do outro com id que **não existe** no aberto entra **inteiro**, com o mesmo id (anexos, passkeys, histórico
 //!   e chaves desconhecidas vêm juntos);
-//! - mesmo id e **conteúdo igual** → nada a fazer (`already_present`); chave ausente e `null` valem o mesmo (o modelo
-//!   do Android grava `folderId`/`deletedAt` como `null` onde o desktop omite a chave);
+//! - mesmo id e **conteúdo igual** → nada a fazer (`already_present`); para toda chave, em qualquer nível, chave
+//!   ausente e `null` valem o mesmo (o modelo do Android grava `folderId`/`deletedAt` como `null` onde o desktop omite
+//!   a chave; a normalização é global, não só nesses dois campos);
 //! - mesmo id e **conteúdo diferente** → ficam os dois: o que entra ganha um **id novo** (o do aberto não muda) e o
 //!   item vai inteiro; se o conteúdo do outro já existe no aberto sob OUTRO id — a duplicata de uma passada anterior
 //!   **ou uma edição que ficou idêntica a outro item** —, não entra e conta em `content_already_present` (é o que
@@ -273,8 +274,9 @@ fn mark_repointed<'a>(repointed: &mut BTreeSet<&'a str>, united: &BTreeMap<Strin
     }
 }
 
-/// Igualdade de JSON tratando **chave ausente e `Value::Null` como a mesma coisa**: o modelo do Android grava
-/// `folderId`/`deletedAt` como `null` onde o desktop omite a chave, e os dois lados têm de dar o mesmo resultado.
+/// Igualdade de JSON tratando **chave ausente e `Value::Null` como a mesma coisa em qualquer nível**: o modelo do
+/// Android grava `folderId`/`deletedAt` como `null` onde o desktop omite a chave, e os dois lados têm de dar o mesmo
+/// resultado. A tolerância é global (recursiva), não uma lista de campos.
 fn json_same_nullable(a: &Value, b: &Value) -> bool {
     fn without_nulls(value: &Value) -> Value {
         match value {

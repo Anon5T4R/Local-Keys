@@ -19,6 +19,7 @@ pub mod kdbx;
 pub mod merge;
 pub mod merge_other;
 pub mod otpauth;
+pub mod size;
 pub mod totp;
 pub mod vault;
 pub mod vault_export;

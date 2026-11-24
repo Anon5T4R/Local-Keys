@@ -15,6 +15,7 @@ import com.localkeys.android.data.vault.Identity
 import com.localkeys.android.data.vault.Item
 import com.localkeys.android.data.vault.ItemKind
 import com.localkeys.android.data.vault.Login
+import com.localkeys.android.data.vault.PendingAttachment
 import com.localkeys.android.ffi.FieldLabelsFfi
 import org.json.JSONException
 import java.util.UUID
@@ -97,6 +98,17 @@ class ItemEditorState(
             val saved = initial?.attachments.orEmpty().map { it.id }.toSet()
             return attachments.filter { it.live && it.id !in saved }.map { it.size }
         }
+
+    /**
+     * Aplica a decisão do aviso de tamanho (unidade 8): o anexo que cabe entra direto; o que passou do teto só entra
+     * com `proceed` (o "Continuar" do diálogo). É a fiação testada na JVM, fora da tela.
+     */
+    fun applyAttachment(gate: PendingAttachment, proceed: Boolean) {
+        when (gate) {
+            is PendingAttachment.Ready -> attachments += gate.attachment
+            is PendingAttachment.Confirm -> if (proceed) attachments += gate.attachment
+        }
+    }
 
     init {
         // Item livre: uma nota com um campo personalizado vazio já aberto (o desktop abre igual, é só uma nota).

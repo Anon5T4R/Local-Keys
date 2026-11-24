@@ -94,6 +94,8 @@ pub struct Unlocked {
     pub raw: serde_json::Value,
     pub session: crypto::SessionKey,
     pub quick: bool,
+    /// Tamanho do arquivo lido: o aviso de tamanho ao anexar usa esse número em vez de um `metadata` na UI.
+    pub file_bytes: u64,
 }
 
 /// Cofre novo: o `.tkeys` já cifrado (a gravação fica na UI).
@@ -188,12 +190,19 @@ pub enum JobResult {
     MergeOtherReady(Result<MergeReady, JobError>),
 }
 
+/// Um resultado de job com a GERAÇÃO de quem o pediu. A UI guarda a geração do job atual: um resultado de uma
+/// geração antiga (o usuário cancelou e o job da rede terminou depois) chega, mas é descartado.
+pub struct Sent {
+    pub generation: u64,
+    pub result: JobResult,
+}
+
 /// Sobe a thread do job. `ctx` é um clone do `egui::Context` (Send+Sync): o
 /// `request_repaint` no fim do trabalho é o que faz a UI acordar sem input.
-pub fn spawn(job: Job, tx: Sender<JobResult>, ctx: egui::Context) {
+pub fn spawn(job: Job, generation: u64, tx: Sender<Sent>, ctx: egui::Context) {
     let spawned = std::thread::Builder::new().name("keys-job".into()).spawn(move || {
         let result = run(job);
-        let _ = tx.send(result);
+        let _ = tx.send(Sent { generation, result });
         ctx.request_repaint();
     });
     if let Err(e) = spawned {
@@ -205,11 +214,11 @@ pub fn spawn(job: Job, tx: Sender<JobResult>, ctx: egui::Context) {
 
 /// Drena o canal sem bloquear. Devolve os resultados prontos e se o canal já
 /// fechou (thread terminou — normalmente depois de mandar o resultado).
-pub fn drain(rx: &Receiver<JobResult>) -> (Vec<JobResult>, bool) {
+pub fn drain(rx: &Receiver<Sent>) -> (Vec<Sent>, bool) {
     let mut out = Vec::new();
     loop {
         match rx.try_recv() {
-            Ok(result) => out.push(result),
+            Ok(sent) => out.push(sent),
             Err(std::sync::mpsc::TryRecvError::Empty) => return (out, false),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => return (out, true),
         }
@@ -244,7 +253,7 @@ fn unlock(path: &str, password: &str, quick: bool) -> Result<Unlocked, JobError>
     let file = std::fs::read(path).map_err(|e| JobError::Msg(format!("{path}: {e}")))?;
     let (plaintext, session) = crypto::open_vault(password, &file).map_err(crypto_err)?;
     let raw = serde_json::from_slice::<serde_json::Value>(&plaintext).map_err(|_| JobError::Msg("vault não é JSON válido".into()))?;
-    Ok(Unlocked { path: path.to_string(), raw, session, quick })
+    Ok(Unlocked { path: path.to_string(), raw, session, quick, file_bytes: file.len() as u64 })
 }
 
 /// Deriva a chave e devolve o `.tkeys` cifrado pronto; a gravação atômica fica
@@ -368,11 +377,12 @@ mod tests {
         assert!(done.is_empty());
         assert!(!closed);
 
-        let sent = tx.send(JobResult::MasterChanged(Ok(Renewed { path: "cofre.tkeys".into(), file: vec![1, 2, 3] })));
+        let sent = tx.send(Sent { generation: 3, result: JobResult::MasterChanged(Ok(Renewed { path: "cofre.tkeys".into(), file: vec![1, 2, 3] })) });
         assert!(sent.is_ok());
 
         let (done, closed) = drain(&rx);
         assert_eq!(done.len(), 1);
+        assert_eq!(done[0].generation, 3, "a geração vem junto do resultado");
         assert!(!closed);
 
         drop(tx);
@@ -403,12 +413,13 @@ mod tests {
                 target: target_str.clone(),
                 data_b64: "aGk=".into(), // "hi"
             },
+            1,
             tx,
             egui::Context::default(),
         );
         let result = rx.recv_timeout(std::time::Duration::from_secs(10));
         match result {
-            Ok(JobResult::AttachmentSaved(Ok(written))) => assert_eq!(written, target_str),
+            Ok(Sent { generation: 1, result: JobResult::AttachmentSaved(Ok(written)) }) => assert_eq!(written, target_str),
             Ok(_) => panic!("job devolveu a variante errada"),
             Err(e) => panic!("job não respondeu: {e}"),
         }

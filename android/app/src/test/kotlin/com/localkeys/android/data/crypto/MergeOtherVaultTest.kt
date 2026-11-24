@@ -13,7 +13,10 @@ import java.io.File
  * Paridade da junção de um cofre DIFERENTE (unidade 7) pela ponte: roda as fixtures `other-*` de
  * `testdata/sync-merge/` com a lib do host e confere com o esperado escrito à mão (o mesmo que o núcleo roda). O id
  * gerado na colisão é ligado ao `<new>` do esperado; a comparação de itens/pastas é por `id` e a de cada objeto pelo
- * conteúdo.
+ * conteúdo. Cada caso roda DUAS vezes: a segunda passada tem de ser idempotente.
+ *
+ * O pino de "chave ausente × `null`" (fixture 15) não consegue falhar aqui: o `Vault.parse` do Android normaliza
+ * ausente para `null` antes da ponte, então os dois lados já são `null`. O pino de verdade é o runner Rust.
  */
 class MergeOtherVaultTest {
 

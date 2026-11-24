@@ -15,3 +15,15 @@ object MergeOtherFreshness {
         true
     }
 }
+
+/** O que fazer quando a pessoa confirma o resumo da junção. */
+enum class MergeConfirmAction {
+    /** O cofre não mudou: grava o plano calculado. */
+    WritePlan,
+
+    /** O cofre mudou: refaz a junção e VOLTA AO RESUMO com as contagens novas (nada é gravado ainda). */
+    PresentAgain,
+}
+
+/** A decisão: cofre mudou desde o resumo → reapresenta; não mudou → grava o calculado. */
+fun confirmAction(stale: Boolean): MergeConfirmAction = if (stale) MergeConfirmAction.PresentAgain else MergeConfirmAction.WritePlan

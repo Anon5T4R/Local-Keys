@@ -36,16 +36,21 @@ import com.localkeys.android.data.export.VaultExporter
 import com.localkeys.android.data.export.exportPasswordProblem
 import com.localkeys.android.data.export.ExportPasswordProblem
 import com.localkeys.android.data.passkey.CxfImport
+import com.localkeys.android.data.store.CappedStream
 import com.localkeys.android.data.store.DocumentIo
 import com.localkeys.android.data.store.DocumentWriteException
 import com.localkeys.android.data.store.DocumentWriter
+import com.localkeys.android.data.store.EmptyDocument
 import com.localkeys.android.data.store.RecentVault
 import com.localkeys.android.data.store.RecentVaults
+import com.localkeys.android.data.store.declaredDocumentSize
 import com.localkeys.android.data.sync.JsonEq
+import com.localkeys.android.data.sync.MergeConfirmAction
 import com.localkeys.android.data.sync.MergeOtherFreshness
 import com.localkeys.android.data.sync.MergeOtherLimit
 import com.localkeys.android.data.sync.MergeOtherPrecheck
 import com.localkeys.android.data.sync.VaultMerge
+import com.localkeys.android.data.sync.confirmAction
 import com.localkeys.android.data.sync.isWrongPassword
 import org.json.JSONObject
 import com.localkeys.android.data.store.SettingsStore
@@ -61,6 +66,7 @@ import com.localkeys.android.data.vault.Vault
 import com.localkeys.android.data.vault.VaultAutofillCache
 import com.localkeys.android.data.vault.VaultRepository
 import com.localkeys.android.data.vault.VaultSaver
+import com.localkeys.android.data.vault.VaultSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -148,6 +154,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     private val crypto = TkeysCrypto()
     private val repository = VaultRepository(crypto)
     private val saver = VaultSaver(repository)
+    private val session = VaultSession(repository, saver)
     private val exporter = VaultExport()
     private val settings = SettingsStore(application)
     private val biometricKey = BiometricVaultKey()
@@ -163,20 +170,13 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     val selection = ListSelectionMode()
 
     /**
-     * Últimos bytes conhecidos do arquivo no disco. Serve tanto para o unlock
-     * (decifrar) quanto como **baseline da detecção de mudança externa**: o
-     * [VaultSaver] compara o disco atual com isto antes de gravar e atualiza
-     * para os bytes recém-gravados depois.
+     * O cofre aberto na JVM: carregar/destrancar/trancar/criar sem Android. O conteúdo conhecido é o ciphertext do
+     * cofre (unlock + baseline da mudança externa) e NÃO é zerado ao trancar — ver [VaultSession].
      */
-    private var cachedBlob: ByteArray?
-        get() = saver.known
-        set(value) {
-            saver.seed(value)
-        }
 
     /** Tamanho do `.tkeys` aberto (o blob conhecido, já cifrado): entra no aviso de tamanho ao anexar. */
     val vaultFileBytes: Long
-        get() = cachedBlob?.size?.toLong() ?: 0L
+        get() = session.known?.size?.toLong() ?: 0L
 
     /** Chaves biométricas por cofre (URI → hex). Só a do cofre atual é usada ([currentWrappedKey]). */
     @Volatile
@@ -194,7 +194,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 // Só quando a URI muda: o DataStore reemite a cada preferência gravada (tema, biometria), e reler o
                 // arquivo nessas horas trocaria a base da detecção de mudança externa no meio do uso.
                 settings.vaultUri.distinctUntilChanged().collect { uri ->
-                    cachedBlob = null
+                    session.forget()
                     _state.update {
                         it.copy(vaultUri = uri, vaultName = null, biometricAvailable = uri != null && biometricKeys.containsKey(uri))
                     }
@@ -295,7 +295,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val bytes = resolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
                     ?: throw IOException(str(R.string.err_file_not_found))
-                cachedBlob = bytes
+                session.load(bytes)
                 val name = runCatching {
                     resolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                         ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
@@ -303,7 +303,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(vaultName = name) }
                 settings.touchRecentVault(uri, name)
             } catch (e: Exception) {
-                cachedBlob = null
+                session.forget()
                 _state.update {
                     it.copy(
                         vaultUri = null,
@@ -322,7 +322,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(error = str(R.string.msg_password_empty)) }
             return
         }
-        val blob = cachedBlob
+        val blob = session.known
         if (blob == null) {
             _state.update { it.copy(error = str(R.string.msg_no_vault_loaded)) }
             return
@@ -330,7 +330,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             try {
-                val vault = repository.unlock(blob, password)
+                val vault = session.unlock(password)
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, screen = Screen.Vault, busy = false) }
             } catch (e: TkeysError) {
@@ -346,16 +346,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      * da tela só até aqui — o repositório guarda a chave derivada, não a senha.
      */
     fun onCreatedDocument(uri: Uri, password: String) {
-        // O "criar" do SAF acabou de criar/sobrescrever o documento: o conhecido do cofre anterior sai daqui, senão
-        // a primeira gravação do cofre novo seria recusada como mudança externa (bug de criar depois de trancar).
-        saver.beginNewVault()
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             val resolver = getApplication<Application>().contentResolver
             // Antes de encostar no documento: se algo falhar aqui, o arquivo do "criar" está vazio e é apagado.
             val file = try {
-                val file = repository.create(Vault.empty(), password)
-                repository.verifySaved(file) // nunca grava um blob que não reabriria
+                val file = session.createFile(Vault.empty(), password)
                 withContext(Dispatchers.IO) {
                     runCatching {
                         resolver.takePersistableUriPermission(
@@ -371,7 +367,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             try {
-                withContext(Dispatchers.IO) { saver.write(file, repository.vault, ResolverDocument(resolver, uri)) }
+                // `force`: o SAF acabou de criar/sobrescrever o documento — não há mudança externa a proteger.
+                withContext(Dispatchers.IO) { session.writeCreated(file, ResolverDocument(resolver, uri)) }
             } catch (e: Exception) {
                 // A gravação pode ter começado: um cofre possivelmente válido não é apagado por falha de releitura.
                 _state.update { it.copy(error = str(R.string.msg_create_failed, createFailureText(e)), busy = false) }
@@ -423,8 +420,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 val resolver = getApplication<Application>().contentResolver
                 val bytes = readDocumentBytes(resolver, Uri.parse(uri))
                     ?: throw IOException(str(R.string.err_file_not_found))
-                val vault = repository.reload(bytes)
-                cachedBlob = bytes
+                val vault = session.reload(bytes)
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, busy = false, notice = str(R.string.msg_reloaded)) }
             } catch (e: Exception) {
@@ -467,7 +463,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     /** Após a biometria: recupera a chave e abre o vault sem senha. */
     fun unlockWithBiometricCipher(cipher: Cipher) {
         val (uri, hex) = currentWrappedKey() ?: return
-        val blob = cachedBlob ?: return
+        if (session.known == null) return
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
             try {
@@ -477,7 +473,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(busy = false) }
                     return@launch
                 }
-                val vault = repository.unlockWithKey(key, blob)
+                val vault = session.unlockWithKey(key)
                 syncAutofillCache(vault)
                 _state.update { it.copy(vault = vault, screen = Screen.Vault, busy = false) }
             } catch (e: Exception) {
@@ -943,8 +939,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 val uri = _state.value.vaultUri ?: throw IOException(str(R.string.err_no_file))
                 val bytes = readDocumentBytes(getApplication<Application>().contentResolver, Uri.parse(uri))
                     ?: throw IOException(str(R.string.err_file_not_found))
-                repository.reload(bytes)
-                cachedBlob = bytes
+                session.reload(bytes)
                 once()
                 null
             } catch (e: Exception) {
@@ -1051,7 +1046,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 // O arquivo antigo vira só cópia de segurança: sai da lista para não ser aberto por engano.
                 settings.forgetRecentVault(oldUri)
                 settings.touchRecentVault(newUri, newName)
-                cachedBlob = back
+                session.load(back)
                 _state.update { it.copy(vaultUri = newUri, vaultName = newName, busy = false) }
                 settings.setVaultUri(newUri)
                 _state.update {
@@ -1226,6 +1221,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             val baseJson: String,
             val counts: MergeOtherCounts,
             val nothingChanges: Boolean,
+            /** O cofre mudou depois do resumo anterior: o diálogo avisa que as contagens são novas. */
+            val changed: Boolean = false,
         ) : MergeOutcome
 
         /** Senha errada: o diálogo continua com o motivo e a pessoa tenta de novo. */
@@ -1240,6 +1237,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         data class Bytes(val bytes: ByteArray) : CappedRead
         data object TooBig : CappedRead
         data object Missing : CappedRead
+        /** O fluxo falhou (IO/permissão): o motivo real vai para a mensagem, não "arquivo não encontrado". */
+        data class Failed(val cause: Throwable) : CappedRead
     }
 
     /**
@@ -1275,14 +1274,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             MergeOtherPrecheck.UnknownVaultSize -> return MergeOutcome.Failed(str(R.string.merge_other_size_unknown))
             MergeOtherPrecheck.TooBig -> return MergeOutcome.Failed(str(R.string.merge_other_too_big))
             is MergeOtherPrecheck.ReadWhole ->
-                withContext(Dispatchers.IO) { readDocumentBytesCapped(resolver, uri, MergeOtherLimit.MAX_BYTES - check.vaultBytes) }
-            is MergeOtherPrecheck.ReadCapped -> withContext(Dispatchers.IO) { readDocumentBytesCapped(resolver, uri, check.cap) }
+                withContext(Dispatchers.IO) { readDocumentBytesCapped(resolver, uri, MergeOtherLimit.MAX_BYTES - check.vaultBytes, declared) }
+            is MergeOtherPrecheck.ReadCapped -> withContext(Dispatchers.IO) { readDocumentBytesCapped(resolver, uri, check.cap, null) }
         }
         val bytes = when (read) {
             is CappedRead.Bytes -> read.bytes
             CappedRead.TooBig -> return MergeOutcome.Failed(str(R.string.merge_other_too_big))
             CappedRead.Missing ->
                 return MergeOutcome.Failed(str(R.string.merge_other_open_failed, str(R.string.err_file_not_found)))
+            is CappedRead.Failed -> return MergeOutcome.Failed(mergeOpenFailure(read.cause))
         }
         val other = withContext(Dispatchers.Default) { repository.openOtherWithSessionKey(bytes) }
             ?: return MergeOutcome.NeedsPassword(name, bytes)
@@ -1296,9 +1296,10 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun onMergeOtherPassword(password: String) {
         if (password.isBlank()) return
+        // A etapa é conferida ANTES de `startPassword`: se o fluxo não estiver pedindo a senha, nada trava `working`.
+        val stage = mergeOther.stage as? MergeOtherStage.NeedsPassword ?: return
         val bytes = mergeOtherBytes ?: return
         if (!mergeOther.startPassword()) return
-        val stage = mergeOther.stage as? MergeOtherStage.NeedsPassword ?: return
         _state.update { it.copy(busy = true) }
         viewModelScope.launch(Dispatchers.Default) {
             val outcome = try {
@@ -1348,7 +1349,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 mergeMerged = outcome.merged
                 mergeBaseJson = outcome.baseJson
                 _state.update { it.copy(busy = false) }
-                mergeOther.ready(outcome.name, outcome.counts, outcome.nothingChanges)
+                mergeOther.ready(outcome.name, outcome.counts, outcome.nothingChanges, outcome.changed)
             }
             is MergeOutcome.Failed -> {
                 clearMergeOther()
@@ -1357,16 +1358,18 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** O que gravar quando a pessoa confirma: a junção do resumo ou uma refeita (se o cofre mudou no meio). */
+    /** O que fazer ao confirmar: gravar o plano, reapresentar o resumo (o cofre mudou) ou recusar. */
     private sealed interface MergeApplyPlan {
-        data class Ready(val vault: Vault) : MergeApplyPlan
+        data class Write(val vault: Vault) : MergeApplyPlan
+        data class Present(val outcome: MergeOutcome.Ready) : MergeApplyPlan
         data class Refused(val message: String) : MergeApplyPlan
     }
 
     /**
      * Confirmou o resumo: o cofre aberto recebe a junção e é gravado UMA vez ([persistAndCommit], com a conferência de
      * sempre); o outro arquivo não é tocado. Se o cofre mudou desde o resumo (autofill/passkey gravou no meio), a
-     * junção é REFEITA sobre o conteúdo de agora — o resultado calculado antes nunca é gravado por cima.
+     * junção é REFEITA e o resumo VOLTA com as contagens novas — nada é gravado até um novo confirmar, para o usuário
+     * nunca gravar números que não viu.
      */
     fun confirmMergeOther() {
         val name = (mergeOther.stage as? MergeOtherStage.Ready)?.name ?: return
@@ -1374,7 +1377,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(busy = true, error = null) }
         viewModelScope.launch(Dispatchers.Default) {
             val plan = try {
-                mergeForApply()
+                mergeForApply(name)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     clearMergeOther()
@@ -1382,44 +1385,53 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 return@launch
             }
-            if (plan is MergeApplyPlan.Refused) {
-                withContext(Dispatchers.Main) {
+            when (plan) {
+                is MergeApplyPlan.Refused -> withContext(Dispatchers.Main) {
                     clearMergeOther()
                     _state.update { it.copy(busy = false, error = plan.message) }
                 }
-                return@launch
-            }
-            try {
-                persistAndCommit((plan as MergeApplyPlan.Ready).vault, notice = null)
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    clearMergeOther()
-                    failSave(e, R.string.op_merge)
+                is MergeApplyPlan.Present -> withContext(Dispatchers.Main) { applyMergeOutcome(plan.outcome) }
+                is MergeApplyPlan.Write -> {
+                    try {
+                        persistAndCommit(plan.vault, notice = null)
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            clearMergeOther()
+                            failSave(e, R.string.op_merge)
+                        }
+                        return@launch
+                    }
+                    withContext(Dispatchers.Main) {
+                        clearMergeOther()
+                        selection.clear()
+                        _state.update { it.copy(busy = false, notice = str(R.string.merge_other_done, name)) }
+                    }
                 }
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                clearMergeOther()
-                selection.clear()
-                _state.update { it.copy(busy = false, notice = str(R.string.merge_other_done, name)) }
             }
         }
     }
 
-    /** A junção a gravar: a calculada se o aberto não mudou; senão, refeita com o conteúdo de agora. */
-    private fun mergeForApply(): MergeApplyPlan {
+    /**
+     * A junção a gravar. Cofre aberto igual ao do resumo → o plano calculado; mudou → a junção é refeita sobre o
+     * conteúdo de agora e volta como resumo novo (`changed`), não como gravação.
+     */
+    private fun mergeForApply(name: String): MergeApplyPlan {
         val currentJson = repository.vault.toJson()
         val base = mergeBaseJson
         val merged = mergeMerged
-        if (base != null && merged != null && !MergeOtherFreshness.isStale(base, currentJson)) {
-            return MergeApplyPlan.Ready(merged)
+        if (base != null && merged != null && confirmAction(MergeOtherFreshness.isStale(base, currentJson)) == MergeConfirmAction.WritePlan) {
+            return MergeApplyPlan.Write(merged)
         }
         val other = mergeOtherSource ?: return MergeApplyPlan.Refused(str(R.string.merge_other_changed))
         val result = mergeOtherVault(repository.vault, other)
-        if (MergeOtherLimit.resultOverLimit(MergeOtherLimit.utf8Size(result.merged.toJson()))) {
+        val mergedJson = result.merged.toJson()
+        if (MergeOtherLimit.resultOverLimit(MergeOtherLimit.utf8Size(mergedJson))) {
             return MergeApplyPlan.Refused(str(R.string.merge_other_result_too_big))
         }
-        return MergeApplyPlan.Ready(result.merged)
+        val nothing = JsonEq.same(JSONObject(mergedJson), JSONObject(currentJson))
+        return MergeApplyPlan.Present(
+            MergeOutcome.Ready(name, result.merged, other, currentJson, MergeOtherCounts.of(result), nothing, changed = true),
+        )
     }
 
     /** Cancelou (ou fechou o resumo): nada é gravado. */
@@ -1438,33 +1450,31 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     /** O tamanho do `.tkeys` aberto: o blob conhecido; sem ele, o tamanho do documento aberto; nada disso = null. */
     private fun vaultBytesForMerge(resolver: ContentResolver): Long? =
-        cachedBlob?.size?.toLong() ?: _state.value.vaultUri?.let { documentSize(resolver, Uri.parse(it)) }
+        session.known?.size?.toLong() ?: _state.value.vaultUri?.let { documentSize(resolver, Uri.parse(it)) }
 
-    /** O `SIZE` que o provedor declara para o documento, ou null quando ele não informa. */
-    private fun documentSize(resolver: ContentResolver, uri: Uri): Long? = runCatching {
-        resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
-        }
-    }.getOrNull()
-
-    /** Lê o documento com teto: passou de [cap] não guarda o resto nem devolve bytes parciais. */
-    private fun readDocumentBytesCapped(resolver: ContentResolver, document: Uri, cap: Long): CappedRead = try {
-        val input = resolver.openInputStream(document) ?: return CappedRead.Missing
-        input.use { stream ->
-            val out = java.io.ByteArrayOutputStream()
-            val buffer = ByteArray(64 * 1024)
-            var total = 0L
-            while (true) {
-                val read = stream.read(buffer)
-                if (read < 0) break
-                total += read
-                if (total > cap) return CappedRead.TooBig
-                out.write(buffer, 0, read)
+    /** O `SIZE` que o provedor declara para o documento, ou null quando ele não informa (inclusive o -1). */
+    private fun documentSize(resolver: ContentResolver, uri: Uri): Long? = declaredDocumentSize(
+        runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
             }
-            CappedRead.Bytes(out.toByteArray())
+        }.getOrNull(),
+    )
+
+    /** Lê o documento com teto, sem Android: [CappedStream] aloca o declarado (limitado ao teto), não o BAOS. */
+    private fun readDocumentBytesCapped(resolver: ContentResolver, document: Uri, cap: Long, declared: Long?): CappedRead {
+        val input = try {
+            resolver.openInputStream(document) ?: return CappedRead.Missing
+        } catch (e: Exception) {
+            return CappedRead.Failed(e)
         }
-    } catch (_: Exception) {
-        CappedRead.Missing
+        return input.use { stream ->
+            when (val result = CappedStream.read(stream, cap, declared)) {
+                is CappedStream.Result.Bytes -> CappedRead.Bytes(result.bytes)
+                CappedStream.Result.TooBig -> CappedRead.TooBig
+                is CappedStream.Result.Failed -> CappedRead.Failed(result.cause)
+            }
+        }
     }
 
     /** O texto de uma falha ao abrir/juntar o outro cofre (a parte variável vem traduzida). */
@@ -1522,17 +1532,28 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Apaga um documento que o "criar" do sistema deixou **vazio** porque nada foi gravado nele (o cofre novo que
-     * falhou antes de gravar, o export que falhou antes de gravar). Melhor esforço: falha de exclusão é ignorada (o
-     * arquivo vazio fica e a pessoa apaga à mão) e não muda o fluxo nem a mensagem.
+     * Apaga um documento que o "criar" do sistema deixou **vazio** porque nada foi gravado nele. Só quando VAZIO: o
+     * gerenciador pode devolver um arquivo que já existia ("substituir"), e um arquivo do usuário nunca é apagado
+     * aqui. Melhor esforço: falha de exclusão é ignorada e não muda o fluxo.
      *
      * NÃO chamar depois que a gravação começou: um provedor pode ter escrito um cofre válido e falhado só na
      * releitura; apagar aí destruiria o arquivo bom.
      */
     private fun discardDocument(uri: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, Uri.parse(uri)) }
+            val resolver = getApplication<Application>().contentResolver
+            val document = Uri.parse(uri)
+            val declared = documentSize(resolver, document)
+            if (!EmptyDocument.isDiscardable(declared) { documentFirstRead(resolver, document) }) return@launch
+            runCatching { DocumentsContract.deleteDocument(resolver, document) }
         }
+    }
+
+    /** "Vazio ou não" sem baixar o arquivo: 0 bytes = vazio, 1 = tem conteúdo, null = não deu para ler. */
+    private fun documentFirstRead(resolver: ContentResolver, document: Uri): Long? = try {
+        resolver.openInputStream(document)?.use { input -> if (input.read() < 0) 0L else 1L }
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -1597,10 +1618,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         selection.clear()
         // A junção em andamento guarda o outro cofre decifrado: trancar descarta.
         clearMergeOther()
-        repository.lock()
-        // Nada está aberto: o conteúdo conhecido do cofre que ficou para trás não serve de baseline para o próximo
-        // documento (criar cofre depois de trancar recusava a gravação como mudança externa).
-        cachedBlob = null
+        // Só a sessão sai: o conteúdo conhecido FICA, é o ciphertext do próximo destrancar (o `vaultUri` não re-semeia).
+        session.lock()
         syncAutofillCache(null)
         _state.update { it.copy(vault = null, screen = Screen.Unlock, exportVault = null, exportVaultError = null) }
     }

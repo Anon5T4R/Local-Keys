@@ -14,6 +14,7 @@ use localkeys_core::batch;
 use localkeys_core::change_kind::{self, FieldLabels};
 use localkeys_core::crypto::{self, CryptoError, KdfParams, SessionKey};
 use localkeys_core::merge_other;
+use localkeys_core::size;
 use localkeys_core::vault_export;
 
 uniffi::setup_scaffolding!();
@@ -203,6 +204,25 @@ pub fn merge_other_vault(base_json: String, other_json: String) -> Result<MergeO
         folders_added: summary.folders_added,
         folders_merged: summary.folders_merged,
     })
+}
+
+/// O tamanho que um anexo ocupa em base64 no JSON do cofre (a fórmula do núcleo, sem reescrever em Kotlin).
+#[uniffi::export]
+pub fn attachment_base64_len(bytes: u64) -> u64 {
+    size::base64_len(bytes)
+}
+
+/// Tamanho previsto do `.tkeys` depois dos anexos: o arquivo aberto + o base64 de cada anexo (a mesma conta do
+/// desktop). O teto de aviso é de cada plataforma e não entra aqui.
+#[uniffi::export]
+pub fn predicted_vault_bytes(vault_bytes: u64, attachment_bytes: Vec<u64>) -> u64 {
+    size::predicted_vault_bytes(vault_bytes, attachment_bytes)
+}
+
+/// O previsto passou do teto da plataforma? Exatamente no teto ainda não.
+#[uniffi::export]
+pub fn vault_size_exceeds(predicted_bytes: u64, limit_bytes: u64) -> bool {
+    size::exceeds(predicted_bytes, limit_bytes)
 }
 
 /// A sessão de um cofre aberto: a chave derivada + salt/params. Regrava sem re-rodar o Argon2 nem guardar a
@@ -456,6 +476,15 @@ mod tests {
         assert_eq!(reason(subset_vault(EXPORT_FOLDERS.into(), "[]".into())), "no items selected");
         assert_eq!(reason(subset_vault(EXPORT_FOLDERS.into(), r#"[{"name":"sem id"}]"#.into())), "item has no `id`");
         assert_eq!(FfiError::CannotExport { reason: "x".into() }.to_string(), "items cannot be exported: x");
+    }
+
+    #[test]
+    fn a_formula_do_previsto_vem_do_nucleo() {
+        assert_eq!(attachment_base64_len(3), 4);
+        assert_eq!(attachment_base64_len(10 * 1024 * 1024), 13_981_016);
+        assert_eq!(predicted_vault_bytes(500, vec![3, 3]), 508);
+        assert!(!vault_size_exceeds(20 * 1024 * 1024, 20 * 1024 * 1024));
+        assert!(vault_size_exceeds(20 * 1024 * 1024 + 1, 20 * 1024 * 1024));
     }
 
     #[test]

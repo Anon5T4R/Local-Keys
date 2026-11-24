@@ -3055,15 +3055,19 @@ fn a_job_that_starts_the_next_attachment_keeps_its_label() {
 
     // O canal entrega o primeiro resultado e FECHA (a thread do primeiro job acabou).
     let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(crate::jobs::JobResult::AttachmentRead(Ok(crate::jobs::AttachmentRead {
-        item_id: id.clone(),
-        name: "primeiro.txt".into(),
-        mime: "text/plain",
-        size: 1,
-        data_b64: "YQ==".into(),
-    })))
+    tx.send(crate::jobs::Sent {
+        generation: 5,
+        result: crate::jobs::JobResult::AttachmentRead(Ok(crate::jobs::AttachmentRead {
+            item_id: id.clone(),
+            name: "primeiro.txt".into(),
+            mime: "text/plain",
+            size: 1,
+            data_b64: "YQ==".into(),
+        })),
+    })
     .expect("manda o primeiro resultado");
     drop(tx);
+    app.job_generation = 5;
     app.job_rx = Some(rx);
     app.attach_queue = vec![(id, second.display().to_string())];
 
@@ -3186,19 +3190,42 @@ fn merging_the_vault_in_use_by_another_path_is_refused() {
     assert!(harness.state().merge_plan.is_none());
 }
 
-/// O Cancelar do diálogo da senha fica travado enquanto o job abre o outro cofre (fechar não cancela o Argon2id, e o
-/// resultado reabriria o diálogo ou abriria o resumo).
+/// Cancelar o diálogo da senha fecha na hora; o resultado do job que já estava lendo o outro cofre (rede fora do ar
+/// pode levar minutos) chega com a geração antiga e é descartado — não reabre o diálogo nem abre o resumo.
 #[test]
-fn the_merge_password_cancel_is_disabled_while_the_other_vault_opens() {
-    let (mut app, other_path, _other) = unlocked_for_merge("merge-cancel-busy", Prefs::new("en", ThemeMode::Dark));
+fn a_late_result_after_cancelling_the_password_is_ignored() {
+    let (mut app, other_path, _other) = unlocked_for_merge("merge-cancel-late", Prefs::new("en", ThemeMode::Dark));
     app.merge_open = true;
     app.merge_path = other_path.display().to_string();
     app.job_label = Some(crate::i18n::tr("opening the other vault…"));
+    app.job_generation = 7;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.job_rx = Some(rx);
     let mut harness = harness(app);
     harness.run_steps(2);
 
-    let cancel = harness.get_all_by_label("Cancel").find(|node| node.accesskit_node().role() == Role::Button).expect("o botão Cancelar");
-    assert!(cancel.accesskit_node().is_disabled(), "Cancelar não fecha o diálogo com o job rodando");
+    // Cancelar com o job rodando: o diálogo fecha (o botão e o Esc continuam valendo) e a geração muda.
+    click_labelled_button(&mut harness, "Cancel");
+    assert!(!harness.state().merge_open, "o diálogo fecha com o job rodando");
+    assert_eq!(harness.state().job_generation, 8);
+    assert!(harness.state().job_label.is_none());
+
+    // O job velho responde depois: geração 7 ≠ atual → ignorado.
+    tx.send(crate::jobs::Sent {
+        generation: 7,
+        result: crate::jobs::JobResult::MergeOtherOpened(Ok(crate::jobs::OpenedOther {
+            path: other_path.display().to_string(),
+            raw: serde_json::json!({"version": 1, "folders": [], "items": []}),
+        })),
+    })
+    .expect("manda o resultado tardio");
+    drop(tx);
+    harness.run_steps(2);
+
+    assert!(!harness.state().merge_open, "o resultado velho não reabre o diálogo");
+    assert!(harness.state().merge_plan.is_none(), "o resultado velho não abre o resumo");
+    assert!(harness.state().job_label.is_none(), "o resultado velho não dispara outro job");
+    assert!(harness.state().err.is_none(), "o resultado velho não vira erro");
 }
 
 // ── unidade 8: anexos grandes ─────────────────────────────────────────
@@ -3208,52 +3235,122 @@ fn live_attachments(app: &KeysApp, id: &str) -> usize {
     item_by_id(app, id)["attachments"].as_array().map_or(0, |list| list.iter().filter(|a| a["deletedAt"].is_null()).count())
 }
 
-/// Abaixo do teto o anexo entra direto; acima, o aviso vem ANTES da leitura: Cancelar não anexa, Continuar lê e
-/// guarda. O "tamanho do cofre" do teste é o do arquivo em disco (só o tamanho importa aqui).
+/// O aviso de tamanho vem DEPOIS da leitura (o cap de 10 MiB já atuou): o anexo fica retido no modal, Cancelar
+/// descarta o lido e a fila, Continuar aplica; e o tamanho guardado passa a ser o do arquivo salvo, então o anexo
+/// que já está no cofre não conta duas vezes.
 #[test]
-fn the_large_vault_warning_comes_before_reading_and_can_add_or_cancel() {
+fn the_size_warning_comes_after_the_read_and_holds_the_attachment() {
     let mut app = unlocked("attach-warn", Prefs::new("en", ThemeMode::Dark));
     let dir = scratch("attach-warn");
     std::fs::create_dir_all(&dir).expect("pasta do teste");
     app.path = dir.join("cofre.tkeys").display().to_string();
     persist_now(&mut app);
+    // O cofre "vale" o teto (o número guardado é o que o aviso usa; o arquivo real não é relido).
+    app.vault_bytes = crate::size_limit::VAULT_WARN_BYTES;
     let id = item_id(&app, "1lib.sk");
     let first = dir.join("primeiro.txt");
     std::fs::write(&first, b"x").expect("grava o anexo");
+    let second = dir.join("segundo.txt");
+    std::fs::write(&second, b"y").expect("grava o segundo anexo");
     let mut harness = harness(app);
     harness.run_steps(2);
     let ctx = harness.ctx.clone();
 
-    // Abaixo do teto: sem diálogo, o job da leitura já roda e o anexo entra.
-    harness.state_mut().attachments_chosen(&id, vec![first.display().to_string()], &ctx);
-    assert!(harness.state().attach_warn.is_none(), "um cofre pequeno não avisa");
-    assert!(harness.state().job_label.is_some(), "a leitura começa na hora");
+    // Cancelar: o arquivo foi lido, mas nada é guardado e a fila é descartada junto.
+    harness.state_mut().attachments_chosen(&id, vec![first.display().to_string(), second.display().to_string()], &ctx);
     wait_for_job(&mut harness);
-    assert_eq!(live_attachments(harness.state(), &id), 1);
-
-    // Acima do teto: o arquivo em disco tem 101 MiB (o conteúdo não é relido neste teste).
-    let vault_path = harness.state().path.clone();
-    std::fs::OpenOptions::new().write(true).open(&vault_path).expect("abre o cofre").set_len(101 * 1024 * 1024).expect("estica o cofre");
-    let second = dir.join("segundo.txt");
-    std::fs::write(&second, b"y").expect("grava o segundo anexo");
-
-    harness.state_mut().attachments_chosen(&id, vec![second.display().to_string()], &ctx);
-    harness.run_steps(2);
-    assert!(harness.state().attach_warn.is_some(), "o aviso vem antes de ler");
-    assert!(harness.state().job_label.is_none(), "nada é lido antes do Continuar");
+    assert!(harness.state().attach_warn.is_some(), "acima do teto, o aviso segura o anexo lido");
     harness.get_by_label_contains("Large vault");
-
-    // Cancelar: nada é anexado.
+    assert_eq!(live_attachments(harness.state(), &id), 0, "nada guardado antes do Continuar");
     click_labelled_button(&mut harness, "Cancel");
     assert!(harness.state().attach_warn.is_none(), "o aviso fecha");
-    assert_eq!(live_attachments(harness.state(), &id), 1, "cancelar não anexa");
-    assert!(harness.state().job_label.is_none());
+    assert!(harness.state().attach_queue.is_empty(), "cancelar descarta a fila da seleção");
+    assert_eq!(live_attachments(harness.state(), &id), 0, "cancelar não anexa");
 
-    // Continuar: o anexo é lido e guardado (o cofre volta ao tamanho de verdade ao gravar).
-    harness.state_mut().attachments_chosen(&id, vec![second.display().to_string()], &ctx);
-    harness.run_steps(2);
-    click_labelled_button(&mut harness, "Continue");
+    // Continuar: aplica o anexo retido e grava; o tamanho guardado volta a ser o do arquivo de verdade.
+    harness.state_mut().attachments_chosen(&id, vec![first.display().to_string()], &ctx);
     wait_for_job(&mut harness);
+    assert!(harness.state().attach_warn.is_some());
+    click_labelled_button(&mut harness, "Continue");
     assert!(harness.state().attach_warn.is_none());
-    assert_eq!(live_attachments(harness.state(), &id), 2, "continuar anexa");
+    assert_eq!(live_attachments(harness.state(), &id), 1, "continuar anexa");
+    let saved = std::fs::metadata(harness.state().path.trim()).expect("arquivo gravado").len();
+    assert_eq!(harness.state().vault_bytes, saved, "o tamanho guardado acompanha a gravação");
+
+    // Com o tamanho real (pequeno), outro anexo entra direto: o que já está no cofre não é contado em dobro.
+    harness.state_mut().attachments_chosen(&id, vec![second.display().to_string()], &ctx);
+    wait_for_job(&mut harness);
+    assert!(harness.state().attach_warn.is_none(), "o anexo salvo está no tamanho do arquivo");
+    assert_eq!(live_attachments(harness.state(), &id), 2);
+}
+
+/// No formulário, os anexos ainda não gravados entram na conta: o segundo só estoura o teto por causa do primeiro.
+/// Depois de salvar, eles passam a estar no arquivo (e não são contados de novo).
+#[test]
+fn the_size_warning_counts_the_form_pending_attachments_once() {
+    let mut app = unlocked("attach-warn-form", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("attach-warn-form");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    persist_now(&mut app);
+    // Um anexo de 3 bytes ocupa 4 em base64: WARN-7 + 4 ainda cabe; o segundo estoura por causa do pendente.
+    app.vault_bytes = crate::size_limit::VAULT_WARN_BYTES - 7;
+    let small = dir.join("nota.txt");
+    std::fs::write(&small, b"abc").expect("grava o anexo");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().open_add_form(NewKind::Login);
+
+    harness.state_mut().attachments_chosen(crate::FORM_ATTACH, vec![small.display().to_string()], &ctx);
+    wait_for_job(&mut harness);
+    assert!(harness.state().attach_warn.is_none(), "o primeiro ainda cabe");
+    assert_eq!(harness.state().form_attachments.len(), 1);
+
+    harness.state_mut().attachments_chosen(crate::FORM_ATTACH, vec![small.display().to_string()], &ctx);
+    wait_for_job(&mut harness);
+    assert!(harness.state().attach_warn.is_some(), "o pendente do formulário conta: o segundo passa do teto");
+    assert_eq!(harness.state().form_attachments.len(), 1, "nada guardado antes do Continuar");
+    click_labelled_button(&mut harness, "Continue");
+    assert_eq!(harness.state().form_attachments.len(), 2);
+
+    // Salvar: os pendentes viram anexos do item e o tamanho guardado passa a ser o do arquivo.
+    harness.state_mut().add_name = "Item com anexos".into();
+    harness.state_mut().save_form();
+    harness.run_steps(2);
+    assert!(harness.state().form_attachments.is_empty(), "os pendentes foram para o item");
+    let saved = std::fs::metadata(harness.state().path.trim()).expect("arquivo gravado").len();
+    assert_eq!(harness.state().vault_bytes, saved);
+
+    // Anexo novo no item salvo: o que já está no arquivo não conta de novo (sem aviso).
+    let saved_id = item_id(harness.state(), "Item com anexos");
+    harness.state_mut().attachments_chosen(&saved_id, vec![small.display().to_string()], &ctx);
+    wait_for_job(&mut harness);
+    assert!(harness.state().attach_warn.is_none(), "os anexos salvos estão no tamanho do arquivo");
+    assert_eq!(live_attachments(harness.state(), &saved_id), 3);
+}
+
+/// O cap por anexo (10 MiB) atua na leitura, antes do aviso: um arquivo de 200 MB nunca chega ao "Large vault".
+#[test]
+fn an_attachment_over_the_cap_is_refused_before_the_size_warning() {
+    let mut app = unlocked("attach-cap", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("attach-cap");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    persist_now(&mut app);
+    app.vault_bytes = crate::size_limit::VAULT_WARN_BYTES;
+    let big = dir.join("grande.bin");
+    std::fs::write(&big, vec![7u8; crate::jobs::MAX_ATTACHMENT_BYTES as usize + 1]).expect("grava o anexo grande");
+    let id = item_id(&app, "1lib.sk");
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    let ctx = harness.ctx.clone();
+
+    harness.state_mut().attachments_chosen(&id, vec![big.display().to_string()], &ctx);
+    wait_for_job(&mut harness);
+
+    assert!(harness.state().attach_warn.is_none(), "o cap de 10 MiB recusa antes do aviso de tamanho");
+    let err = harness.state().err.clone().expect("o arquivo grande é recusado");
+    assert!(err.contains("too large"), "{err}");
+    assert_eq!(live_attachments(harness.state(), &id), 0);
 }
