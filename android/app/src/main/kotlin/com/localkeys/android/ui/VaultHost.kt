@@ -198,8 +198,9 @@ fun VaultHost(
                     busy = state.busy,
                     vaultBytes = viewModel.vaultFileBytes,
                     onSave = { item ->
-                        viewModel.saveItem(item)
-                        stack = NavStack.afterSave(stack, item.id)
+                        // O editor só sai quando o cofre gravado já está no estado: o detalhe nasce com a lista de
+                        // anexos nova (e, se a gravação falhar, o editor fica aberto com as edições).
+                        viewModel.saveItem(item) { stack = NavStack.afterSave(stack, item.id) }
                     },
                     onCancel = ::pop,
                 )

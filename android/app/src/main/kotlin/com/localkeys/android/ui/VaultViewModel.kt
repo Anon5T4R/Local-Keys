@@ -657,21 +657,31 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Editar / criar / excluir itens ───────────────────────────────────
 
-    /** Cria (id novo) ou atualiza (id existente) um item e grava no arquivo. */
-    fun saveItem(item: Item) {
+    /**
+     * Cria (id novo) ou atualiza (id existente) um item e grava no arquivo.
+     *
+     * [onCommitted] roda na thread da interface **só depois** de o cofre gravado ser adotado no estado — é ali
+     * que a tela de detalhe é desenhada do cofre. Sair do editor antes da gravação deixava o detalhe com a
+     * lista de anexos de antes (num cofre grande, por segundos); e, se a gravação falhasse, o editor já tinha
+     * fechado. Falhou: nada de [onCommitted], o editor fica aberto com as edições e o erro.
+     */
+    fun saveItem(item: Item, onCommitted: () -> Unit = {}) {
         if (_state.value.vaultUri == null) return
         viewModelScope.launch(Dispatchers.Default) {
             _state.update { it.copy(busy = true, error = null) }
-            try {
+            val saved = try {
                 val isNew = repository.vault.items.none { it.id == item.id }
                 val updated = if (isNew) repository.addItem(item) else repository.updateItem(item)
                 persistAndCommit(
                     updated,
                     notice = str(if (isNew) R.string.msg_item_added else R.string.msg_item_updated),
                 )
+                true
             } catch (e: Exception) {
                 failSave(e, R.string.op_save_item)
+                false
             }
+            if (saved) withContext(Dispatchers.Main) { onCommitted() }
         }
     }
 

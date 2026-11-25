@@ -235,6 +235,7 @@
 	this is not a TOTP link (HOTP is not supported)	esto no es un enlace TOTP (HOTP no es compatible)
 	the link has no secret key	el enlace no trae la clave secreta
 	invalid key: it must be base32 (letters A-Z and digits 2-7)	clave no válida: debe ser base32 (letras A-Z y dígitos 2-7)
+	base32 (optional)	base32 (opcional)
 	key saved, but the QR asks for {params}. Local Keys makes 6-digit codes every 30 s (SHA-1), so the codes may not match.	clave guardada, pero el QR pide {params}. Local Keys genera códigos de 6 dígitos cada 30 s (SHA-1), así que los códigos pueden no coincidir.
 	{n} digits	{n} dígitos
 	current code: {code}	código actual: {code}

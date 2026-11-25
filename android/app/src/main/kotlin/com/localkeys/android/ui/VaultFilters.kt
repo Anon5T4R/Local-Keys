@@ -133,22 +133,59 @@ object VaultFilters {
 
     fun hasTotp(item: Item): Boolean = item.login?.totp?.isNotBlank() == true
 
+    /**
+     * Quantos caracteres a segunda linha da lista desenha. O Compose mede o texto TODO mesmo com `maxLines = 1`:
+     * uma nota de milhões de caracteres numa linha só estourava a memória do aparelho. O mesmo limite vale para
+     * todos os tipos.
+     */
+    const val SUBTITLE_MAX_CHARS = 200
+
     /** Linha de baixo da lista: usuário, bandeira e final do cartão, nome da pessoa, começo da nota. */
     fun subtitle(item: Item): String = when (item.kind) {
-        ItemKind.LOGIN -> item.login?.username?.takeIf { it.isNotBlank() }
-            ?: item.login?.uris?.firstOrNull()?.let(::hostOf)
-            ?: item.livePasskeys.firstOrNull()?.userName.orEmpty()
-        ItemKind.CARD -> item.card?.let { card ->
-            val digits = card.number.filter { it.isDigit() }
-            val last4 = if (digits.length >= 4) "•••• " + digits.takeLast(4) else ""
-            listOf(card.brand.trim(), last4).filter { it.isNotEmpty() }.joinToString("  ")
-                .ifEmpty { card.cardholder.trim() }
-        }.orEmpty()
-        ItemKind.IDENTITY -> item.identity?.let { id ->
-            listOf(id.firstName, id.lastName).filter { it.isNotBlank() }.joinToString(" ").ifBlank { id.email }
-        }.orEmpty()
-        ItemKind.NOTE -> item.notes.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        ItemKind.LOGIN -> clip(
+            item.login?.username?.takeIf { it.isNotBlank() }
+                ?: item.login?.uris?.firstOrNull()?.let(::hostOf)
+                ?: item.livePasskeys.firstOrNull()?.userName.orEmpty(),
+        )
+        ItemKind.CARD -> clip(
+            item.card?.let { card ->
+                val digits = card.number.filter { it.isDigit() }
+                val last4 = if (digits.length >= 4) "•••• " + digits.takeLast(4) else ""
+                listOf(card.brand.trim(), last4).filter { it.isNotEmpty() }.joinToString("  ")
+                    .ifEmpty { card.cardholder.trim() }
+            }.orEmpty(),
+        )
+        ItemKind.IDENTITY -> clip(
+            item.identity?.let { id ->
+                listOf(id.firstName, id.lastName).filter { it.isNotBlank() }.joinToString(" ").ifBlank { id.email }
+            }.orEmpty(),
+        )
+        ItemKind.NOTE -> notesPreview(item.notes)
     }
+
+    /**
+     * O começo da primeira linha não vazia das notas, no máximo [limit] caracteres — sem copiar a linha inteira
+     * (uma nota pode ter milhões de caracteres numa linha só) nem varrer o texto além do necessário para achar o
+     * começo: a varredura anda caractere a caractere e só a prévia (≤ [limit]) é copiada.
+     */
+    internal fun notesPreview(notes: String, limit: Int = SUBTITLE_MAX_CHARS): String {
+        var i = 0
+        while (i < notes.length) {
+            val c = notes[i]
+            if (c == '\n' || c.isWhitespace()) {
+                i++
+                continue
+            }
+            // Primeiro caractere visível: a prévia é daqui até o fim da linha (ou [limit]).
+            var end = i
+            while (end < notes.length && notes[end] != '\n' && end - i < limit) end++
+            return notes.substring(i, end).trimEnd()
+        }
+        return ""
+    }
+
+    /** Prefixo curto: o texto inteiro é medido pela lista mesmo com uma linha visível. */
+    private fun clip(text: String, limit: Int = SUBTITLE_MAX_CHARS): String = text.take(limit)
 
     /** "https://www.exemplo.com/login" → "www.exemplo.com" (só para exibir). */
     fun hostOf(uri: String): String {

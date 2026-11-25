@@ -23,16 +23,52 @@ class VaultFiltersTest {
         deletedAt: Long? = null,
         login: Login? = if (kind == ItemKind.LOGIN) Login("", "", emptyList(), "") else null,
         card: Card? = null,
+        identity: com.localkeys.android.data.vault.Identity? = null,
         notes: String = "",
         attachments: List<Attachment>? = null,
         passkeys: List<Passkey>? = null,
         customFields: List<CustomField>? = null,
     ) = Item(
-        id, kind, name, favorite, folderId, notes, 1, 1, deletedAt, login, card, null, null, customFields,
+        id, kind, name, favorite, folderId, notes, 1, 1, deletedAt, login, card, identity, null, customFields,
         attachments, passkeys = passkeys,
     )
 
     private val passkey = Passkey("cid", "github.com", "joao", "João", "uh", "k", createdAt = 1)
+
+    @Test
+    fun uma_nota_de_um_milhao_de_caracteres_numa_linha_vira_um_subtitulo_curto() {
+        val nota = item("n", "nota", kind = ItemKind.NOTE, notes = "x".repeat(1_000_000))
+
+        val subtitulo = VaultFilters.subtitle(nota)
+
+        assertEquals(VaultFilters.SUBTITLE_MAX_CHARS, subtitulo.length)
+        assertTrue("o começo da nota", subtitulo.all { it == 'x' })
+    }
+
+    @Test
+    fun o_subtitulo_da_nota_usa_a_primeira_linha_nao_vazia() {
+        val nota = item("n", "nota", kind = ItemKind.NOTE, notes = "\n   \n  primeira linha  \nsegunda")
+
+        assertEquals("primeira linha", VaultFilters.subtitle(nota))
+    }
+
+    @Test
+    fun o_limite_vale_para_todos_os_tipos() {
+        val limite = VaultFilters.SUBTITLE_MAX_CHARS
+        val login = item("l", "login", login = Login("u".repeat(1_000_000), "p", emptyList(), ""))
+        // Sem bandeira/número, o cartão mostra o titular.
+        val cartao = item("c", "cartao", kind = ItemKind.CARD, card = Card("t".repeat(1_000_000), "", "", "", ""))
+        val identidade = item(
+            "i",
+            "id",
+            kind = ItemKind.IDENTITY,
+            identity = com.localkeys.android.data.vault.Identity("n".repeat(1_000_000), "", "", "", ""),
+        )
+
+        assertEquals(limite, VaultFilters.subtitle(login).length)
+        assertEquals(limite, VaultFilters.subtitle(cartao).length)
+        assertEquals(limite, VaultFilters.subtitle(identidade).length)
+    }
 
     @Test
     fun favoritos_primeiro_depois_nome_sem_caixa() {

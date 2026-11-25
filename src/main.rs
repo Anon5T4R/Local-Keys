@@ -375,6 +375,16 @@ fn totp_error_text(reason: otpauth::Reason) -> Option<&'static str> {
     }
 }
 
+/// O motivo pelo qual o segredo guardado não gera código, com o MESMO texto do formulário (`totp_error_text`).
+/// Serve para a lista não mostrar o texto cru do núcleo (em português) no meio de uma interface em inglês; `None`
+/// quando o texto guardado é um segredo válido (aí a falha é outra, e o chamador mostra o erro cru).
+fn totp_list_error_text(secret: &str) -> Option<&'static str> {
+    match otpauth::parse(secret) {
+        otpauth::ParseResult::Invalid(reason) => totp_error_text(reason),
+        otpauth::ParseResult::Ok(_) => None,
+    }
+}
+
 /// O pedaço de `text` a partir do `otpauth://` (sem diferenciar maiúsculas), se houver — o link colado
 /// pode entrar no fim de uma chave que já estava no campo.
 fn otpauth_tail(text: &str) -> Option<&str> {
@@ -2900,7 +2910,7 @@ impl KeysApp {
                                     let edit = ui
                                         .add(
                                             line(&mut self.add_totp)
-                                                .hint_text("base32 (opcional)")
+                                                .hint_text(tr("base32 (optional)"))
                                                 .password(!self.reveal_totp)
                                                 .desired_width(field - 28.0),
                                         )
@@ -4318,17 +4328,20 @@ impl KeysApp {
                 ui.add(egui::Label::new(egui::RichText::new(&self.export_vault_path).monospace()).wrap());
             });
             ui.add_space(10.0);
-            let field = (ui.available_width() - 130.0).clamp(120.0, 220.0);
-            egui::Grid::new("export-vault-grid").num_columns(3).spacing([10.0, 8.0]).show(ui, |ui| {
+            // Campos em linhas horizontais (como o diálogo da senha do outro cofre): dentro de um `Grid` o `TextEdit`
+            // recebia largura zero e colapsava num quadradinho (24 px no teste de 480 px).
+            let field = (ui.available_width() - 130.0).clamp(120.0, 260.0);
+            ui.horizontal(|ui| {
                 let label = ui.label(tr("Password"));
                 ui.add(line(&mut self.export_vault_pass).password(!self.export_vault_reveal).desired_width(field - 28.0)).labelled_by(label.id);
                 if ghost(ui, if self.export_vault_reveal { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
                     self.export_vault_reveal = !self.export_vault_reveal;
                 }
-                ui.end_row();
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
                 let label = ui.label(tr("Confirm password"));
                 ui.add(line(&mut self.export_vault_confirm).password(!self.export_vault_reveal).desired_width(field - 28.0)).labelled_by(label.id);
-                ui.end_row();
             });
             if let Some(error) = &self.export_vault_err {
                 ui.add_space(6.0);
@@ -4841,7 +4854,13 @@ impl KeysApp {
                                                 });
                                             }
                                             Err(e) => {
-                                                ui.label(egui::RichText::new(format!("TOTP: {e}")).small().color(egui::Color32::LIGHT_RED));
+                                                // Motivo traduzido (o mesmo do formulário); o texto do núcleo só
+                                                // quando um segredo válido falha por outro motivo.
+                                                let text = match totp_list_error_text(secret) {
+                                                    Some(reason) => format!("TOTP: {reason}"),
+                                                    None => format!("TOTP: {e}"),
+                                                };
+                                                ui.label(egui::RichText::new(text).small().color(egui::Color32::LIGHT_RED));
                                             }
                                         }
                                     }

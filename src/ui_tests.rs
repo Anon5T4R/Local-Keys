@@ -1723,6 +1723,30 @@ fn the_totp_field_shows_a_live_preview() {
     assert!(preview.ends_with('s') && preview.contains("·"), "contagem regressiva: {preview}");
 }
 
+/// O erro de TOTP da LINHA da lista usa o mesmo motivo traduzido do formulário: o texto cru do núcleo (em
+/// português) não vaza para uma interface em inglês.
+#[test]
+fn the_list_totp_error_uses_the_shared_reason_text() {
+    assert_eq!(
+        crate::totp_list_error_text("!!! nao e base32 !!!"),
+        Some("invalid key: it must be base32 (letters A-Z and digits 2-7)"),
+        "chave que não é base32: o motivo do formulário"
+    );
+    assert_eq!(
+        crate::totp_list_error_text("otpauth://hotp/X?secret=JBSWY3DP&counter=1"),
+        Some("this is not a TOTP link (HOTP is not supported)"),
+        "HOTP guardado: o motivo do formulário"
+    );
+    assert_eq!(
+        crate::totp_list_error_text("otpauth://totp/X:y?algorithm=SHA1"),
+        Some("the link has no secret key"),
+        "link sem segredo: o motivo do formulário"
+    );
+    // Segredo válido (e vazio, que a lista nem mostra) não têm motivo a explicar.
+    assert_eq!(crate::totp_list_error_text("JBSWY3DP EHPK 3PXP"), None);
+    assert_eq!(crate::totp_list_error_text(""), None);
+}
+
 /// As capturas da fase B (TOTP): prévia do código com contagem, aviso de parâmetros fora do padrão e
 /// os botões de QR — claro e escuro, 340 e 1100. Só renderiza com `LOCALKEYS_QA_RENDER=1`.
 #[test]
@@ -2586,6 +2610,45 @@ fn unlocked_for_vault_export(name: &str, prefs: Prefs) -> (KeysApp, String, Stri
 /// KDF mínimo: o export não pode custar 1 s de Argon2id em cada rodada do gate.
 fn light_kdf() -> crate::crypto::KdfParams {
     crate::crypto::KdfParams { m_cost: 512, t_cost: 1, p_cost: 1 }
+}
+
+/// O diálogo "Export to vault" desenha os dois campos de senha com largura usável em 480 px (eles colapsavam num
+/// quadradinho dentro do `Grid`).
+#[test]
+fn the_export_vault_password_fields_have_a_usable_width_at_480() {
+    let (mut app, item_id, _folder) = unlocked_for_vault_export("vexport-width", Prefs::new("en", ThemeMode::Dark));
+    app.selection.select_only(&item_id);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().export_vault_chosen("C:\\tmp\\cofre-exportado.tkeys".into());
+    harness.run_steps(2);
+    assert!(harness.state().export_vault_open, "o diálogo das senhas abriu");
+
+    let fields: Vec<_> = harness.get_all_by_role(Role::PasswordInput).collect();
+    assert!(fields.len() >= 2, "os dois campos de senha estão na árvore: {}", fields.len());
+    for (i, field) in fields.iter().take(2).enumerate() {
+        let rect = field.rect();
+        assert!(rect.width() >= 150.0, "campo {i} com {} px (diálogo de 400 px)", rect.width());
+        assert!(harness.ctx.content_rect().contains_rect(rect), "campo {i} fora da janela: {rect:?}");
+    }
+}
+
+/// A barra da seleção mostra "Clear selection" DENTRO da janela em 480 px (antes a ação ficava cortada na borda).
+#[test]
+fn the_selection_bar_shows_clear_selection_inside_the_window_at_480() {
+    let mut app = unlocked("selbar-480", Prefs::new("en", ThemeMode::Dark));
+    app.selection.select_only(&item_id(&app, "1lib.sk"));
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    let clear = harness.get_by_label("Clear selection");
+    let rect = clear.rect();
+    let window = harness.ctx.content_rect();
+    assert!(window.contains_rect(rect), "Clear selection em {rect:?}, janela {window:?}");
+
+    clear.click();
+    harness.run_steps(2);
+    assert!(harness.state().selection.is_empty(), "o botão limpa a seleção");
 }
 
 /// A ação de exportar o cofre novo só existe com itens marcados (como as outras da barra de seleção).

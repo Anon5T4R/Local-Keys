@@ -106,6 +106,19 @@ pub fn is_trashed(item: &Value) -> bool {
     item.get("deletedAt").is_some_and(|deleted_at| !deleted_at.is_null() && deleted_at.as_i64() != Some(0))
 }
 
+/// Quantos caracteres da linha da lista (nome e resumo) a UI desenha. O backend de UI mede o texto TODO mesmo com
+/// uma linha só: uma nota de milhões de caracteres numa linha única travava a janela.
+pub const VIEW_TEXT_MAX_CHARS: usize = 200;
+
+/// O prefixo de até `max` CARACTERES de `text` (nunca corta um byte no meio de um UTF-8). Sem alocar quando o texto
+/// já cabe.
+fn clip_chars(text: &str, max: usize) -> &str {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => &text[..end],
+        None => text,
+    }
+}
+
 /// Visão de lista do vault (lixeira — `deletedAt` — fica fora, como no oficial).
 pub fn items_view(raw: &Value) -> Vec<ItemView> {
     raw.get("items")
@@ -119,7 +132,7 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                     let ri: RawItem = serde_json::from_value(it.clone()).ok()?;
                     Some(ItemView {
                         id: ri.id,
-                        name: ri.name,
+                        name: clip_chars(&ri.name, VIEW_TEXT_MAX_CHARS).to_string(),
                         kind: it.get("kind").and_then(Value::as_str).and_then(ItemKind::from_wire).unwrap_or(ItemKind::Note),
                         summary: list_summary(it),
                         username: ri.login.as_ref().map(|l| l.username.clone()),
@@ -139,16 +152,21 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
 
 /// A segunda linha da lista por tipo — o `subtitle` do `VaultFilters.kt` do Android, que é a referência:
 /// login → usuário; cartão → "bandeira  •••• 1234" (sem número suficiente, o titular); identidade → nome
-/// completo (sem ele, o e-mail); nota → a primeira linha não vazia.
+/// completo (sem ele, o e-mail); nota → a primeira linha não vazia. Tudo limitado a [`VIEW_TEXT_MAX_CHARS`]: o
+/// texto inteiro é medido pela UI mesmo com uma linha visível.
 fn list_summary(item: &Value) -> Option<String> {
     let text = |key: &str| item.get(key).and_then(Value::as_str).map(str::trim).unwrap_or_default();
-    match item.get("kind").and_then(Value::as_str).and_then(ItemKind::from_wire).unwrap_or(ItemKind::Note) {
-        ItemKind::Login => {
-            item.get("login").and_then(|l| l.get("username")).and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty()).map(str::to_string)
-        }
+    let summary = match item.get("kind").and_then(Value::as_str).and_then(ItemKind::from_wire).unwrap_or(ItemKind::Note) {
+        ItemKind::Login => item
+            .get("login")
+            .and_then(|l| l.get("username"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(|u| clip_chars(u, VIEW_TEXT_MAX_CHARS).to_string()),
         ItemKind::Card => {
             let card = item.get("card")?;
-            let brand = card.get("brand").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let brand = clip_chars(card.get("brand").and_then(Value::as_str).map(str::trim).unwrap_or_default(), VIEW_TEXT_MAX_CHARS);
             let digits: String = card.get("number").and_then(Value::as_str).unwrap_or_default().chars().filter(char::is_ascii_digit).collect();
             let last4 = if digits.chars().count() >= 4 {
                 let start = digits.char_indices().nth_back(3).map_or(0, |(i, _)| i);
@@ -157,19 +175,21 @@ fn list_summary(item: &Value) -> Option<String> {
                 String::new()
             };
             let joined = [brand, last4.as_str()].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join("  ");
-            let cardholder = card.get("cardholder").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let cardholder = clip_chars(card.get("cardholder").and_then(Value::as_str).map(str::trim).unwrap_or_default(), VIEW_TEXT_MAX_CHARS);
             Some(if joined.is_empty() { cardholder.to_string() } else { joined }).filter(|s| !s.is_empty())
         }
         ItemKind::Identity => {
             let id = item.get("identity")?;
-            let first = id.get("firstName").and_then(Value::as_str).map(str::trim).unwrap_or_default();
-            let last = id.get("lastName").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let first = clip_chars(id.get("firstName").and_then(Value::as_str).map(str::trim).unwrap_or_default(), VIEW_TEXT_MAX_CHARS);
+            let last = clip_chars(id.get("lastName").and_then(Value::as_str).map(str::trim).unwrap_or_default(), VIEW_TEXT_MAX_CHARS);
             let name = [first, last].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ");
-            let email = id.get("email").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let email = clip_chars(id.get("email").and_then(Value::as_str).map(str::trim).unwrap_or_default(), VIEW_TEXT_MAX_CHARS);
             Some(if name.is_empty() { email.to_string() } else { name }).filter(|s| !s.is_empty())
         }
-        ItemKind::Note => text("notes").lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string),
-    }
+        // `lines()` devolve fatias: uma linha gigante NÃO é copiada inteira, e o corte acontece antes do `to_string`.
+        ItemKind::Note => text("notes").lines().map(str::trim).find(|l| !l.is_empty()).map(|l| clip_chars(l, VIEW_TEXT_MAX_CHARS).to_string()),
+    }?;
+    Some(clip_chars(&summary, VIEW_TEXT_MAX_CHARS).to_string())
 }
 
 fn now_ms() -> i64 {
@@ -960,6 +980,26 @@ mod tests {
         let mut v = vault_com_item();
         v["items"][0]["deletedAt"] = json!(1700000000000i64);
         assert!(items_view(&v).is_empty());
+    }
+
+    /// Uma nota de milhões de caracteres numa linha só não chega inteira à lista: o texto desenhado é medido todo
+    /// pelo backend de UI, então nome e resumo são cortados em `VIEW_TEXT_MAX_CHARS` (sem cortar byte no meio).
+    #[test]
+    fn nome_e_resumo_gigantes_sao_cortados_na_visao_da_lista() {
+        let name = "n".repeat(1_000_000);
+        let notes = "x".repeat(1_000_000);
+        let mut v: Value = serde_json::from_str(EMPTY_VAULT).unwrap();
+        add_note(&mut v, NoteForm { name: &name, notes: &notes });
+
+        let view = items_view(&v);
+        let item = view.first().expect("um item");
+        assert_eq!(item.name.chars().count(), VIEW_TEXT_MAX_CHARS);
+        assert_eq!(item.summary.as_ref().map(|s| s.chars().count()), Some(VIEW_TEXT_MAX_CHARS));
+
+        // Acento (2 bytes) na fronteira: o corte por CARACTERE não parte o UTF-8.
+        let multibyte = "á".repeat(VIEW_TEXT_MAX_CHARS + 10);
+        assert_eq!(clip_chars(&multibyte, VIEW_TEXT_MAX_CHARS).chars().count(), VIEW_TEXT_MAX_CHARS);
+        assert_eq!(clip_chars("curto", VIEW_TEXT_MAX_CHARS), "curto");
     }
 
     /// `deletedAt = 0` é falsy no JS do oficial e o resto do app o trata como FORA da lixeira: o item tem de
