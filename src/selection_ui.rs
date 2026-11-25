@@ -161,36 +161,31 @@ impl KeysApp {
         let busy = self.job_label.is_some() || self.pickers.busy();
         let mut move_to: Option<Option<String>> = None;
         let mut export_vault = false;
-        // O rodapé vive num layout `bottom_up`: um `horizontal_wrapped` solto ali quebrava a segunda linha PARA BAIXO,
-        // fora da janela (o "Clear selection" ficava cortado). Um `vertical` mede a altura das linhas quebradas e o
-        // bloco sobe inteiro.
-        ui.vertical(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new(tr_n(count, "{n} selected", "{n} selected")).strong());
-                let menu = egui::Button::new(tr("Move to folder…"));
-                let _ = egui::containers::menu::MenuButton::from_button(menu).ui(ui, |ui| {
-                    if ui.button(tr("No folder")).clicked() {
-                        move_to = Some(None);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(tr_n(count, "{n} selected", "{n} selected")).strong());
+            let menu = egui::Button::new(tr("Move to folder…"));
+            let _ = egui::containers::menu::MenuButton::from_button(menu).ui(ui, |ui| {
+                if ui.button(tr("No folder")).clicked() {
+                    move_to = Some(None);
+                    ui.close();
+                }
+                for folder in &folders {
+                    if ui.button(&folder.name).clicked() {
+                        move_to = Some(Some(folder.id.clone()));
                         ui.close();
                     }
-                    for folder in &folders {
-                        if ui.button(&folder.name).clicked() {
-                            move_to = Some(Some(folder.id.clone()));
-                            ui.close();
-                        }
-                    }
-                });
-                // Exportar um cofre NOVO com a seleção (o nome dele é o do arquivo; a senha vem no diálogo seguinte).
-                if ui.add_enabled_ui(!busy, |ui| crate::ghost(ui, tr("Export to vault…"))).inner.clicked() {
-                    export_vault = true;
-                }
-                if crate::pill_danger(ui, tr("Delete selected")).clicked() {
-                    self.batch_delete_ask = Some(self.selection.len());
-                }
-                if crate::ghost(ui, tr("Clear selection")).clicked() {
-                    self.clear_selection();
                 }
             });
+            // Exportar um cofre NOVO com a seleção (o nome dele é o do arquivo; a senha vem no diálogo seguinte).
+            if ui.add_enabled_ui(!busy, |ui| crate::ghost(ui, tr("Export to vault…"))).inner.clicked() {
+                export_vault = true;
+            }
+            if crate::pill_danger(ui, tr("Delete selected")).clicked() {
+                self.batch_delete_ask = Some(self.selection.len());
+            }
+            if crate::ghost(ui, tr("Clear selection")).clicked() {
+                self.clear_selection();
+            }
         });
         if let Some(folder) = move_to {
             self.move_selected(folder);

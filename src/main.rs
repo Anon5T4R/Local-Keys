@@ -375,13 +375,14 @@ fn totp_error_text(reason: otpauth::Reason) -> Option<&'static str> {
     }
 }
 
-/// O motivo pelo qual o segredo guardado não gera código, com o MESMO texto do formulário (`totp_error_text`).
-/// Serve para a lista não mostrar o texto cru do núcleo (em português) no meio de uma interface em inglês; `None`
-/// quando o texto guardado é um segredo válido (aí a falha é outra, e o chamador mostra o erro cru).
-fn totp_list_error_text(secret: &str) -> Option<&'static str> {
+/// O código ao vivo de um segredo GRAVADO na linha da lista: a chave base32 crua ou o `secret` de um link
+/// `otpauth://…` (o mesmo que o formulário e o Android aceitam — a paridade fecha aqui). Na falha, o texto já vem
+/// no idioma da interface: o motivo do formulário quando o texto não serve; o erro cru do núcleo só quando um
+/// segredo válido falha por outro motivo. `Err(None)` = nada a mostrar (segredo vazio).
+fn totp_list_code(secret: &str) -> Result<totp::TotpCode, Option<String>> {
     match otpauth::parse(secret) {
-        otpauth::ParseResult::Invalid(reason) => totp_error_text(reason),
-        otpauth::ParseResult::Ok(_) => None,
+        otpauth::ParseResult::Ok(parsed) => totp::now(&parsed.secret).map_err(|e| Some(format!("TOTP: {e}"))),
+        otpauth::ParseResult::Invalid(reason) => Err(totp_error_text(reason).map(|msg| format!("TOTP: {msg}"))),
     }
 }
 
@@ -4788,6 +4789,21 @@ impl KeysApp {
         let view: Vec<&Row> = rows.iter().collect();
         let visible_ids: Vec<String> = view.iter().map(|row| row.id.clone()).collect();
 
+        // O rodapé (a barra da seleção ou a contagem) reserva o espaço dele ANTES da lista: com muitos itens o
+        // `ScrollArea` tomava toda a altura e a barra desenhada depois caía fora da janela. O painel de baixo mede
+        // a barra; a lista rola só no que sobra.
+        egui::containers::Panel::bottom("selection_footer")
+            .resizable(false)
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+            .show(ui, |ui| {
+                if self.selection.is_empty() {
+                    // O rodapé conta o cofre inteiro (não o que o popup/busca deixou na tela).
+                    ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), self.items.len())).small().weak());
+                } else {
+                    self.selection_bar(ui);
+                }
+            });
+
         if view.is_empty() {
             if self.items.is_empty() {
                 ui.label(egui::RichText::new(tr("empty — copy something")).weak());
@@ -4839,7 +4855,9 @@ impl KeysApp {
                                     // TOTP ao vivo: código + contagem (o repaint de
                                     // 500ms já está ligado quando há algum).
                                     if let Some(secret) = &row.totp {
-                                        match totp::now(secret) {
+                                        // Base32 crua ou link `otpauth://` gravado: o código sai do `secret` do
+                                        // link, como no formulário e no Android.
+                                        match totp_list_code(secret) {
                                             Ok(code) => {
                                                 ui.horizontal(|ui| {
                                                     ui.label(egui::RichText::new(code.code.clone()).monospace().strong());
@@ -4853,15 +4871,11 @@ impl KeysApp {
                                                     }
                                                 });
                                             }
-                                            Err(e) => {
-                                                // Motivo traduzido (o mesmo do formulário); o texto do núcleo só
-                                                // quando um segredo válido falha por outro motivo.
-                                                let text = match totp_list_error_text(secret) {
-                                                    Some(reason) => format!("TOTP: {reason}"),
-                                                    None => format!("TOTP: {e}"),
-                                                };
+                                            Err(Some(text)) => {
                                                 ui.label(egui::RichText::new(text).small().color(egui::Color32::LIGHT_RED));
                                             }
+                                            // Segredo vazio não tem o que explicar.
+                                            Err(None) => {}
                                         }
                                     }
                                     // Ações do item: ghost buttons (transparentes até
@@ -4909,18 +4923,6 @@ impl KeysApp {
                 }
             });
         }
-
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            if self.selection.is_empty() {
-                ui.horizontal(|ui| {
-                    // O rodapé conta o cofre inteiro (não o que o popup/busca deixou na tela).
-                    ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), self.items.len())).small().weak());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {});
-                });
-            } else {
-                self.selection_bar(ui);
-            }
-        });
         // O teclado da seleção é lido DEPOIS dos popups deste quadro (o ⋯, os filtros e o menu de mover do rodapé):
         // o `any_popup_open` do egui só enxerga o popup que já se desenhou no pass atual.
         self.selection_keys(ctx, &visible_ids);

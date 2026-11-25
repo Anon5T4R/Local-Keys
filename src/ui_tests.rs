@@ -77,6 +77,20 @@ fn unlocked_kinds(name: &str, prefs: Prefs) -> KeysApp {
     app
 }
 
+/// Um cofre destrancado com [count] logins: a lista fica mais alta que a janela.
+fn unlocked_with(count: usize, name: &str, prefs: Prefs) -> KeysApp {
+    let mut app = app(name, prefs);
+    let mut raw: serde_json::Value = serde_json::from_str(crate::vault::EMPTY_VAULT).expect("cofre vazio");
+    for i in 0..count {
+        let nome = format!("conta-{i:02}.exemplo.com");
+        let form = crate::vault::LoginForm { name: &nome, username: "joao", password: "x", totp: "", url: "", notes: "" };
+        crate::vault::add_login(&mut raw, form);
+    }
+    app.path = "C:\\Users\\qa\\Desktop\\meu-cofre.tkeys".into();
+    app.adopt(crate::crypto::test_session(), raw);
+    app
+}
+
 /// O id do item pelo nome (os helpers de cofre criam com id gerado).
 fn item_id(app: &KeysApp, name: &str) -> String {
     app.raw
@@ -99,8 +113,8 @@ fn node_text(node: &egui_kittest::Node<'_>) -> String {
 }
 
 // O kittest falha se algum texto da tela cair numa fonte sem o glyph (a "caixinha"): é o guarda dos emojis.
-fn harness_sized(app: KeysApp, width: f32) -> Harness<'static, KeysApp> {
-    Harness::builder().with_size(egui::vec2(width, 640.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+fn harness_wh(app: KeysApp, width: f32, height: f32) -> Harness<'static, KeysApp> {
+    Harness::builder().with_size(egui::vec2(width, height)).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut KeysApp| {
             egui_extras::install_image_loaders(ui.ctx());
             // O idioma vale por thread (a interface roda numa só): cada teste fixa o seu a cada quadro.
@@ -110,6 +124,10 @@ fn harness_sized(app: KeysApp, width: f32) -> Harness<'static, KeysApp> {
         },
         app,
     )
+}
+
+fn harness_sized(app: KeysApp, width: f32) -> Harness<'static, KeysApp> {
+    harness_wh(app, width, 640.0)
 }
 
 fn harness(app: KeysApp) -> Harness<'static, KeysApp> {
@@ -1723,28 +1741,43 @@ fn the_totp_field_shows_a_live_preview() {
     assert!(preview.ends_with('s') && preview.contains("·"), "contagem regressiva: {preview}");
 }
 
-/// O erro de TOTP da LINHA da lista usa o mesmo motivo traduzido do formulário: o texto cru do núcleo (em
-/// português) não vaza para uma interface em inglês.
+/// A lista gera o código de um link `otpauth://` GRAVADO (pelo `secret` do link), como o formulário e o
+/// Android; base32 puro continua valendo; HOTP e chave inválida saem com o motivo traduzido.
 #[test]
-fn the_list_totp_error_uses_the_shared_reason_text() {
+fn the_list_generates_the_code_from_a_stored_otpauth_link() {
+    let link = "otpauth://totp/GitHub:joao?secret=JBSWY3DPEHPK3PXP&issuer=GitHub";
+    // O caminho antigo mandava o texto gravado direto ao núcleo: o link não é base32, então dava erro (com o
+    // texto cru, em português, na lista).
+    assert!(crate::totp::now(link).is_err(), "o link não é base32 puro");
     assert_eq!(
-        crate::totp_list_error_text("!!! nao e base32 !!!"),
-        Some("invalid key: it must be base32 (letters A-Z and digits 2-7)"),
-        "chave que não é base32: o motivo do formulário"
+        match crate::otpauth::parse(link) {
+            crate::otpauth::ParseResult::Ok(p) => p.secret,
+            crate::otpauth::ParseResult::Invalid(r) => panic!("o link é válido: {r:?}"),
+        },
+        "JBSWY3DPEHPK3PXP",
+        "o código sai do `secret` do link"
+    );
+
+    let from_link = crate::totp_list_code(link).expect("link válido gera código");
+    assert_eq!(from_link.code.len(), 6);
+    assert!(from_link.code.chars().all(|c| c.is_ascii_digit()));
+    assert!(from_link.seconds_remaining >= 1 && from_link.seconds_remaining <= 30);
+
+    let from_b32 = crate::totp_list_code("JBSWY3DP EHPK 3PXP").expect("base32 puro gera código");
+    assert_eq!(from_b32.code.len(), 6, "base32 puro continua valendo");
+
+    assert_eq!(
+        crate::totp_list_code("otpauth://hotp/X?secret=JBSWY3DP&counter=1").err(),
+        Some(Some("TOTP: this is not a TOTP link (HOTP is not supported)".to_string())),
+        "HOTP: o motivo traduzido do formulário"
     );
     assert_eq!(
-        crate::totp_list_error_text("otpauth://hotp/X?secret=JBSWY3DP&counter=1"),
-        Some("this is not a TOTP link (HOTP is not supported)"),
-        "HOTP guardado: o motivo do formulário"
+        crate::totp_list_code("!!! nao e base32 !!!").err(),
+        Some(Some("TOTP: invalid key: it must be base32 (letters A-Z and digits 2-7)".to_string())),
+        "chave que não serve: o motivo traduzido do formulário"
     );
-    assert_eq!(
-        crate::totp_list_error_text("otpauth://totp/X:y?algorithm=SHA1"),
-        Some("the link has no secret key"),
-        "link sem segredo: o motivo do formulário"
-    );
-    // Segredo válido (e vazio, que a lista nem mostra) não têm motivo a explicar.
-    assert_eq!(crate::totp_list_error_text("JBSWY3DP EHPK 3PXP"), None);
-    assert_eq!(crate::totp_list_error_text(""), None);
+    // Segredo vazio: nada a mostrar na linha.
+    assert_eq!(crate::totp_list_code("").err(), Some(None));
 }
 
 /// As capturas da fase B (TOTP): prévia do código com contagem, aviso de parâmetros fora do padrão e
@@ -2649,6 +2682,28 @@ fn the_selection_bar_shows_clear_selection_inside_the_window_at_480() {
     clear.click();
     harness.run_steps(2);
     assert!(harness.state().selection.is_empty(), "o botão limpa a seleção");
+}
+
+/// Com a lista mais alta que a janela (10 itens, 480×660 e 480×780), o rodapé reserva o próprio espaço antes da
+/// lista: o "Clear selection" fica dentro da janela e funciona. Antes, o `ScrollArea` tomava toda a altura e a
+/// barra desenhada depois caía fora.
+#[test]
+fn the_selection_bar_fits_in_the_window_with_a_long_list() {
+    for (width, height) in [(480.0, 660.0), (480.0, 780.0)] {
+        let mut app = unlocked_with(10, "selbar-long", Prefs::new("en", ThemeMode::Dark));
+        app.selection.select_only(&item_id(&app, "conta-00.exemplo.com"));
+        let mut harness = harness_wh(app, width, height);
+        harness.run_steps(2);
+
+        let clear = harness.get_by_label("Clear selection");
+        let rect = clear.rect();
+        let window = harness.ctx.content_rect();
+        assert!(window.contains_rect(rect), "Clear selection em {rect:?}, janela {window:?} ({width}×{height})");
+
+        clear.click();
+        harness.run_steps(2);
+        assert!(harness.state().selection.is_empty(), "o botão limpa a seleção ({width}×{height})");
+    }
 }
 
 /// A ação de exportar o cofre novo só existe com itens marcados (como as outras da barra de seleção).
