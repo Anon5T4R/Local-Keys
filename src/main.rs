@@ -819,7 +819,21 @@ fn ghost_ink_named(ui: &mut egui::Ui, label: &str, accessible: &str, ink: egui::
     resp
 }
 
-/// Como `ghost_ink_named`, mas o texto visível TRUNCA com reticências numa largura máxima — chips de
+/// O texto de um tooltip em linhas de até [largura] caracteres (sem partir um caractere UTF-8): nomes
+/// muito longos numa palavra só precisam de um tooltip estreito, que caiba na janela de 480 px.
+fn tooltip_curto(texto: &str, largura: usize) -> String {
+    let mut linhas: Vec<&str> = Vec::new();
+    let mut resto = texto;
+    while resto.chars().count() > largura {
+        let corte = resto.char_indices().nth(largura).map_or(resto.len(), |(i, _)| i);
+        linhas.push(&resto[..corte]);
+        resto = &resto[corte..];
+    }
+    linhas.push(resto);
+    linhas.join("\n")
+}
+
+/// Como `ghost_ink_named`, mas o texto visível TRUNCA com reticências numa largura máxima - chips de
 /// pastas com nome longo não podem inflar a linha nem sair da janela (D02 do teste independente). O
 /// nome acessível e o tooltip ficam com o nome inteiro.
 fn ghost_ink_elided(ui: &mut egui::Ui, label: &str, accessible: &str, ink: egui::Color32, max_width: f32) -> egui::Response {
@@ -4789,7 +4803,9 @@ impl KeysApp {
                 if chip.clicked() {
                     self.set_folder_filter(id.clone());
                 }
-                chip.on_hover_text(nome);
+                // O tooltip quebra o nome em linhas curtas: uma "palavra" de 100+ caracteres abria num tooltip
+                // largo e saía pela borda da janela de 480 px quando o chip está à direita.
+                chip.on_hover_text(tooltip_curto(nome, 32));
             }
         });
 
@@ -5099,6 +5115,19 @@ mod tests {
         assert!(app.filters.is_clear(), "trancar deixa os filtros limpos");
         assert!(app.selection.is_empty(), "trancar limpa a seleção da lista");
         assert!(app.selection_anchor.is_none());
+    }
+
+    /// O tooltip de um nome muito longo quebra em linhas curtas, sem partir um caractere de acento ou emoji.
+    #[test]
+    fn o_tooltip_de_nome_longo_quebra_em_linhas_curtas() {
+        let nome = "Pasta de arquivamento do departamento de transporte e logística 🚗".repeat(3);
+        let texto = tooltip_curto(&nome, 32);
+        for linha in texto.lines() {
+            assert!(linha.chars().count() <= 32, "linha com {} caracteres", linha.chars().count());
+        }
+        assert_eq!(texto.lines().count(), 7, "198 caracteres em linhas de 32");
+        assert_eq!(nome.replace('\n', ""), texto.replace('\n', ""), "o tooltip não perde nem repete caractere");
+        assert_eq!(tooltip_curto("Curta", 32), "Curta", "nome curto fica inteiro");
     }
 
     /// O caminho dos diálogos de junção fica legível: cabe, inteiro; não cabe, corta NO MEIO
