@@ -12,7 +12,7 @@ use crate::prefs::Prefs;
 
 use crate::{FormCustomField, KeysApp, NewKind};
 
-/// Pasta temporária própria do teste (o config.json de teste vai para lá).
+/// Pasta temporária própria do teste (o `config.json` e o `state.json` de teste vão para lá).
 fn scratch(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     std::env::temp_dir().join(format!("local-keys-ui-{name}-{nanos}"))
@@ -20,7 +20,9 @@ fn scratch(name: &str) -> PathBuf {
 
 fn app(name: &str, prefs: Prefs) -> KeysApp {
     let mut app = KeysApp::bare(prefs);
+    // Nunca o config/state do usuário: cada `cargo test` trocaria o último cofre aberto.
     app.config_file = scratch(name).join("config.json");
+    app.state_file = scratch(name).join("state.json");
     app
 }
 
@@ -2704,6 +2706,22 @@ fn the_selection_bar_fits_in_the_window_with_a_long_list() {
         harness.run_steps(2);
         assert!(harness.state().selection.is_empty(), "o botão limpa a seleção ({width}×{height})");
     }
+}
+
+/// O "último cofre aberto" gravado por um teste vai para a pasta de rascunho, nunca para o `state.json` do usuário:
+/// cada `cargo test` trocava o cofre que o app abria de verdade.
+#[test]
+fn the_last_vault_path_of_a_test_never_touches_the_user_state() {
+    let app = unlocked("state-file", Prefs::new("en", ThemeMode::Dark));
+    let scratch_state = app.state_file.clone();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    // O que importa: nenhum caminho da suíte aponta para o state.json do usuário, e o app de verdade aponta.
+    assert_ne!(scratch_state, crate::state_path(), "o state.json do teste é o do usuário");
+    assert!(harness.state().state_file != crate::state_path());
+    let real = KeysApp::bare(Prefs::new("en", ThemeMode::Dark));
+    assert_eq!(real.state_file, crate::state_path(), "o app de verdade grava no state.json do usuário");
 }
 
 /// A ação de exportar o cofre novo só existe com itens marcados (como as outras da barra de seleção).

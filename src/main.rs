@@ -829,17 +829,17 @@ fn bitwarden_encrypted(text: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Último cofre aberto (pra pré-preencher o caminho e alimentar o quick mode).
+/// Último cofre aberto (pra pré-preencher o caminho e alimentar o quick mode). [KeysApp::state_file] diz onde:
+/// os testes apontam para uma pasta temporária, senão cada `cargo test` trocaria o cofre do usuário.
 fn state_path() -> std::path::PathBuf {
     config_dir(APP_ID).join("state.json")
 }
 
-fn remember_last_path(path: &str) {
-    let p = state_path();
-    if let Some(dir) = p.parent() {
+fn remember_last_path(file: &std::path::Path, path: &str) {
+    if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&p, serde_json::json!({ "lastPath": path }).to_string());
+    let _ = std::fs::write(file, serde_json::json!({ "lastPath": path }).to_string());
 }
 
 fn last_path() -> Option<String> {
@@ -1162,6 +1162,8 @@ struct KeysApp {
     palette: craft_palette::Palette,
     /// Onde o config.json é gravado (os testes apontam para uma pasta temporária).
     config_file: std::path::PathBuf,
+    /// Onde o `state.json` é gravado (último cofre aberto); os testes apontam para uma pasta temporária.
+    state_file: std::path::PathBuf,
     /// Quantas gravações deram certo (só nos testes: afirma que o lote grava UMA vez).
     #[cfg(test)]
     pub(crate) persist_count: usize,
@@ -1277,6 +1279,7 @@ impl KeysApp {
             merge_plan: None,
             palette: craft_palette::Palette::default(),
             config_file: config_dir(APP_ID).join("config.json"),
+            state_file: config_dir(APP_ID).join("state.json"),
             #[cfg(test)]
             persist_count: 0,
         }
@@ -1465,7 +1468,7 @@ impl KeysApp {
                 Ok(raw) => {
                     self.path = path.clone();
                     self.adopt(session, raw);
-                    remember_last_path(&path);
+                    remember_last_path(&self.state_file, &path);
                 }
                 Err(_) => self.err = Some(tr("the vault is not valid JSON").into()),
             },
@@ -1917,7 +1920,7 @@ impl KeysApp {
         self.path = destino.display().to_string();
         // O arquivo novo tem os mesmos bytes selados: o tamanho guardado acompanha o caminho novo (aviso de anexo).
         self.vault_bytes = sealed.len() as u64;
-        remember_last_path(&self.path);
+        remember_last_path(&self.state_file, &self.path);
         self.err = None;
         self.notice(tr("copy checked — this file is the vault now").to_string());
     }
@@ -2623,7 +2626,7 @@ impl KeysApp {
                 }
                 self.path = path.clone();
                 self.adopt(session, raw);
-                remember_last_path(&path);
+                remember_last_path(&self.state_file, &path);
                 self.quick_ativa = self.path_has_stored_key();
             }
             JobResult::Unlocked(Err(e)) => self.err = Some(self.job_error(e)),
@@ -2639,7 +2642,7 @@ impl KeysApp {
                         }
                         self.path = path.clone();
                         self.adopt(session, raw);
-                        remember_last_path(&path);
+                        remember_last_path(&self.state_file, &path);
                     }
                     Err(e) => self.err = Some(e),
                 }
