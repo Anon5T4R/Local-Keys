@@ -99,7 +99,7 @@ function ConvertTo-RtfText([string] $Text) {
 }
 $LicenseRtf = Join-Path $Stage 'license.rtf'
 $rtf = '{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss\fcharset0 Tahoma;}}\viewkind4\uc1\pard\sa120\f0\fs16 ' +
-  ('\b LocalKeys\b0\par\par ' + (ConvertTo-RtfText 'LocalKeys is free software: a 100% local and offline password manager. Licensed under the MIT License or the Apache License 2.0, at your option (MIT OR Apache-2.0), with no warranty. The full license texts are the LICENSE-MIT and LICENSE-APACHE files shipped with the package. Source: https://github.com/Anon5T4R/Local-Keys.')) +
+  ('\b LocalKeys\b0\par\par ' + (ConvertTo-RtfText 'LocalKeys is free software: a 100% local and offline password manager. Licensed under the MIT License or the Apache License 2.0, at your option (MIT OR Apache-2.0), with no warranty. The full license texts are the LICENSE-MIT and LICENSE-APACHE files shipped with the package. Source: https://github.com/Styx-Studios/Local-Keys.')) +
   "\par`r`n}`r`n"
 [System.IO.File]::WriteAllText($LicenseRtf, $rtf, [System.Text.Encoding]::ASCII)
 

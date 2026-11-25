@@ -33,9 +33,9 @@
 
     <Icon Id="LocalKeysIcon.ico" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="LocalKeysIcon.ico" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Anon5T4R/Local-Keys" />
-    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Anon5T4R/Local-Keys/releases" />
-    <Property Id="ARPHELPLINK" Value="https://github.com/Anon5T4R/Local-Keys/issues" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Styx-Studios/Local-Keys" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/Styx-Studios/Local-Keys/releases" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Styx-Studios/Local-Keys/issues" />
 
     <!-- Installer UI: WixUI_Minimal is welcome + license, progress, then a finish page so people
          can see the install worked. Its dialogs and bitmaps are WiX's own (WixToolset.UI.wixext);

@@ -37,7 +37,7 @@ version = "0.15.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish.workspace = true
-repository = "https://github.com/Anon5T4R/Local-Keys"
+repository = "https://github.com/Styx-Studios/Local-Keys"
 description = "Gerenciador de senhas 100% local e offline da suíte Local"
 
 [build-dependencies]

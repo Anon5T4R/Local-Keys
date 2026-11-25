@@ -2524,7 +2524,7 @@ fn fake_release() -> craft_update::Release {
         version: craft_update::parse_version("99.0.0"),
         name: "Local Keys v99.0.0".into(),
         published_at: None,
-        html_url: "https://github.com/Anon5T4R/Local-Keys/releases/tag/v99.0.0".into(),
+        html_url: "https://github.com/Styx-Studios/Local-Keys/releases/tag/v99.0.0".into(),
         notes: String::new(),
         prerelease: false,
         assets: Vec::new(),

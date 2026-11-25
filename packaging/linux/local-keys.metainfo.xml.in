@@ -23,10 +23,10 @@
   <launchable type="desktop-id">local-keys.desktop</launchable>
   <icon type="stock">local-keys</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://github.com/Anon5T4R/Local-Keys</url>
-  <url type="bugtracker">https://github.com/Anon5T4R/Local-Keys/issues</url>
-  <url type="help">https://github.com/Anon5T4R/Local-Keys</url>
-  <url type="contact">https://github.com/Anon5T4R/Local-Keys/issues</url>
+  <url type="homepage">https://github.com/Styx-Studios/Local-Keys</url>
+  <url type="bugtracker">https://github.com/Styx-Studios/Local-Keys/issues</url>
+  <url type="help">https://github.com/Styx-Studios/Local-Keys</url>
+  <url type="contact">https://github.com/Styx-Studios/Local-Keys/issues</url>
   <categories>
     <category>Utility</category>
     <category>Security</category>

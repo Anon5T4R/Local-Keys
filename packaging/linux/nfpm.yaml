@@ -14,7 +14,7 @@ section: utils
 priority: optional
 maintainer: ${LOCALKEYS_MAINTAINER}
 vendor: LocalKeys contributors
-homepage: https://github.com/Anon5T4R/Local-Keys
+homepage: https://github.com/Styx-Studios/Local-Keys
 license: MIT OR Apache-2.0
 description: |-
   Password manager that works 100% locally and offline.

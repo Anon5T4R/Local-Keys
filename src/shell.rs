@@ -117,7 +117,7 @@ impl KeysApp {
             ui.add_space(4.0);
             ui.strong(tr("About Local Keys"));
             ui.label(tr_fmt("version {version}", &[("version", env!("CARGO_PKG_VERSION"))]));
-            ui.hyperlink_to("github.com/Anon5T4R/Local-Keys", env!("CARGO_PKG_REPOSITORY"));
+            ui.hyperlink_to("github.com/Styx-Studios/Local-Keys", env!("CARGO_PKG_REPOSITORY"));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let checking = matches!(status, Status::Checking);
