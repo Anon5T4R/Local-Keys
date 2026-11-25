@@ -135,16 +135,22 @@ fn visuals(t: &Tokens) -> egui::Visuals {
     v
 }
 
-/// Fundo da linha marcada na seleção múltipla: a mistura do accent sobre a base precisa se distinguir
-/// do fundo nos DOIS temas (pedido 030, item 4 — o `×0,16` antigo quase não aparecia). No escuro a
-/// mistura sobe: escurecer o accent pouco clareia nada sobre uma base já escura.
+/// Fundo da linha marcada na seleção múltipla: o lavado SUTIL de antes (×0,16), e só no claro — a
+/// revisão do pedido 030 (item 4) trocou o destaque forte pela BARRA do accent na borda esquerda +
+/// contorno: no escuro qualquer lavado levanta o fundo e derruba o texto claro da linha (o subtítulo
+/// `.small().weak()` caía para ~2:1 com o lavado forte).
 pub fn selected_row_fill(accent: Color32, dark: bool) -> Color32 {
-    accent.gamma_multiply(if dark { 0.55 } else { 0.32 })
+    if dark { Color32::TRANSPARENT } else { accent.gamma_multiply(0.16) }
 }
 
 /// Contorno da linha marcada: o traço do accent completo fecha a seleção em volta da linha.
 pub fn selected_row_stroke(accent: Color32) -> egui::Stroke {
     egui::Stroke::new(1.0, accent)
+}
+
+/// A barra do accent na borda esquerda da linha marcada (o traço forte da seleção).
+pub fn selected_row_bar(accent: Color32) -> Color32 {
+    accent
 }
 
 #[cfg(test)]
@@ -185,26 +191,48 @@ mod tests {
         }
     }
 
-    /// A linha marcada da seleção múltipla lê-se como marcada nos DOIS temas: o fundo (accent misturado na
-    /// base) se distingue da base por contraste de luminância e o contorno é visível. Os valores antigos
-    /// (`×0,16` nos dois temas) davam ~1,41:1 no claro e ~1,35:1 no escuro — o pedido 030 (item 4) pediu
-    /// destaque claro; o limiar 1,45 reprova os dois antigos e aprova os dois novos (1,98 e 3,31).
+    /// A linha marcada da seleção múltipla não sacrifica o texto dela e ainda se distingue. O egui
+    /// compõe em LINEAR com alfa pré-multiplicado: a mistura tem que ser `Rgba::blend` (o teste antigo
+    /// misturava em espaço gama e dava número otimista). O fundo da linha é o lavado sutil de antes
+    /// (≈1,14:1 no claro, inalterado no escuro); o destaque novo é a barra + contorno, desenhados na
+    /// linha, não testáveis por cor. O que PRECISA continuar de pé é o texto: o subtítulo fraco
+    /// (`.small().weak()` = o texto lavado a 60%) segue ≥ 4,5:1 sobre a linha marcada nos dois temas.
     #[test]
     fn the_selected_row_reads_as_selected_in_both_themes() {
-        let mix = |over: Color32, base: Color32| {
-            let a = f64::from(over.a()) / 255.0;
-            let ch = |o: u8, b: u8| (f64::from(o) * a + f64::from(b) * (1.0 - a)).round() as u8;
-            Color32::from_rgb(ch(over.r(), base.r()), ch(over.g(), base.g()), ch(over.b(), base.b()))
-        };
+        let luminancia = |rgba: egui::Rgba| 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2];
         for tokens in [Tokens::light(), Tokens::dark()] {
             let tema = if tokens.dark { "escuro" } else { "claro" };
-            let fundo = mix(selected_row_fill(tokens.accent, tokens.dark), tokens.base);
-            let ratio = contrast(fundo, tokens.base);
-            assert!(ratio >= 1.45, "fundo da linha marcada no tema {tema}: {ratio:.2}:1 com a base (precisa de ≥ 1,45)");
+
+            // O fundo da linha marcada: a base com o lavado por cima (a composição real do egui).
+            let fundo = egui::Rgba::from(tokens.base).blend(egui::Rgba::from(selected_row_fill(tokens.accent, tokens.dark)));
+            let fundo_base = egui::Rgba::from(tokens.base);
+            let ratio_fundo = {
+                let (alto, baixo) = if luminancia(fundo) >= luminancia(fundo_base) { (fundo, fundo_base) } else { (fundo_base, fundo) };
+                (luminancia(alto) + 0.05) / (luminancia(baixo) + 0.05)
+            };
+            assert!(
+                if tokens.dark { ratio_fundo <= 1.05 } else { ratio_fundo >= 1.08 },
+                "fundo da linha marcada no tema {tema}: {ratio_fundo:.2}:1 com a base (escuro inalterado, claro com o lavado sutil)"
+            );
+
+            // O texto fraco (`.small().weak()` = a cor do texto lavada a 60%): o contraste da COR do
+            // texto contra a linha marcada (a aplicação usual do WCAG, cor × fundo).
+            let texto_fraco = egui::Color32::from_rgb(
+                (f32::from(tokens.text.r()) * 0.6).round() as u8,
+                (f32::from(tokens.text.g()) * 0.6).round() as u8,
+                (f32::from(tokens.text.b()) * 0.6).round() as u8,
+            );
+            let ratio_texto = {
+                let texto_lin = egui::Rgba::from(texto_fraco);
+                let (alto, baixo) = if luminancia(fundo) >= luminancia(texto_lin) { (fundo, texto_lin) } else { (texto_lin, fundo) };
+                (luminancia(alto) + 0.05) / (luminancia(baixo) + 0.05)
+            };
+            assert!(ratio_texto >= 4.5, "texto fraco sobre a linha marcada no tema {tema}: {ratio_texto:.2}:1 (precisa de ≥ 4,5)");
 
             let stroke = selected_row_stroke(tokens.accent);
             assert!(stroke.width > 0.0, "contorno da linha marcada no tema {tema}: largura zero");
             assert!(stroke.color.a() > 0, "contorno da linha marcada no tema {tema}: transparente");
+            assert!(selected_row_bar(tokens.accent).a() == 255, "barra da borda esquerda no tema {tema}: transparente");
         }
     }
 }

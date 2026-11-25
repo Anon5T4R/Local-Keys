@@ -813,8 +813,8 @@ fn selector_text(harness: &Harness<'_, KeysApp>) -> String {
 /// fim do corpo). No egui o primeiro clique fora de um popup aberto só fecha o popup (não chega ao botão de
 /// baixo) — como na mão, a pessoa clica no formulário antes de Salvar.
 fn close_type_popup(harness: &mut Harness<'_, KeysApp>) {
-    harness.get_by_label("Custom fields").click();
-    harness.run_steps(2);
+    // O Esc fecha só a popup do seletor: o formulário ignora Esc enquanto há popup aberto.
+    press(harness, egui::Key::Escape, egui::Modifiers::NONE);
 }
 
 /// Na edição o tipo vira um seletor com as quatro opções, começando no tipo atual do item.
@@ -2708,17 +2708,26 @@ fn the_selection_bar_fits_in_the_window_with_a_long_list() {
     }
 }
 
-/// Com a lista alta (30 itens) ROLADA até o fim, nenhuma linha invade a faixa do rodapé: o `ScrollArea` da
-/// lista fica preso à área entre a régua do cabeçalho e o rodapé. Antes do painel reservar o próprio espaço
-/// (1203753), o viewport da lista descia até o fundo da janela e as linhas roladas pintavam por cima do
-/// "Items: N" — o teste trava essa reserva; a falha dele contra a forma antiga (rodapé desenhado sem painel)
-/// está anotada no relatório do pedido 030. E com o resumo da junção aberto o rodapé inteiro sai da frente
-/// (item 3): nada de contagem ou barra pingando atrás do diálogo.
+/// Item 2 do 030 em duas partes. O defeito do 027 era a LASCA de linha cortada pelo rolamento no TOPO da
+/// área da lista — logo sob a busca — lida como vazamento: a régua agora delimita o topo da área e está
+/// travada aqui pelo nó Separador entre a busca e a primeira linha. A reserva do rodapé (painel de baixo,
+/// 1203753) segue travada: nenhuma linha invade a faixa do rodapé com a lista rolada até o fim. E com o
+/// resumo da junção aberto o rodapé inteiro sai da frente (item 3): nada pingando atrás do diálogo.
 #[test]
 fn the_scrolled_list_stays_out_of_the_footer_strip_even_with_a_modal_open() {
     let app = unlocked_with(30, "lista-rodape", Prefs::new("en", ThemeMode::Dark));
     let mut harness = harness_wh(app, 480.0, 660.0);
     harness.run_steps(2);
+
+    // A régua existe como nó Separador ENTRE a busca e a primeira linha (o `ui.separator()` não
+    // registra nada na árvore — por isso a régua é desenhada à mão com `WidgetInfo`).
+    let busca = harness.get_all_by_role(Role::TextInput).map(|n| n.rect()).next().expect("o campo de busca da lista");
+    let primeira = harness.get_by_label_contains("conta-00.exemplo.com").rect();
+    let tem_regua = harness.root().children_recursive().any(|node| {
+        node.accesskit_node().role() == Role::Splitter
+            && node.accesskit_node().bounding_box().is_some_and(|r| (r.y0 as f32) >= busca.bottom() && (r.y1 as f32) <= primeira.top())
+    });
+    assert!(tem_regua, "a régua (nó Separador) entre a busca e a lista sumiu");
 
     // Rola a lista até o fim: o ponteiro precisa estar sobre ela para a roda rolar (delta em pontos:
     // 80 × 30 pt = 2400 pt, mais que a altura do conteúdo de 30 linhas, para garantir o fim do rolamento).

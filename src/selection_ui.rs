@@ -163,8 +163,10 @@ impl KeysApp {
         let mut export_vault = false;
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new(tr_n(count, "{n} selected", "{n} selected")).strong());
-            let menu = egui::Button::new(tr("Move to folder…"));
-            let _ = egui::containers::menu::MenuButton::from_button(menu).ui(ui, |ui| {
+            // A popup abre ACIMA da barra (TOP_START): na base da janela ela abria para baixo e ficava
+            // cortada pela borda da janela (pedido 030, revisão — o mover a 1000×660).
+            let menu = ui.add(egui::Button::new(tr("Move to folder…")));
+            let _ = egui::Popup::menu(&menu).align(egui::RectAlign::TOP_START).show(|ui| {
                 if ui.button(tr("No folder")).clicked() {
                     move_to = Some(None);
                     ui.close();
@@ -235,6 +237,7 @@ impl KeysApp {
             || self.gen_open
             || self.change_open
             || self.attach_item.is_some()
+            || self.attach_warn.is_some()
             || self.folders_open
             || self.folder_new_open
             || self.trash_open
@@ -244,6 +247,7 @@ impl KeysApp {
             || self.merge_open
             || self.merge_plan.is_some()
             || self.settings_open
+            || self.palette.is_open()
             // O prompt do atualizador (craft_update) é um modal do crate: enquanto ele está aberto, o teclado da
             // seleção não pode apagar por baixo dele.
             || self.updater.prompt_open()

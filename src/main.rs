@@ -763,16 +763,19 @@ fn text_width(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> f32 {
 /// Caminho longo legível num diálogo: mantém o começo (a unidade e o usuário) e o fim (o arquivo), com
 /// reticência NO MEIO. O `.truncate()` do egui corta no fim — que é justo onde está o nome do arquivo.
 fn caminho_do_meio(path: &str, max_chars: usize) -> String {
-    let total = path.chars().count();
-    if total <= max_chars {
+    let chars: Vec<char> = path.chars().collect();
+    if chars.len() <= max_chars {
         return path.to_owned();
     }
+    // Orçamento mínimo: não há espaço para reticência no meio — corta no fim mesmo (sempre ≤ max_chars).
+    if max_chars <= 3 {
+        return chars[..max_chars].iter().collect();
+    }
     // Sem a reticência: ~40% do começo, ~60% do fim (o nome do arquivo é o que importa).
-    let keep = max_chars.saturating_sub(1);
+    let keep = max_chars - 1;
     let inicio = (keep * 2 / 5).max(1);
     let fim = (keep - inicio).max(1);
-    let chars: Vec<char> = path.chars().collect();
-    format!("{}…{}", chars[..inicio].iter().collect::<String>(), chars[total - fim..].iter().collect::<String>())
+    format!("{}…{}", chars[..inicio].iter().collect::<String>(), chars[chars.len() - fim..].iter().collect::<String>())
 }
 
 /// Uma linha de anexo: o nome à esquerda e, ao lado, o tamanho e os botões ([actions], que ocupam
@@ -2863,26 +2866,6 @@ impl KeysApp {
                     if type_changed {
                         self.form_err = None;
                     }
-                    // Nada some em silêncio: os campos que o tipo novo não tem viram campos personalizados.
-                    if target != kind {
-                        let skin = Skin::of(ui);
-                        ui.label(
-                            egui::RichText::new(tr(
-                                "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.",
-                            ))
-                            .small()
-                            .color(skin.warn),
-                        );
-                        // O TOTP não dá para "levar" como campo oculto e continuar gerando código: o item deixa de
-                        // gerar. Só avisa quando é o caso do item aberto.
-                        if kind == vault::ItemKind::Login && target != vault::ItemKind::Login && !self.add_totp.trim().is_empty() {
-                            ui.label(
-                                egui::RichText::new(tr("The TOTP secret becomes a hidden field, and this item stops generating codes."))
-                                    .small()
-                                    .color(skin.warn),
-                            );
-                        }
-                    }
                 }
                 // Item novo (o tipo veio do "+") ou `kind` desconhecido no arquivo: crachá fixo, como antes.
                 None => {
@@ -2894,7 +2877,32 @@ impl KeysApp {
             ui.add_space(8.0);
             // Com os campos por tipo + campos personalizados o diálogo passa da altura mínima da
             // janela: a área central rola (os botões ficam fora dela, sempre visíveis).
+            let alvo = self.form_target_kind;
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                // Os avisos da troca de tipo moram DENTRO da rolagem: em corpo normal eles não caberiam
+                // no miolo fixo da janela mínima (os botões Salvar/Cancelar sairiam da tela — o teste
+                // the_change_type_form_keeps_its_buttons_in_the_narrow_window trava isso).
+                if let Some(target) = alvo
+                    && target != kind {
+                    let skin = Skin::of(ui);
+                    // Corpo normal (o `.small()` do print do 027 não era legível). Nada some em
+                    // silêncio: os campos que o tipo novo não tem viram campos personalizados.
+                    ui.label(
+                        egui::RichText::new(tr(
+                            "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.",
+                        ))
+                        .color(skin.warn),
+                    );
+                    // O TOTP não dá para "levar" como campo oculto e continuar gerando código: o item deixa de
+                    // gerar. Só avisa quando é o caso do item aberto (mesmo corpo do aviso acima).
+                    if kind == vault::ItemKind::Login && target != vault::ItemKind::Login && !self.add_totp.trim().is_empty() {
+                        ui.label(
+                            egui::RichText::new(tr("The TOTP secret becomes a hidden field, and this item stops generating codes."))
+                                .color(skin.warn),
+                        );
+                    }
+                    ui.add_space(6.0);
+                }
                 // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
                 let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
                 egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -4816,10 +4824,13 @@ impl KeysApp {
         let visible_ids: Vec<String> = view.iter().map(|row| row.id.clone()).collect();
 
         // Item 030-2: o limite superior da área da lista fica EXPLÍCITO — a linha cortada pelo rolamento
-        // aparece entre a régua e o rodapé (dentro da área dela), não como um fragmento solto sob a busca.
+        // aparece entre a régua e o rodapé (dentro da área dela), não como uma lasca solta sob a busca.
+        // A régua registra NÓ de acessibilidade (o `ui.separator()` não registra nada na árvore).
         if !view.is_empty() {
             ui.add_space(2.0);
-            ui.separator();
+            let (rect, regua) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+            regua.widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Splitter, true, tr("Item list")));
+            ui.painter().hline(rect.x_range(), rect.center().y, ui.visuals().widgets.noninteractive.bg_stroke);
         }
 
         // O rodapé (a barra da seleção ou a contagem) reserva o espaço dele ANTES da lista: com muitos itens o
@@ -4869,14 +4880,17 @@ impl KeysApp {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for row in view {
                     let selected = self.selection.contains(&row.id);
-                    // A linha marcada ganha fundo e contorno (marca visual que se vê nos dois temas) e o
-                    // estado de seleção vai também na árvore de acessibilidade pelo `selectable_label`.
-                    let fill =
-                        if selected { crate::theme::selected_row_fill(skin.accent, ui.visuals().dark_mode) } else { egui::Color32::TRANSPARENT };
-                    let stroke = if selected { crate::theme::selected_row_stroke(skin.accent) } else { egui::Stroke::NONE };
-                    egui::Frame::NONE
+                    // A linha marcada: o lavado sutil só no claro (no escuro lavar o fundo derruba o
+                    // texto claro da linha) e o destaque forte é a BARRA do accent na borda esquerda +
+                    // o contorno, pintados no retângulo da linha. O estado de seleção vai também na
+                    // árvore de acessibilidade pelo `selectable_label`.
+                    let fill = if selected && !ui.visuals().dark_mode {
+                        crate::theme::selected_row_fill(skin.accent, false)
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    };
+                    let linha = egui::Frame::NONE
                         .fill(fill)
-                        .stroke(stroke)
                         .corner_radius(egui::CornerRadius::same(6))
                         .inner_margin(egui::Margin::symmetric(5, 3))
                         .show(ui, |ui| {
@@ -4964,6 +4978,14 @@ impl KeysApp {
                                 });
                             });
                         });
+                    if selected {
+                        // O contorno e a barra de fora do Frame: o `Frame::stroke` entra na conta da
+                        // margem e a linha marcada crescia 2 px (marcar/desmarcar mexia a lista toda).
+                        let rect = linha.response.rect;
+                        ui.painter().rect_stroke(rect, 6.0, crate::theme::selected_row_stroke(skin.accent), egui::StrokeKind::Inside);
+                        let barra = egui::Rect::from_min_size(rect.left_top() + egui::vec2(1.0, 4.0), egui::vec2(3.0, rect.height() - 8.0));
+                        ui.painter().rect_filled(barra, 2.0, crate::theme::selected_row_bar(skin.accent));
+                    }
                     ui.separator();
                 }
             });
@@ -5020,9 +5042,11 @@ mod tests {
         assert!(resumido.ends_with("cofre-outro.tkeys"), "o resumido perdeu o nome do arquivo: {resumido}");
         assert!(!resumido.contains("opencode"), "o resumido mantém o meio que devia cortar: {resumido}");
 
-        // o orçamento mínimo nunca estoura o fatiamento (começo e fim de pelo menos 1 caractere)
-        assert_eq!(caminho_do_meio(longo, 3).chars().count(), 3);
-        assert_eq!(caminho_do_meio(longo, 2).chars().count(), 3, "o piso é começo + reticência + fim");
+        // o orçamento mínimo corta no fim, sempre dentro do pedido
+        for orcamento in 1..=56 {
+            let resumido = caminho_do_meio(longo, orcamento);
+            assert!(resumido.chars().count() <= orcamento, "orçamento {orcamento}: '{resumido}' tem {} caracteres", resumido.chars().count());
+        }
     }
 
     /// `--finish-update` (o helper de update do Windows, tratado antes de tudo) não é cofre, mesmo
