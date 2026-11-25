@@ -2905,9 +2905,13 @@ fn the_move_menu_reaches_the_last_folder_by_keyboard_and_moves_there() {
         press(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
     }
     // O destaque do teclado tem de estar VISÍVEL: a popup termina no topo do botão ("Move to folder…"),
-    // então a pasta do fim, com o foco nela, tem de caber acima dele (o ScrollArea do egui não segue o
-    // foco por conta própria — o segue-foco é feito no app, `selection_ui.rs`).
-    let ultima = harness.get_all_by_label_contains("Arquivo Morto 2020-2024").map(|n| n.rect()).next().expect("a pasta do fim existe na árvore");
+    // então a pasta do fim, com o foco nela, tem de caber acima dele. O rótulo também existe nos chips
+    // da janela — o nó da POPUP é o de maior topo (a popup cobre a metade de baixo da janela).
+    let ultima = harness
+        .get_all_by_label_contains("Arquivo Morto 2020-2024")
+        .map(|n| n.rect())
+        .max_by_key(|r| r.top() as i64)
+        .expect("a pasta do fim existe na árvore");
     let botao = harness.get_by_label("Move to folder…").rect();
     assert!(
         ultima.bottom() <= botao.top() + 8.0,
@@ -3017,6 +3021,110 @@ fn the_selection_bar_steps_aside_while_a_modal_is_open() {
         } else {
             contagem.get_by_label_contains("Items:");
         }
+    }
+}
+
+/// O Edit de outro item abre NO TOPO do formulário: a rolagem do miolo não persiste entre aberturas
+/// (D04 do teste independente — formulário alto rolado até o fim reabria no fim, Title fora da vista).
+#[test]
+fn the_edit_form_opens_at_the_top_after_a_scrolled_form_was_closed() {
+    let mut app = unlocked_kinds("form-topo", Prefs::new("en", ThemeMode::Dark));
+    let id_doc = item_id(&app, "Documentos");
+    // Campos personalizados deixam a identidade ALTA (a rolagem passa a existir de verdade).
+    let it = item_by_id_mut(&mut app, &id_doc);
+    it["customFields"] = serde_json::json!([
+        { "id": "c1", "name": "Campo um", "value": "1", "hidden": false },
+        { "id": "c2", "name": "Campo dois", "value": "2", "hidden": false }
+    ]);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+
+    // Abre a identidade e rola o miolo até o fim (roda sobre o formulário).
+    harness.state_mut().open_edit_form(&id_doc);
+    harness.run_steps(2);
+    harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(170.0, 300.0)));
+    harness.run_steps(1);
+    for _ in 0..14 {
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -30.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+    harness.run_steps(14);
+    let title = harness.get_by_label("Title").rect();
+    assert!(title.bottom() <= 0.0, "o formulário não rolou até o fim: Title em {title:?}");
+
+    // Fecha (Cancel) e reabre o MESMO formulário alto: o Title tem de estar no topo, à vista — a
+    // rolagem do miolo não pode persistir entre aberturas (sem salt ela persistia por id).
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(2);
+    harness.state_mut().open_edit_form(&id_doc);
+    harness.run_steps(2);
+    let title2 = harness.get_by_label("Title").rect();
+    let janela = harness.ctx.content_rect();
+    assert!(janela.contains_rect(title2), "o Edit reabriu na rolagem anterior: Title em {title2:?}, janela {janela:?}");
+}
+
+/// Pasta com nome mais largo que a janela (D02): o chip trunca com reticências dentro da linha e NÃO
+/// infla a UI — a barra da seleção ("Clear selection") e o "×" da busca continuam dentro da janela
+/// em 480 px, com a seleção ativa.
+#[test]
+fn a_very_long_folder_name_does_not_break_the_narrow_layout() {
+    let mut app = unlocked("pasta-longa", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("pasta-longa");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let mut raw = app.raw.clone().expect("cofre aberto");
+    let nome_longo = "Arquivamento de Projetos Arquitetônicos e Obras de Infraestrutura do Departamento de Engenharia e Transportes Municipais Consórcio Regional 2026";
+    crate::vault::add_folder(&mut raw, nome_longo);
+    let form = crate::vault::LoginForm { name: "conta-00.exemplo.com", username: "joao", password: "x", totp: "", url: "", notes: "" };
+    crate::vault::add_login(&mut raw, form);
+    app.adopt(crate::crypto::test_session(), raw);
+    let mut harness = harness_wh(app, 480.0, 640.0);
+    harness.run_steps(2);
+
+    // Seleção ativa: a barra do rodapé aparece.
+    let id_conta = item_id(harness.state(), "conta-00.exemplo.com");
+    harness.state_mut().selection.toggle(&id_conta);
+    // Texto na busca: o "×" de limpar aparece.
+    harness.state_mut().search = "27".into();
+    harness.run_steps(2);
+
+    let janela = harness.ctx.content_rect();
+    let chip = harness.get_by_label(nome_longo).rect();
+    assert!(janela.contains_rect(chip), "o chip da pasta longa sai da janela: {chip:?}");
+    let clear_sel = harness.get_by_label("Clear selection").rect();
+    assert!(janela.contains_rect(clear_sel), "'Clear selection' sai da janela: {clear_sel:?}");
+    for clear in harness.get_all_by_label("Clear") {
+        let rect = clear.rect();
+        assert!(janela.contains_rect(rect), "o '×' da busca sai da janela: {rect:?}");
+    }
+}
+
+/// O menu do ⋯ fecha quando um item é acionado PELO TECLADO (Enter): por mouse o egui fecha no
+/// clique, mas Enter não gera clique — sem o `ui.close()` no item, o modal abria com o menu ainda
+/// atrás dele, escurecido (D06 do teste independente).
+#[test]
+fn the_more_menu_closes_when_an_item_is_fired_by_keyboard() {
+    let mut harness = harness(unlocked("mais-fechatecla", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    harness.get_by_label("More actions").click();
+    harness.run_steps(2);
+    harness.get_by_label("Export…"); // o menu abriu
+
+    press(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    press(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    press(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    harness.run_steps(2);
+
+    // O modal de exportação abriu...
+    harness.get_by_label("File");
+    // ...e o menu FECHOU: nenhum item dele sobrou na árvore.
+    for item in ["Import…", "Export…", "Change master password…", "Merge another vault…"] {
+        assert!(harness.query_by_label(item).is_none(), "'{item}' ficou na árvore: o menu do ⋯ não fechou ao ser acionado pelo teclado");
     }
 }
 

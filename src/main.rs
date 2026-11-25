@@ -819,6 +819,29 @@ fn ghost_ink_named(ui: &mut egui::Ui, label: &str, accessible: &str, ink: egui::
     resp
 }
 
+/// Como `ghost_ink_named`, mas o texto visível TRUNCA com reticências numa largura máxima — chips de
+/// pastas com nome longo não podem inflar a linha nem sair da janela (D02 do teste independente). O
+/// nome acessível e o tooltip ficam com o nome inteiro.
+fn ghost_ink_elided(ui: &mut egui::Ui, label: &str, accessible: &str, ink: egui::Color32, max_width: f32) -> egui::Response {
+    let skin = Skin::of(ui);
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let galley = ui.painter().layout_job({
+        let mut job = egui::text::LayoutJob::single_section(label.to_owned(), egui::TextFormat::simple(font, ink));
+        job.wrap.max_width = (max_width - 14.0).max(24.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job
+    });
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 14.0, 24.0), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), accessible));
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(6), skin.hover);
+    }
+    let pos = rect.center() - galley.size() / 2.0;
+    ui.painter().galley(pos, galley, ink);
+    resp
+}
+
 /// `dd/mm/aaaa` a partir de epoch-ms — o app não tem crate de data, e o único
 /// uso é mostrar quando o item foi pra lixeira.
 fn date_from_ms(ms: i64) -> String {
@@ -1141,6 +1164,10 @@ struct KeysApp {
     /// ScrollArea persistia entre aberturas e o menu reabria rolda (o começo — "No folder" — ficava
     /// fora da vista; mão na massa do cofre com 20 pastas).
     move_menu_opens: u64,
+    /// Cada abertura do formulário (novo ou edição) incrementa o salt da rolagem do miolo: o estado do
+    /// ScrollArea persistia por id e o Edit reabria na rolagem do formulário anterior — outro item
+    /// abria com o Title fora da vista (D04 do teste independente).
+    form_scroll_seq: u64,
     /// Pasta em renomeação inline (`folders_modal`) + buffer do nome.
     folder_edit_id: Option<String>,
     folder_edit_name: String,
@@ -1281,6 +1308,7 @@ impl KeysApp {
             folders_open: false,
             folder_new_open: false,
             move_menu_opens: 0,
+            form_scroll_seq: 0,
             folder_new: String::new(),
             folder_edit_id: None,
             folder_edit_name: String::new(),
@@ -2161,6 +2189,7 @@ impl KeysApp {
             self.form_custom.push(FormCustomField { id: String::new(), name: String::new(), value: String::new(), hidden: false, revealed: false });
         }
         self.add_folder_id = self.folder_filter.clone();
+        self.form_scroll_seq += 1;
         self.form_open = true;
     }
 
@@ -2211,6 +2240,7 @@ impl KeysApp {
             .into_iter()
             .map(|f| FormCustomField { id: f.id, name: f.name, value: f.value, hidden: f.hidden, revealed: false })
             .collect();
+        self.form_scroll_seq += 1;
         self.form_open = true;
     }
 
@@ -2911,7 +2941,9 @@ impl KeysApp {
             // Assim os botões nunca saem da janela mínima de 340 px, com ou sem avisos.
             let avisos_altura = ui.min_rect().bottom() - antes_avisos;
             let teto_miolo = (ui.ctx().content_rect().height() - avisos_altura - 180.0).max(160.0);
-            egui::ScrollArea::vertical().max_height(teto_miolo).show(ui, |ui| {
+            // Salt novo por abertura: o estado da rolagem persistia por id e o Edit de OUTRO item
+            // reabria na rolagem do formulário anterior (D04 do teste independente).
+            egui::ScrollArea::vertical().id_salt(format!("form-miolo-{}", self.form_scroll_seq)).max_height(teto_miolo).show(ui, |ui| {
                 // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
                 let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
                 egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -4680,28 +4712,38 @@ impl KeysApp {
                 // destaque e Enter/Espaço ACIONAM o item (no MenuButton o destaque andava e nada
                 // ativava; mão na massa do cofre rico, pedido 030).
                 let more = ui.add(egui::Button::image(craft_icons::ui::image(ui, craft_icons::Icon::More)).frame_when_inactive(false));
+                more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tr("More actions")));
                 let _ = egui::Popup::menu(&more).show(|ui| {
+                    // O close em CADA item: por MOUSE o egui fecha a popup no clique, mas por TECLADO
+                    // (Enter/Espaço) não existe clique — sem o close o menu ficava aberto ATRÁS do
+                    // modal que o item abriu (D06 do teste independente).
                     if ui.button(format!("{}…", tr("Import"))).clicked() {
+                        ui.close();
                         self.import_open = true;
                         self.reveal_import = false;
                     }
                     if ui.button(format!("{}…", tr("Export"))).clicked() {
+                        ui.close();
                         self.export_path.clear();
                         self.export_open = true;
                     }
                     ui.separator();
                     if ui.button(format!("{}…", tr("Change master password"))).clicked() {
+                        ui.close();
                         self.change_open = true;
                     }
                     ui.separator();
                     // fase D — sincronização, sempre manual
                     if ui.button(format!("{}…", tr("Save a copy to a synced folder"))).clicked() {
+                        ui.close();
                         self.pick_sync_copy_target(ui.ctx());
                     }
                     if ui.button(format!("{}…", tr("Sync with another copy"))).clicked() {
+                        ui.close();
                         self.pick_sync_other(ui.ctx());
                     }
                     if ui.button(format!("{}…", tr("Merge another vault"))).clicked() {
+                        ui.close();
                         self.pick_merge_other(ui.ctx());
                     }
                 });
@@ -4730,18 +4772,24 @@ impl KeysApp {
             }
         });
 
-        // Chips de pasta: "Todas" (i18n) + cada pasta. Seleção = filtro imediato da lista.
+        // Chips de pasta: "Todas" (i18n) + cada pasta. Seleção = filtro imediato da lista. Um chip
+        // jamais é mais largo que a linha: nome longo trunca com reticências (e o nome inteiro vai no
+        // tooltip) — sem isso ele infla a largura da UI inteira e a barra de seleção e a busca saem
+        // da janela (D02 do teste independente).
         let mut chips: Vec<(Option<String>, String)> = vec![(None, tr("All").to_string())];
         for f in self.raw.as_ref().map(vault::folders).unwrap_or_default() {
             chips.push((Some(f.id), f.name));
         }
         ui.horizontal_wrapped(|ui| {
+            let largura_linha = ui.available_width();
             for (id, nome) in &chips {
                 let ativa = self.folder_filter.as_deref() == id.as_deref();
                 let ink = if ativa { skin.accent } else { skin.muted };
-                if ghost_ink(ui, nome, ink).clicked() {
+                let chip = ghost_ink_elided(ui, nome, nome, ink, largura_linha);
+                if chip.clicked() {
                     self.set_folder_filter(id.clone());
                 }
+                chip.on_hover_text(nome);
             }
         });
 
@@ -4815,10 +4863,15 @@ impl KeysApp {
             }
         });
         let mut busca_mudou = false;
+        // O "×" fica DENTRO do véu: com um modal aberto ele está morto (o clique só fecha o modal) e,
+        // por ser um glifo quase preto, parecia desenhado por cima do véu com cor cheia (D05 do teste
+        // independente — medido: a tinta crua 29,43,34 vira 20,25,22 sob o véu de 39%, mas continua
+        // parecendo "acesa"). Escondido com modal aberta, o sintoma some e a linha não muda de layout.
+        let modal_aberta = self.any_modal_open();
         ui.horizontal(|ui| {
             busca_mudou = ui.add(line(&mut self.search).hint_text(tr("Search…")).desired_width(ui.available_width() - 24.0)).changed();
             // Botão "X" pra limpar a busca sem precisar de backspace.
-            if !self.search.is_empty() && craft_icons::ui::close_button(ui, tr("Clear")).clicked() {
+            if !modal_aberta && !self.search.is_empty() && craft_icons::ui::close_button(ui, tr("Clear")).clicked() {
                 self.search.clear();
                 busca_mudou = true;
             }
@@ -4855,7 +4908,7 @@ impl KeysApp {
         // Item 030-3: com um diálogo modal aberto o rodapé SAI DA FRENTE — invisível e inerte. O espaço
         // continua reservado (o layout não muda de um quadro para o outro) e os widgets saem da árvore
         // de acessibilidade: nem a contagem nem a barra pingam atrás do diálogo.
-        let modal_aberta = self.any_modal_open();
+        // (O `modal_aberta` já veio computado lá em cima, para o "×" da busca.)
         egui::containers::Panel::bottom("selection_footer")
             .resizable(false)
             .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 4 }))

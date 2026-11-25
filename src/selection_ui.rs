@@ -176,16 +176,24 @@ impl KeysApp {
                 self.move_menu_opens += 1;
             }
             let _ = egui::Popup::menu(&menu).align(egui::RectAlign::TOP_START).show(|ui| {
-                // Sem segue-foco manual: o próprio egui rola o ScrollArea até o widget que recebe o
-                // foco do teclado (verificado por rects no kittest — a pasta do fim fica no meio da
-                // vista com o foco nela); o teste the_move_menu_reaches trava essa visibilidade.
+                // O destaque do TECLADO tem de ficar à vista: o ScrollArea do egui NÃO rola sozinho
+                // atrás do foco que o menu pede (D01 do teste independente — da 16ª seta em diante o
+                // destaque saía da vista e o Enter movia para uma pasta invisível). O botão com foco
+                // é mantido dentro da vista, centrado.
                 egui::ScrollArea::vertical().id_salt(format!("mover-lista-{}", self.move_menu_opens)).max_height(teto).show(ui, |ui| {
-                    if ui.button(tr("No folder")).clicked() {
+                    let opcao = |ui: &mut egui::Ui, texto: egui::WidgetText| -> egui::Response {
+                        let resp = ui.button(texto);
+                        if resp.has_focus() {
+                            ui.scroll_to_rect(resp.rect, Some(egui::Align::Center));
+                        }
+                        resp
+                    };
+                    if opcao(ui, tr("No folder").into()).clicked() {
                         move_to = Some(None);
                         ui.close();
                     }
                     for folder in &folders {
-                        if ui.button(&folder.name).clicked() {
+                        if opcao(ui, (&folder.name).into()).clicked() {
                             move_to = Some(Some(folder.id.clone()));
                             ui.close();
                         }
