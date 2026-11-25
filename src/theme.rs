@@ -135,6 +135,18 @@ fn visuals(t: &Tokens) -> egui::Visuals {
     v
 }
 
+/// Fundo da linha marcada na seleção múltipla: a mistura do accent sobre a base precisa se distinguir
+/// do fundo nos DOIS temas (pedido 030, item 4 — o `×0,16` antigo quase não aparecia). No escuro a
+/// mistura sobe: escurecer o accent pouco clareia nada sobre uma base já escura.
+pub fn selected_row_fill(accent: Color32, dark: bool) -> Color32 {
+    accent.gamma_multiply(if dark { 0.55 } else { 0.32 })
+}
+
+/// Contorno da linha marcada: o traço do accent completo fecha a seleção em volta da linha.
+pub fn selected_row_stroke(accent: Color32) -> egui::Stroke {
+    egui::Stroke::new(1.0, accent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +182,29 @@ mod tests {
                 let ratio = contrast(cor, tokens.input);
                 assert!(ratio >= 4.5, "{nome} no tema {}: {ratio:.2}:1", if tokens.dark { "escuro" } else { "claro" });
             }
+        }
+    }
+
+    /// A linha marcada da seleção múltipla lê-se como marcada nos DOIS temas: o fundo (accent misturado na
+    /// base) se distingue da base por contraste de luminância e o contorno é visível. Os valores antigos
+    /// (`×0,16` nos dois temas) davam ~1,41:1 no claro e ~1,35:1 no escuro — o pedido 030 (item 4) pediu
+    /// destaque claro; o limiar 1,45 reprova os dois antigos e aprova os dois novos (1,98 e 3,31).
+    #[test]
+    fn the_selected_row_reads_as_selected_in_both_themes() {
+        let mix = |over: Color32, base: Color32| {
+            let a = f64::from(over.a()) / 255.0;
+            let ch = |o: u8, b: u8| (f64::from(o) * a + f64::from(b) * (1.0 - a)).round() as u8;
+            Color32::from_rgb(ch(over.r(), base.r()), ch(over.g(), base.g()), ch(over.b(), base.b()))
+        };
+        for tokens in [Tokens::light(), Tokens::dark()] {
+            let tema = if tokens.dark { "escuro" } else { "claro" };
+            let fundo = mix(selected_row_fill(tokens.accent, tokens.dark), tokens.base);
+            let ratio = contrast(fundo, tokens.base);
+            assert!(ratio >= 1.45, "fundo da linha marcada no tema {tema}: {ratio:.2}:1 com a base (precisa de ≥ 1,45)");
+
+            let stroke = selected_row_stroke(tokens.accent);
+            assert!(stroke.width > 0.0, "contorno da linha marcada no tema {tema}: largura zero");
+            assert!(stroke.color.a() > 0, "contorno da linha marcada no tema {tema}: transparente");
         }
     }
 }

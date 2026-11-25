@@ -760,6 +760,21 @@ fn text_width(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> f32 {
     ui.painter().layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER).size().x
 }
 
+/// Caminho longo legível num diálogo: mantém o começo (a unidade e o usuário) e o fim (o arquivo), com
+/// reticência NO MEIO. O `.truncate()` do egui corta no fim — que é justo onde está o nome do arquivo.
+fn caminho_do_meio(path: &str, max_chars: usize) -> String {
+    let total = path.chars().count();
+    if total <= max_chars {
+        return path.to_owned();
+    }
+    // Sem a reticência: ~40% do começo, ~60% do fim (o nome do arquivo é o que importa).
+    let keep = max_chars.saturating_sub(1);
+    let inicio = (keep * 2 / 5).max(1);
+    let fim = (keep - inicio).max(1);
+    let chars: Vec<char> = path.chars().collect();
+    format!("{}…{}", chars[..inicio].iter().collect::<String>(), chars[total - fim..].iter().collect::<String>())
+}
+
 /// Uma linha de anexo: o nome à esquerda e, ao lado, o tamanho e os botões ([actions], que ocupam
 /// [actions_width]). Enquanto o nome cabe ao lado deles, fica numa linha só; quando não cabe, o nome
 /// quebra dentro do espaço que sobra — em vez de alargar o diálogo para fora da janela.
@@ -3133,13 +3148,18 @@ impl KeysApp {
                 if kind == vault::ItemKind::Login && !self.add_pass.is_empty() {
                     let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
                     ui.add_space(8.0);
-                    ui.add(
-                        egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
-                            .desired_width(280.0)
-                            .fill(strength_color(strength.score))
-                            .text(strength_label(strength.score)),
-                    )
-                    .on_hover_text(tr_fmt("zxcvbn: 10^{guesses} guesses", &[("guesses", &format!("{:.1}", strength.guesses_log10))]));
+                    // O rótulo FORA da barra (o texto dentro cortava no print do 027): barra à esquerda,
+                    // palavra ao lado em corpo normal.
+                    ui.horizontal(|ui| {
+                        let largura_rotulo = text_width(ui, "excellent", egui::TextStyle::Button) + 10.0;
+                        ui.add(
+                            egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
+                                .desired_width((ui.available_width() - largura_rotulo).max(120.0))
+                                .fill(strength_color(strength.score)),
+                        )
+                        .on_hover_text(tr_fmt("zxcvbn: 10^{guesses} guesses", &[("guesses", &format!("{:.1}", strength.guesses_log10))]));
+                        ui.label(egui::RichText::new(strength_label(strength.score)).strong());
+                    });
                 }
 
                 // ── campos personalizados (todos os tipos) ─────────────────────
@@ -4104,7 +4124,7 @@ impl KeysApp {
             dialog_width(ui, 380.0);
             ui.heading(tr("Open the other vault"));
             ui.add_space(4.0);
-            ui.add(egui::Label::new(egui::RichText::new(&self.merge_path).small().weak()).truncate());
+            ui.add(egui::Label::new(egui::RichText::new(caminho_do_meio(&self.merge_path, 56)).weak()).wrap());
             ui.add_space(8.0);
             let field = (ui.available_width() - 130.0).clamp(120.0, 220.0);
             ui.horizontal(|ui| {
@@ -4172,7 +4192,9 @@ impl KeysApp {
             dialog_width(ui, 400.0);
             ui.heading(tr("Merge another vault"));
             ui.add_space(4.0);
-            ui.add(egui::Label::new(egui::RichText::new(&other_path).small().weak()).truncate());
+            // O caminho em corpo normal (o `.small()` do print do 027 ficava ilegível), com reticência no
+            // meio para o nome do arquivo sobreviver em janela estreita.
+            ui.add(egui::Label::new(egui::RichText::new(caminho_do_meio(&other_path, 56)).weak()).wrap());
             ui.add_space(8.0);
             if nothing {
                 ui.label(egui::RichText::new(tr("Nothing to merge: this vault already has everything from the other vault.")).weak());
@@ -4211,7 +4233,8 @@ impl KeysApp {
                     }
                 }
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(tr("The other vault is only read; this vault is saved once.")).small().weak());
+                // Nota em corpo normal (o `.small()` não era legível no print do 027).
+                ui.label(egui::RichText::new(tr("The other vault is only read; this vault is saved once.")).weak());
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -4792,13 +4815,28 @@ impl KeysApp {
         let view: Vec<&Row> = rows.iter().collect();
         let visible_ids: Vec<String> = view.iter().map(|row| row.id.clone()).collect();
 
+        // Item 030-2: o limite superior da área da lista fica EXPLÍCITO — a linha cortada pelo rolamento
+        // aparece entre a régua e o rodapé (dentro da área dela), não como um fragmento solto sob a busca.
+        if !view.is_empty() {
+            ui.add_space(2.0);
+            ui.separator();
+        }
+
         // O rodapé (a barra da seleção ou a contagem) reserva o espaço dele ANTES da lista: com muitos itens o
         // `ScrollArea` tomava toda a altura e a barra desenhada depois caía fora da janela. O painel de baixo mede
-        // a barra; a lista rola só no que sobra.
+        // a barra; a lista rola só no que sobra. A folga no topo (8) é para a linha cortada pelo rolamento não
+        // encostar na contagem (pedido 030, item 2).
+        // Item 030-3: com um diálogo modal aberto o rodapé SAI DA FRENTE — invisível e inerte. O espaço
+        // continua reservado (o layout não muda de um quadro para o outro) e os widgets saem da árvore
+        // de acessibilidade: nem a contagem nem a barra pingam atrás do diálogo.
+        let modal_aberta = self.any_modal_open();
         egui::containers::Panel::bottom("selection_footer")
             .resizable(false)
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 4 }))
             .show(ui, |ui| {
+                if modal_aberta {
+                    ui.set_invisible();
+                }
                 if self.selection.is_empty() {
                     // O rodapé conta o cofre inteiro (não o que o popup/busca deixou na tela).
                     ui.label(egui::RichText::new(format!("{}: {}", tr("Items"), self.items.len())).small().weak());
@@ -4831,12 +4869,17 @@ impl KeysApp {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for row in view {
                     let selected = self.selection.contains(&row.id);
-                    // A linha marcada ganha fundo (marca visual) e o estado de seleção vai também na árvore de
-                    // acessibilidade pelo `selectable_label`.
-                    let fill = if selected { skin.accent.gamma_multiply(0.16) } else { egui::Color32::TRANSPARENT };
-                    egui::Frame::NONE.fill(fill).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(5, 3)).show(
-                        ui,
-                        |ui| {
+                    // A linha marcada ganha fundo e contorno (marca visual que se vê nos dois temas) e o
+                    // estado de seleção vai também na árvore de acessibilidade pelo `selectable_label`.
+                    let fill =
+                        if selected { crate::theme::selected_row_fill(skin.accent, ui.visuals().dark_mode) } else { egui::Color32::TRANSPARENT };
+                    let stroke = if selected { crate::theme::selected_row_stroke(skin.accent) } else { egui::Stroke::NONE };
+                    egui::Frame::NONE
+                        .fill(fill)
+                        .stroke(stroke)
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .inner_margin(egui::Margin::symmetric(5, 3))
+                        .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 // ★ agora é BOTÃO: liga/desliga o favorito (o oficial
                                 // faz isso pelo editor, que passa no updateItem).
@@ -4920,8 +4963,7 @@ impl KeysApp {
                                     });
                                 });
                             });
-                        },
-                    );
+                        });
                     ui.separator();
                 }
             });
@@ -4960,6 +5002,27 @@ mod tests {
         assert!(app.filters.is_clear(), "trancar deixa os filtros limpos");
         assert!(app.selection.is_empty(), "trancar limpa a seleção da lista");
         assert!(app.selection_anchor.is_none());
+    }
+
+    /// O caminho dos diálogos de junção fica legível: cabe, inteiro; não cabe, corta NO MEIO
+    /// (unidade+usuário de um lado, nome do arquivo do outro) — o `.truncate()` do egui cortava
+    /// no fim, exatamente onde está o nome do arquivo (pedido 030, item 1).
+    #[test]
+    fn o_caminho_longo_corta_no_meio_e_o_curto_fica_inteiro() {
+        let curto = r"C:\cofres\meu.tkeys";
+        assert_eq!(caminho_do_meio(curto, 56), curto, "caminho curto não se mexe");
+
+        let longo = r"C:\Users\Hades\AppData\Local\Temp\opencode\keys-prints-030\cofre-outro.tkeys";
+        let resumido = caminho_do_meio(longo, 56);
+        assert!(resumido.chars().count() <= 56, "o resumido passa do orçamento: {resumido}");
+        assert!(resumido.contains('…'), "o resumido não tem reticência: {resumido}");
+        assert!(resumido.starts_with(r"C:\Users"), "o resumido perdeu o começo: {resumido}");
+        assert!(resumido.ends_with("cofre-outro.tkeys"), "o resumido perdeu o nome do arquivo: {resumido}");
+        assert!(!resumido.contains("opencode"), "o resumido mantém o meio que devia cortar: {resumido}");
+
+        // o orçamento mínimo nunca estoura o fatiamento (começo e fim de pelo menos 1 caractere)
+        assert_eq!(caminho_do_meio(longo, 3).chars().count(), 3);
+        assert_eq!(caminho_do_meio(longo, 2).chars().count(), 3, "o piso é começo + reticência + fim");
     }
 
     /// `--finish-update` (o helper de update do Windows, tratado antes de tudo) não é cofre, mesmo

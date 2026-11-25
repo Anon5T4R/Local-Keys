@@ -2708,6 +2708,87 @@ fn the_selection_bar_fits_in_the_window_with_a_long_list() {
     }
 }
 
+/// Com a lista alta (30 itens) ROLADA até o fim, nenhuma linha invade a faixa do rodapé: o `ScrollArea` da
+/// lista fica preso à área entre a régua do cabeçalho e o rodapé. Antes do painel reservar o próprio espaço
+/// (1203753), o viewport da lista descia até o fundo da janela e as linhas roladas pintavam por cima do
+/// "Items: N" — o teste trava essa reserva; a falha dele contra a forma antiga (rodapé desenhado sem painel)
+/// está anotada no relatório do pedido 030. E com o resumo da junção aberto o rodapé inteiro sai da frente
+/// (item 3): nada de contagem ou barra pingando atrás do diálogo.
+#[test]
+fn the_scrolled_list_stays_out_of_the_footer_strip_even_with_a_modal_open() {
+    let app = unlocked_with(30, "lista-rodape", Prefs::new("en", ThemeMode::Dark));
+    let mut harness = harness_wh(app, 480.0, 660.0);
+    harness.run_steps(2);
+
+    // Rola a lista até o fim: o ponteiro precisa estar sobre ela para a roda rolar (delta em pontos:
+    // 80 × 30 pt = 2400 pt, mais que a altura do conteúdo de 30 linhas, para garantir o fim do rolamento).
+    harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(240.0, 400.0)));
+    harness.run_steps(1);
+    for _ in 0..80 {
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -30.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+    harness.run_steps(80);
+    // O scroll chegou ao FIM: a primeira linha ficou acima do viewport (o nó continua na árvore, mas
+    // com rect fora da janela).
+    let primeira = harness.query_by_label_contains("conta-00.exemplo.com").expect("a primeira linha existe na árvore");
+    assert!(primeira.rect().bottom() <= 0.0, "a lista não rolou até o fim: primeira linha em {:?}", primeira.rect());
+
+    // Nenhuma linha invade a faixa do rodapé: os botões das linhas visíveis terminam acima da faixa
+    // (o painel tem folga de 8 no topo, então a faixa começa 8 acima do rótulo).
+    let rodape = harness.get_by_label_contains("Items:").rect();
+    let faixa_topo = rodape.top() - 8.0;
+    let janela = harness.ctx.content_rect();
+    for node in harness.root().children_recursive() {
+        if node.accesskit_node().role() != Role::Button {
+            continue;
+        }
+        let texto = node_text(&node);
+        if !matches!(texto.as_str(), "Delete" | "Edit" | "Attachments") {
+            continue;
+        }
+        let rect = node.rect();
+        if !janela.intersects(rect) {
+            continue; // linha fora do viewport
+        }
+        assert!(rect.bottom() <= faixa_topo, "linha '{texto}' invade a faixa do rodapé: botão em {rect:?}, faixa começa em {faixa_topo}");
+    }
+
+    // Com a lista rolada, o resumo da junção abre por cima (o cenário dos prints do 027) e o rodapé
+    // inteiro sai da frente: nem a contagem fica atrás do diálogo.
+    harness.state_mut().merge_plan = Some(crate::MergePlan {
+        other_path: r"C:\Users\Hades\AppData\Local\Temp\opencode\keys-prints-030\cofre-outro.tkeys".into(),
+        merged: harness.state().raw.clone().expect("cofre"),
+        summary: localkeys_core::merge_other::MergeSummary { added: 1, ..Default::default() },
+    });
+    harness.run_steps(2);
+    harness.get_by_label_contains("Merge another vault");
+    assert!(harness.query_by_label_contains("Items:").is_none(), "o rodapé (a contagem) aparece atrás do diálogo aberto");
+}
+
+/// A barra da seleção sai da frente enquanto um diálogo modal está aberto: "Move to folder…" não pode
+/// aparecer atrás do rodapé do Edit (os prints do 027 mostravam a barra colada no cartão do diálogo).
+#[test]
+fn the_selection_bar_steps_aside_while_a_modal_is_open() {
+    let mut harness = harness(unlocked_with(6, "selbar-modal", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_row(&mut harness, "conta-00.exemplo.com", egui::Modifiers::COMMAND);
+    harness.get_by_label("Move to folder…"); // com a seleção, a barra está lá
+
+    // Abre o editor (o botão "Edit" da própria linha) — o cenário do print desktop-mudar-tipo.
+    click_labelled_button(&mut harness, "Edit");
+    harness.get_by_label("Save"); // o diálogo está aberto
+
+    for acao in ["Move to folder…", "Export to vault…", "Delete selected", "Clear selection"] {
+        assert!(harness.query_by_label(acao).is_none(), "'{acao}' apareceu atrás do diálogo aberto: a barra da seleção tem de sair da frente");
+    }
+}
+
 /// O "último cofre aberto" gravado por um teste vai para a pasta de rascunho, nunca para o `state.json` do usuário:
 /// cada `cargo test` trocava o cofre que o app abria de verdade.
 #[test]
