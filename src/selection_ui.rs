@@ -166,17 +166,31 @@ impl KeysApp {
             // A popup abre ACIMA da barra (TOP_START): na base da janela ela abria para baixo e ficava
             // cortada pela borda da janela (pedido 030, revisão — o mover a 1000×660).
             let menu = ui.add(egui::Button::new(tr("Move to folder…")));
+            // Com muitas pastas a lista rola DENTRO da popup: ancorada em TOP_START, uma popup mais alta
+            // que o espaço livre acima estourava a borda de CIMA e escondia justamente as primeiras
+            // opções ("No folder" e as primeiras pastas — pedido 030, item 6). O teto é o espaço entre
+            // o topo da janela e o topo do botão, descontada a moldura da popup.
+            let teto = (menu.rect.top() - ui.ctx().content_rect().top() - 24.0).max(120.0);
+            // Cada abertura incrementa o salt da rolagem interna (o ScrollArea reabria onde parou).
+            if menu.clicked() {
+                self.move_menu_opens += 1;
+            }
             let _ = egui::Popup::menu(&menu).align(egui::RectAlign::TOP_START).show(|ui| {
-                if ui.button(tr("No folder")).clicked() {
-                    move_to = Some(None);
-                    ui.close();
-                }
-                for folder in &folders {
-                    if ui.button(&folder.name).clicked() {
-                        move_to = Some(Some(folder.id.clone()));
+                // Sem segue-foco manual: o próprio egui rola o ScrollArea até o widget que recebe o
+                // foco do teclado (verificado por rects no kittest — a pasta do fim fica no meio da
+                // vista com o foco nela); o teste the_move_menu_reaches trava essa visibilidade.
+                egui::ScrollArea::vertical().id_salt(format!("mover-lista-{}", self.move_menu_opens)).max_height(teto).show(ui, |ui| {
+                    if ui.button(tr("No folder")).clicked() {
+                        move_to = Some(None);
                         ui.close();
                     }
-                }
+                    for folder in &folders {
+                        if ui.button(&folder.name).clicked() {
+                            move_to = Some(Some(folder.id.clone()));
+                            ui.close();
+                        }
+                    }
+                });
             });
             // Exportar um cofre NOVO com a seleção (o nome dele é o do arquivo; a senha vem no diálogo seguinte).
             if ui.add_enabled_ui(!busy, |ui| crate::ghost(ui, tr("Export to vault…"))).inner.clicked() {
@@ -237,6 +251,7 @@ impl KeysApp {
             || self.gen_open
             || self.change_open
             || self.attach_item.is_some()
+            // O aviso de cofre grande é um Modal de verdade: esconde barra e rodapé (teste parametrizado).
             || self.attach_warn.is_some()
             || self.folders_open
             || self.folder_new_open
@@ -247,7 +262,9 @@ impl KeysApp {
             || self.merge_open
             || self.merge_plan.is_some()
             || self.settings_open
-            || self.palette.is_open()
+            // A paleta (Ctrl+K) NÃO entra aqui: ela é um popup no topo, sem véu — esconder o rodapé
+            // deixaria uma faixa vazia que nada cobre. O guarda dela é o de teclado (update, acima),
+            // onde ela já estava.
             // O prompt do atualizador (craft_update) é um modal do crate: enquanto ele está aberto, o teclado da
             // seleção não pode apagar por baixo dele.
             || self.updater.prompt_open()

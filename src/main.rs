@@ -1137,6 +1137,10 @@ struct KeysApp {
     folders_open: bool,
     folder_new_open: bool,
     folder_new: String,
+    /// Cada abertura do menu "Move to folder…" ganha um salt novo para a rolagem interna: o estado do
+    /// ScrollArea persistia entre aberturas e o menu reabria rolda (o começo — "No folder" — ficava
+    /// fora da vista; mão na massa do cofre com 20 pastas).
+    move_menu_opens: u64,
     /// Pasta em renomeação inline (`folders_modal`) + buffer do nome.
     folder_edit_id: Option<String>,
     folder_edit_name: String,
@@ -1276,6 +1280,7 @@ impl KeysApp {
             vault_bytes: 0,
             folders_open: false,
             folder_new_open: false,
+            move_menu_opens: 0,
             folder_new: String::new(),
             folder_edit_id: None,
             folder_edit_name: String::new(),
@@ -2875,34 +2880,38 @@ impl KeysApp {
                 }
             }
             ui.add_space(8.0);
-            // Com os campos por tipo + campos personalizados o diálogo passa da altura mínima da
-            // janela: a área central rola (os botões ficam fora dela, sempre visíveis).
             let alvo = self.form_target_kind;
-            egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                // Os avisos da troca de tipo moram DENTRO da rolagem: em corpo normal eles não caberiam
-                // no miolo fixo da janela mínima (os botões Salvar/Cancelar sairiam da tela — o teste
-                // the_change_type_form_keeps_its_buttons_in_the_narrow_window trava isso).
-                if let Some(target) = alvo
-                    && target != kind {
-                    let skin = Skin::of(ui);
-                    // Corpo normal (o `.small()` do print do 027 não era legível). Nada some em
-                    // silêncio: os campos que o tipo novo não tem viram campos personalizados.
+            // Os avisos da troca de tipo ficam FIXOS acima da rolagem (revisão 2 do 030, item B): dentro
+            // da rolagem eles sumiam num formulário alto e a pessoa salvava sem reler. Corpo normal (o
+            // `.small()` do print do 027 não era legível). Nada some em silêncio: os campos que o tipo
+            // novo não tem viram campos personalizados.
+            let antes_avisos = ui.min_rect().bottom();
+            if let Some(target) = alvo
+                && target != kind
+            {
+                let skin = Skin::of(ui);
+                ui.label(
+                    egui::RichText::new(tr(
+                        "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.",
+                    ))
+                    .color(skin.warn),
+                );
+                // O TOTP não dá para "levar" como campo oculto e continuar gerando código: o item deixa de
+                // gerar. Só avisa quando é o caso do item aberto (mesmo corpo do aviso acima).
+                if kind == vault::ItemKind::Login && target != vault::ItemKind::Login && !self.add_totp.trim().is_empty() {
                     ui.label(
-                        egui::RichText::new(tr(
-                            "Fields that do not exist in the new type become custom fields when you save; hidden fields stay hidden. The fields of the new type only appear after you save and reopen the item.",
-                        ))
-                        .color(skin.warn),
+                        egui::RichText::new(tr("The TOTP secret becomes a hidden field, and this item stops generating codes."))
+                            .color(skin.warn),
                     );
-                    // O TOTP não dá para "levar" como campo oculto e continuar gerando código: o item deixa de
-                    // gerar. Só avisa quando é o caso do item aberto (mesmo corpo do aviso acima).
-                    if kind == vault::ItemKind::Login && target != vault::ItemKind::Login && !self.add_totp.trim().is_empty() {
-                        ui.label(
-                            egui::RichText::new(tr("The TOTP secret becomes a hidden field, and this item stops generating codes."))
-                                .color(skin.warn),
-                        );
-                    }
-                    ui.add_space(6.0);
                 }
+                ui.add_space(6.0);
+            }
+            // O miolo rola só o que sobra na janela: o aviso medido acima + o que é fixo em volta dele
+            // (cabeçalho do diálogo, linha do tipo, rodapé de erro/botões e a moldura do modal ≈ 180).
+            // Assim os botões nunca saem da janela mínima de 340 px, com ou sem avisos.
+            let avisos_altura = ui.min_rect().bottom() - antes_avisos;
+            let teto_miolo = (ui.ctx().content_rect().height() - avisos_altura - 180.0).max(160.0);
+            egui::ScrollArea::vertical().max_height(teto_miolo).show(ui, |ui| {
                 // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
                 let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
                 egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -3159,7 +3168,10 @@ impl KeysApp {
                     // O rótulo FORA da barra (o texto dentro cortava no print do 027): barra à esquerda,
                     // palavra ao lado em corpo normal.
                     ui.horizontal(|ui| {
-                        let largura_rotulo = text_width(ui, "excellent", egui::TextStyle::Button) + 10.0;
+                        // O rótulo medido no estilo em que é DESENHADO (corpo, com a palavra
+                        // traduzida — revisão 2, item F): medir "excellent" fixo no estilo de botão
+                        // deixava barra larga demais (ou estreita demais) nos outros idiomas.
+                        let largura_rotulo = text_width(ui, strength_label(strength.score), egui::TextStyle::Body) + 10.0;
                         ui.add(
                             egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
                                 .desired_width((ui.available_width() - largura_rotulo).max(120.0))
@@ -4664,8 +4676,11 @@ impl KeysApp {
                     self.lock();
                 }
                 // O que se faz de vez em quando com o cofre aberto (e é sensível) fica no ⋯, fora da linha do dia a dia.
-                let more = egui::Button::image(craft_icons::ui::image(ui, craft_icons::Icon::More)).frame_when_inactive(false);
-                let (response, _) = egui::containers::menu::MenuButton::from_button(more).ui(ui, |ui| {
+                // Popup::menu (e não MenuButton): o teclado completo funciona nele — as setas movem o
+                // destaque e Enter/Espaço ACIONAM o item (no MenuButton o destaque andava e nada
+                // ativava; mão na massa do cofre rico, pedido 030).
+                let more = ui.add(egui::Button::image(craft_icons::ui::image(ui, craft_icons::Icon::More)).frame_when_inactive(false));
+                let _ = egui::Popup::menu(&more).show(|ui| {
                     if ui.button(format!("{}…", tr("Import"))).clicked() {
                         self.import_open = true;
                         self.reveal_import = false;
@@ -4690,7 +4705,7 @@ impl KeysApp {
                         self.pick_merge_other(ui.ctx());
                     }
                 });
-                response.on_hover_text(tr("More actions"));
+                more.on_hover_text(tr("More actions"));
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add(egui::Label::new(egui::RichText::new(&self.path).strong()).truncate()).on_hover_text(&self.path);
                 });
@@ -4825,13 +4840,13 @@ impl KeysApp {
 
         // Item 030-2: o limite superior da área da lista fica EXPLÍCITO — a linha cortada pelo rolamento
         // aparece entre a régua e o rodapé (dentro da área dela), não como uma lasca solta sob a busca.
-        // A régua registra NÓ de acessibilidade (o `ui.separator()` não registra nada na árvore).
-        if !view.is_empty() {
-            ui.add_space(2.0);
-            let (rect, regua) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-            regua.widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Splitter, true, tr("Item list")));
-            ui.painter().hline(rect.x_range(), rect.center().y, ui.visuals().widgets.noninteractive.bg_stroke);
-        }
+        // A régua é SEMPRE desenhada (revisão 2, item E: sumia quando a lista ficava vazia e a lista
+        // pulava 3 px ao digitar) e é só PINTURA, sem nó de acessibilidade: `Role::Separator` não
+        // existe no accesskit 0.25.1 e um Splitter habilitado anunciaria um divisor redimensionável
+        // que não redimensiona nada. O rótulo "Item list" mora no CONTÊINER das linhas, logo abaixo.
+        ui.add_space(2.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+        ui.painter().hline(rect.x_range(), rect.center().y, ui.visuals().widgets.noninteractive.bg_stroke);
 
         // O rodapé (a barra da seleção ou a contagem) reserva o espaço dele ANTES da lista: com muitos itens o
         // `ScrollArea` tomava toda a altura e a barra desenhada depois caía fora da janela. O painel de baixo mede
@@ -4878,116 +4893,123 @@ impl KeysApp {
             }
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for row in view {
-                    let selected = self.selection.contains(&row.id);
-                    // A linha marcada: o lavado sutil só no claro (no escuro lavar o fundo derruba o
-                    // texto claro da linha) e o destaque forte é a BARRA do accent na borda esquerda +
-                    // o contorno, pintados no retângulo da linha. O estado de seleção vai também na
-                    // árvore de acessibilidade pelo `selectable_label`.
-                    let fill = if selected && !ui.visuals().dark_mode {
-                        crate::theme::selected_row_fill(skin.accent, false)
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    };
-                    let linha = egui::Frame::NONE
-                        .fill(fill)
-                        .corner_radius(egui::CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(5, 3))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                // ★ agora é BOTÃO: liga/desliga o favorito (o oficial
-                                // faz isso pelo editor, que passa no updateItem).
-                                let star = if row.favorite { "★" } else { "☆" };
-                                let star_ink = if row.favorite { skin.accent } else { skin.muted };
-                                if ghost_ink(ui, star, star_ink).on_hover_text(tr("Favorite")).clicked() {
-                                    self.toggle_favorite(&row.id);
-                                }
-                                ui.vertical(|ui| {
-                                    let title =
-                                        ui.selectable_label(selected, egui::RichText::new(format!("{} {}", kind_icon(row.kind), row.name)).strong());
-                                    if title.clicked() {
-                                        let modifiers = ui.input(|i| i.modifiers);
-                                        self.row_click(&row.id, &visible_ids, modifiers);
+                // O contêiner das linhas é o nó nomeado da lista (revisão 2, item E): o leitor de
+                // tela anuncia a LISTA ("Item list") com as linhas dentro; a régua acima é pintura
+                // decorativa, sem nó.
+                let linhas = ui.vertical(|ui| {
+                    for row in view {
+                        let selected = self.selection.contains(&row.id);
+                        // A linha marcada NÃO é lavada em nenhum tema (revisão 2, item A: o modelo do teste
+                        // era gama e o subtítulo fraco é overlay — qualquer lavado derruba o contraste
+                        // DELE; o destaque é a barra + contorno, pintados fora do Frame). O estado de
+                        // seleção vai também na árvore de acessibilidade pelo `selectable_label`.
+                        let fill =
+                            if selected { crate::theme::selected_row_fill(skin.accent, ui.visuals().dark_mode) } else { egui::Color32::TRANSPARENT };
+                        let linha = egui::Frame::NONE
+                            .fill(fill)
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(5, 3))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // ★ agora é BOTÃO: liga/desliga o favorito (o oficial
+                                    // faz isso pelo editor, que passa no updateItem).
+                                    let star = if row.favorite { "★" } else { "☆" };
+                                    let star_ink = if row.favorite { skin.accent } else { skin.muted };
+                                    if ghost_ink(ui, star, star_ink).on_hover_text(tr("Favorite")).clicked() {
+                                        self.toggle_favorite(&row.id);
                                     }
-                                    if let Some(s) = &row.summary {
-                                        ui.label(egui::RichText::new(s).small().weak());
-                                    }
-                                    // TOTP ao vivo: código + contagem (o repaint de
-                                    // 500ms já está ligado quando há algum).
-                                    if let Some(secret) = &row.totp {
-                                        // Base32 crua ou link `otpauth://` gravado: o código sai do `secret` do
-                                        // link, como no formulário e no Android.
-                                        match totp_list_code(secret) {
-                                            Ok(code) => {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(egui::RichText::new(code.code.clone()).monospace().strong());
-                                                    ui.label(egui::RichText::new(format!("{}{}", code.seconds_remaining, tr("s"))).small().weak());
-                                                    if ghost(ui, tr("TOTP")).on_hover_text(tr("Copy")).clicked() {
-                                                        // código é efêmero, mas marcar
-                                                        // exclusão de histórico não custa
-                                                        if clipboard::copy_secret(code.code).is_ok() {
-                                                            self.copied(&row.name);
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                            Err(Some(text)) => {
-                                                ui.label(egui::RichText::new(text).small().color(egui::Color32::LIGHT_RED));
-                                            }
-                                            // Segredo vazio não tem o que explicar.
-                                            Err(None) => {}
+                                    ui.vertical(|ui| {
+                                        let title = ui.selectable_label(
+                                            selected,
+                                            egui::RichText::new(format!("{} {}", kind_icon(row.kind), row.name)).strong(),
+                                        );
+                                        if title.clicked() {
+                                            let modifiers = ui.input(|i| i.modifiers);
+                                            self.row_click(&row.id, &visible_ids, modifiers);
                                         }
-                                    }
-                                    // Ações do item: ghost buttons (transparentes até
-                                    // o hover), como no local-pdf. Copiar usuário/senha
-                                    // só existe em login (os outros tipos não têm).
-                                    ui.horizontal_wrapped(|ui| {
-                                        if row.kind == vault::ItemKind::Login
-                                            && row.username.is_some()
-                                            && ghost(ui, tr("Username")).on_hover_text(tr("Copy")).clicked()
-                                            && let Some((user, _, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
-                                        {
-                                            // usuário não é segredo: cópia simples
-                                            if arboard::Clipboard::new().and_then(|mut c| c.set_text(user)).is_ok() {
+                                        if let Some(s) = &row.summary {
+                                            ui.label(egui::RichText::new(s).small().weak());
+                                        }
+                                        // TOTP ao vivo: código + contagem (o repaint de
+                                        // 500ms já está ligado quando há algum).
+                                        if let Some(secret) = &row.totp {
+                                            // Base32 crua ou link `otpauth://` gravado: o código sai do `secret` do
+                                            // link, como no formulário e no Android.
+                                            match totp_list_code(secret) {
+                                                Ok(code) => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(egui::RichText::new(code.code.clone()).monospace().strong());
+                                                        ui.label(
+                                                            egui::RichText::new(format!("{}{}", code.seconds_remaining, tr("s"))).small().weak(),
+                                                        );
+                                                        if ghost(ui, tr("TOTP")).on_hover_text(tr("Copy")).clicked() {
+                                                            // código é efêmero, mas marcar
+                                                            // exclusão de histórico não custa
+                                                            if clipboard::copy_secret(code.code).is_ok() {
+                                                                self.copied(&row.name);
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                                Err(Some(text)) => {
+                                                    ui.label(egui::RichText::new(text).small().color(egui::Color32::LIGHT_RED));
+                                                }
+                                                // Segredo vazio não tem o que explicar.
+                                                Err(None) => {}
+                                            }
+                                        }
+                                        // Ações do item: ghost buttons (transparentes até
+                                        // o hover), como no local-pdf. Copiar usuário/senha
+                                        // só existe em login (os outros tipos não têm).
+                                        ui.horizontal_wrapped(|ui| {
+                                            if row.kind == vault::ItemKind::Login
+                                                && row.username.is_some()
+                                                && ghost(ui, tr("Username")).on_hover_text(tr("Copy")).clicked()
+                                                && let Some((user, _, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
+                                            {
+                                                // usuário não é segredo: cópia simples
+                                                if arboard::Clipboard::new().and_then(|mut c| c.set_text(user)).is_ok() {
+                                                    self.copied(&row.name);
+                                                }
+                                            }
+                                            if row.kind == vault::ItemKind::Login
+                                                && ghost(ui, tr("Password")).on_hover_text(tr("Copy")).clicked()
+                                                && let Some((_, pass, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
+                                                && clipboard::copy_secret(pass).is_ok()
+                                            {
                                                 self.copied(&row.name);
                                             }
-                                        }
-                                        if row.kind == vault::ItemKind::Login
-                                            && ghost(ui, tr("Password")).on_hover_text(tr("Copy")).clicked()
-                                            && let Some((_, pass, _)) = self.raw.as_ref().and_then(|r| vault::login_triple(r, &row.id))
-                                            && clipboard::copy_secret(pass).is_ok()
-                                        {
-                                            self.copied(&row.name);
-                                        }
-                                        if ghost(ui, tr("Attachments")).clicked() {
-                                            self.attach_item = Some(row.id.clone());
-                                            self.attach_path.clear();
-                                        }
-                                        if ghost(ui, tr("Edit")).clicked() {
-                                            self.open_edit_form(&row.id);
-                                        }
-                                        if ghost(ui, tr("Delete"))
-                                            .on_hover_text(tr("The item goes to the Trash, where you can restore it."))
-                                            .clicked()
-                                        {
-                                            // Confirmação: exclusão é reversível só na
-                                            // lixeira — clique sem querer não apaga.
-                                            self.delete_ask = Some((row.id.clone(), row.name.clone()));
-                                        }
+                                            if ghost(ui, tr("Attachments")).clicked() {
+                                                self.attach_item = Some(row.id.clone());
+                                                self.attach_path.clear();
+                                            }
+                                            if ghost(ui, tr("Edit")).clicked() {
+                                                self.open_edit_form(&row.id);
+                                            }
+                                            if ghost(ui, tr("Delete"))
+                                                .on_hover_text(tr("The item goes to the Trash, where you can restore it."))
+                                                .clicked()
+                                            {
+                                                // Confirmação: exclusão é reversível só na
+                                                // lixeira — clique sem querer não apaga.
+                                                self.delete_ask = Some((row.id.clone(), row.name.clone()));
+                                            }
+                                        });
                                     });
                                 });
                             });
-                        });
-                    if selected {
-                        // O contorno e a barra de fora do Frame: o `Frame::stroke` entra na conta da
-                        // margem e a linha marcada crescia 2 px (marcar/desmarcar mexia a lista toda).
-                        let rect = linha.response.rect;
-                        ui.painter().rect_stroke(rect, 6.0, crate::theme::selected_row_stroke(skin.accent), egui::StrokeKind::Inside);
-                        let barra = egui::Rect::from_min_size(rect.left_top() + egui::vec2(1.0, 4.0), egui::vec2(3.0, rect.height() - 8.0));
-                        ui.painter().rect_filled(barra, 2.0, crate::theme::selected_row_bar(skin.accent));
+                        if selected {
+                            // O contorno e a barra de fora do Frame: o `Frame::stroke` entra na conta da
+                            // margem e a linha marcada crescia 2 px (marcar/desmarcar mexia a lista toda).
+                            let rect = linha.response.rect;
+                            ui.painter().rect_stroke(rect, 6.0, crate::theme::selected_row_stroke(skin.accent), egui::StrokeKind::Inside);
+                            let barra = egui::Rect::from_min_size(rect.left_top() + egui::vec2(1.0, 4.0), egui::vec2(3.0, rect.height() - 8.0));
+                            ui.painter().rect_filled(barra, 2.0, crate::theme::selected_row_bar(skin.accent));
+                        }
+                        ui.separator();
                     }
-                    ui.separator();
-                }
+                });
+                linhas.response.widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::List, true, tr("Item list")));
             });
         }
         // O teclado da seleção é lido DEPOIS dos popups deste quadro (o ⋯, os filtros e o menu de mover do rodapé):

@@ -135,12 +135,13 @@ fn visuals(t: &Tokens) -> egui::Visuals {
     v
 }
 
-/// Fundo da linha marcada na seleção múltipla: o lavado SUTIL de antes (×0,16), e só no claro — a
-/// revisão do pedido 030 (item 4) trocou o destaque forte pela BARRA do accent na borda esquerda +
-/// contorno: no escuro qualquer lavado levanta o fundo e derruba o texto claro da linha (o subtítulo
-/// `.small().weak()` caía para ~2:1 com o lavado forte).
-pub fn selected_row_fill(accent: Color32, dark: bool) -> Color32 {
-    if dark { Color32::TRANSPARENT } else { accent.gamma_multiply(0.16) }
+/// Fundo da linha marcada na seleção múltipla: TRANSPARENTE nos dois temas. O destaque é só a BARRA
+/// do accent na borda esquerda + o contorno (revisão 2 do pedido 030, item A): o app renderiza com
+/// blend em GAMA (framebuffer sem sRGB), e qualquer lavado — mesmo o sutil ×0,16 do claro — levanta
+/// o fundo sob o subtítulo `.small().weak()`, que é um overlay (texto × 0,6 com alfa 153) e não
+/// aguenta fundo mudado. Sem lavado, a linha marcada tem exatamente o fundo da lista.
+pub fn selected_row_fill(_accent: Color32, _dark: bool) -> Color32 {
+    Color32::TRANSPARENT
 }
 
 /// Contorno da linha marcada: o traço do accent completo fecha a seleção em volta da linha.
@@ -191,48 +192,51 @@ mod tests {
         }
     }
 
-    /// A linha marcada da seleção múltipla não sacrifica o texto dela e ainda se distingue. O egui
-    /// compõe em LINEAR com alfa pré-multiplicado: a mistura tem que ser `Rgba::blend` (o teste antigo
-    /// misturava em espaço gama e dava número otimista). O fundo da linha é o lavado sutil de antes
-    /// (≈1,14:1 no claro, inalterado no escuro); o destaque novo é a barra + contorno, desenhados na
-    /// linha, não testáveis por cor. O que PRECISA continuar de pé é o texto: o subtítulo fraco
-    /// (`.small().weak()` = o texto lavado a 60%) segue ≥ 4,5:1 sobre a linha marcada nos dois temas.
+    /// A linha marcada da seleção múltipla trava três coisas. O MODELO é o que a tela realmente faz:
+    /// este app renderiza com blend em GAMA (framebuffer sem sRGB; o fragment devolve valores de tela),
+    /// então overlay é mistura de canal em espaço gama com o alfa real — e NÃO `Rgba::blend` linear
+    /// (a revisão anterior inverteu o modelo; o print medido provou: o lavado que existia media
+    /// exatamente a mistura em gama). `.weak()` é `text_color().gamma_multiply(0.6)`, que multiplica
+    /// também o ALFA — o subtítulo é um overlay a 60%, não uma cor opaca.
+    /// (1) o fundo da linha marcada é IGUAL ao da lista (sem lavado em nenhum tema);
+    /// (2) a barra e o contorno marcam ≥ 3:1 contra a base, nos dois temas (não-texto, WCAG);
+    /// (3) o subtítulo fraco sobre a base tem o MESMO valor com a linha marcada e sem marca.
     #[test]
-    fn the_selected_row_reads_as_selected_in_both_themes() {
-        let luminancia = |rgba: egui::Rgba| 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2];
+    fn the_selected_row_marks_itself_with_the_accent_without_touching_the_background() {
         for tokens in [Tokens::light(), Tokens::dark()] {
             let tema = if tokens.dark { "escuro" } else { "claro" };
 
-            // O fundo da linha marcada: a base com o lavado por cima (a composição real do egui).
-            let fundo = egui::Rgba::from(tokens.base).blend(egui::Rgba::from(selected_row_fill(tokens.accent, tokens.dark)));
-            let fundo_base = egui::Rgba::from(tokens.base);
-            let ratio_fundo = {
-                let (alto, baixo) = if luminancia(fundo) >= luminancia(fundo_base) { (fundo, fundo_base) } else { (fundo_base, fundo) };
-                (luminancia(alto) + 0.05) / (luminancia(baixo) + 0.05)
+            // (1) O fundo da linha marcada: o que o Frame pinta (fill transparente sobre a base).
+            let fill = selected_row_fill(tokens.accent, tokens.dark);
+            assert_eq!(fill, egui::Color32::TRANSPARENT, "fundo da linha marcada no tema {tema}: não é transparente");
+            let fundo_marcado = {
+                let alfa = f32::from(fill.a()) / 255.0;
+                let canal = |s: u8, d: u8| (f32::from(s) * alfa + f32::from(d) * (1.0 - alfa)).round() as u8;
+                egui::Color32::from_rgb(canal(fill.r(), tokens.base.r()), canal(fill.g(), tokens.base.g()), canal(fill.b(), tokens.base.b()))
             };
+            assert_eq!(fundo_marcado, tokens.base, "fundo da linha marcada no tema {tema}: difere do fundo da lista");
+
+            // (2) A barra e o contorno são opacos e precisam se destacar da base (não-texto ≥ 3:1).
+            assert!(contrast(selected_row_bar(tokens.accent), tokens.base) >= 3.0, "barra da linha marcada no tema {tema}: contraste < 3:1");
             assert!(
-                if tokens.dark { ratio_fundo <= 1.05 } else { ratio_fundo >= 1.08 },
-                "fundo da linha marcada no tema {tema}: {ratio_fundo:.2}:1 com a base (escuro inalterado, claro com o lavado sutil)"
+                contrast(selected_row_stroke(tokens.accent).color, tokens.base) >= 3.0,
+                "contorno da linha marcada no tema {tema}: contraste < 3:1"
             );
 
-            // O texto fraco (`.small().weak()` = a cor do texto lavada a 60%): o contraste da COR do
-            // texto contra a linha marcada (a aplicação usual do WCAG, cor × fundo).
-            let texto_fraco = egui::Color32::from_rgb(
-                (f32::from(tokens.text.r()) * 0.6).round() as u8,
-                (f32::from(tokens.text.g()) * 0.6).round() as u8,
-                (f32::from(tokens.text.b()) * 0.6).round() as u8,
-            );
-            let ratio_texto = {
-                let texto_lin = egui::Rgba::from(texto_fraco);
-                let (alto, baixo) = if luminancia(fundo) >= luminancia(texto_lin) { (fundo, texto_lin) } else { (texto_lin, fundo) };
-                (luminancia(alto) + 0.05) / (luminancia(baixo) + 0.05)
+            // (3) O subtítulo fraco é um overlay: texto × 0,6 com alfa 153 sobre o fundo. Com a linha
+            // marcada e sem marca o valor renderizado é O MESMO (a marca não mexe no fundo — se alguém
+            // reintroduzir lavado, esta igualdade quebra).
+            let legenda = |fundo: egui::Color32| {
+                let src = tokens.text.gamma_multiply(0.6);
+                let alfa = f32::from(src.a()) / 255.0;
+                let canal = |s: u8, d: u8| (f32::from(s) * alfa + f32::from(d) * (1.0 - alfa)).round() as u8;
+                egui::Color32::from_rgb(canal(src.r(), fundo.r()), canal(src.g(), fundo.g()), canal(src.b(), fundo.b()))
             };
-            assert!(ratio_texto >= 4.5, "texto fraco sobre a linha marcada no tema {tema}: {ratio_texto:.2}:1 (precisa de ≥ 4,5)");
-
-            let stroke = selected_row_stroke(tokens.accent);
-            assert!(stroke.width > 0.0, "contorno da linha marcada no tema {tema}: largura zero");
-            assert!(stroke.color.a() > 0, "contorno da linha marcada no tema {tema}: transparente");
-            assert!(selected_row_bar(tokens.accent).a() == 255, "barra da borda esquerda no tema {tema}: transparente");
+            assert_eq!(
+                legenda(fundo_marcado),
+                legenda(tokens.base),
+                "subtítulo fraco no tema {tema}: a linha marcada mudou o valor renderizado dele"
+            );
         }
     }
 }

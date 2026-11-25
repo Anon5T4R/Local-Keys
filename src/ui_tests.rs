@@ -561,8 +561,10 @@ fn every_form_dialog_keeps_its_chrome_in_the_narrow_window() {
     }
 }
 
-/// Edição com a troca de tipo pendente (os dois avisos) e uma mensagem de erro: os avisos ficam fora da
-/// rolagem, então na janela mínima (340×640) os botões Salvar/Cancelar têm de continuar à vista.
+/// Edição com a troca de tipo pendente (os dois avisos) e uma mensagem de erro: os avisos ficam FIXOS
+/// acima da rolagem, então têm de estar no viewport mesmo com o formulário alto, e na janela mínima
+/// (340×640) os botões Salvar/Cancelar têm de continuar à vista — a rolagem cobre só o que sobra
+/// (revisão 2 do 030, item B).
 #[test]
 fn the_change_type_form_keeps_its_buttons_in_the_narrow_window() {
     let mut app = unlocked_kinds("change-narrow", Prefs::new("pt-br", ThemeMode::Dark));
@@ -579,6 +581,10 @@ fn the_change_type_form_keeps_its_buttons_in_the_narrow_window() {
             assert!(rect.x0 >= 0.0 && rect.x1 <= 340.0, "nó fora da largura: {rect:?}");
         }
     }
+    // O aviso da troca de tipo é fixo acima da rolagem: o nó dele tem de estar dentro do viewport
+    // (antes, dentro da rolagem, ele sumia num formulário alto).
+    let aviso = harness.get_by_label_contains("viram campos personalizados").rect();
+    assert!(aviso.min.y >= 0.0 && aviso.max.y <= 640.0, "aviso da troca de tipo fora do viewport: {aviso:?}");
     for label in ["Salvar", "Cancelar"] {
         for node in harness.get_all_by_label(label) {
             let rect = node.rect();
@@ -809,9 +815,12 @@ fn selector_text(harness: &Harness<'_, KeysApp>) -> String {
     combo.accesskit_node().data().value().unwrap_or_default().to_string()
 }
 
-/// Fecha o popup do seletor de tipo com um clique num ponto neutro e FORA dele (a seção "Custom fields", no
-/// fim do corpo). No egui o primeiro clique fora de um popup aberto só fecha o popup (não chega ao botão de
-/// baixo) — como na mão, a pessoa clica no formulário antes de Salvar.
+/// Fecha o popup do seletor de tipo com Esc. O CLIQUE fora (na seção "Custom fields") deixou de ser
+/// viável sem rolar: a seção mora DENTRO da rolagem do formulário e, na janela do harness (480×640),
+/// fica além da dobra — o clique no retângulo dela não alcança o widget de verdade (foi por isso que
+/// este helper trocou o clique por Esc na rodada anterior). O teste
+/// `changing_a_login_to_a_note_moves_the_login_fields_to_custom_fields` mantém o caminho DA MÃO:
+/// rola o formulário até a seção e fecha com clique fora dela.
 fn close_type_popup(harness: &mut Harness<'_, KeysApp>) {
     // O Esc fecha só a popup do seletor: o formulário ignora Esc enquanto há popup aberto.
     press(harness, egui::Key::Escape, egui::Modifiers::NONE);
@@ -865,7 +874,28 @@ fn changing_a_login_to_a_note_moves_the_login_fields_to_custom_fields() {
     assert_eq!(harness.state().form_kind, crate::vault::ItemKind::Login, "os campos do formulário continuam os do item");
     // O TOTP do Gmail vira campo oculto e o item deixa de gerar código: a frase própria aparece ANTES de salvar.
     assert!(harness.query_by_label(TOTP_WARNING).is_some(), "o aviso do TOTP aparece com segredo e tipo novo sem login");
-    close_type_popup(&mut harness);
+    // Fecha a popup com um CLIQUE FORA, como a mão faz (revisão 2, item 4): rola o formulário até a
+    // seção "Custom fields" (mora dentro da rolagem, além da dobra em 480×640) e clica nela — o
+    // primeiro clique fora de um popup só fecha o popup, sem chegar ao widget de baixo.
+    let secao = harness.get_by_label("Custom fields").rect();
+    harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(170.0, 300.0)));
+    harness.run_steps(1);
+    for _ in 0..14 {
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -30.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+    harness.run_steps(14);
+    let rolada = harness.get_by_label("Custom fields").rect();
+    assert!(rolada.top() < secao.top(), "o formulário não rolou até a seção: {secao:?} → {rolada:?}");
+    let janela = harness.ctx.content_rect();
+    assert!(janela.contains_rect(rolada), "a seção rolada saiu da janela: {rolada:?}");
+    harness.get_by_label("Custom fields").click();
+    harness.run_steps(2);
     harness.get_by_label("Save").click();
     harness.run_steps(2);
     assert!(!harness.state().form_open, "salvou: {:?}", harness.state().err);
@@ -2709,25 +2739,44 @@ fn the_selection_bar_fits_in_the_window_with_a_long_list() {
 }
 
 /// Item 2 do 030 em duas partes. O defeito do 027 era a LASCA de linha cortada pelo rolamento no TOPO da
-/// área da lista — logo sob a busca — lida como vazamento: a régua agora delimita o topo da área e está
-/// travada aqui pelo nó Separador entre a busca e a primeira linha. A reserva do rodapé (painel de baixo,
-/// 1203753) segue travada: nenhuma linha invade a faixa do rodapé com a lista rolada até o fim. E com o
-/// resumo da junção aberto o rodapé inteiro sai da frente (item 3): nada pingando atrás do diálogo.
+/// área da lista — logo sob a busca — lida como vazamento: a régua agora delimita o topo da área e o
+/// contêiner "Item list" (nó List) fica entre a busca e as linhas, com a régua SEMPRE desenhada mesmo
+/// com a lista vazia (a lista não pula ao digitar — revisão 2, item E). A reserva do rodapé (painel de
+/// baixo, 1203753) segue travada: nenhuma linha invade a faixa do rodapé com a lista rolada até o fim.
+/// E com o resumo da junção aberto o rodapé inteiro sai da frente (item 3): nada pingando atrás do diálogo.
 #[test]
 fn the_scrolled_list_stays_out_of_the_footer_strip_even_with_a_modal_open() {
     let app = unlocked_with(30, "lista-rodape", Prefs::new("en", ThemeMode::Dark));
     let mut harness = harness_wh(app, 480.0, 660.0);
     harness.run_steps(2);
 
-    // A régua existe como nó Separador ENTRE a busca e a primeira linha (o `ui.separator()` não
-    // registra nada na árvore — por isso a régua é desenhada à mão com `WidgetInfo`).
+    // A LISTA é o nó nomeado entre a busca e as linhas ("Item list", revisão 2, item E — a régua
+    // virou pintura pura: `Role::Separator` não existe no accesskit 0.25.1 e um Splitter habilitado
+    // anunciaria um divisor redimensionável que não redimensiona nada; o rótulo mora no contêiner).
     let busca = harness.get_all_by_role(Role::TextInput).map(|n| n.rect()).next().expect("o campo de busca da lista");
     let primeira = harness.get_by_label_contains("conta-00.exemplo.com").rect();
-    let tem_regua = harness.root().children_recursive().any(|node| {
-        node.accesskit_node().role() == Role::Splitter
-            && node.accesskit_node().bounding_box().is_some_and(|r| (r.y0 as f32) >= busca.bottom() && (r.y1 as f32) <= primeira.top())
-    });
-    assert!(tem_regua, "a régua (nó Separador) entre a busca e a lista sumiu");
+    let lista = harness.get_by_label("Item list").rect();
+    assert!(
+        lista.top() >= busca.bottom() && lista.contains_rect(primeira),
+        "o contêiner 'Item list' saiu de entre a busca e as linhas: lista {lista:?}, busca {busca:?}, primeira {primeira:?}"
+    );
+
+    // A régua é SEMPRE desenhada (revisão 2, item E): com a busca escondendo todas as linhas, o
+    // aviso "No items match the search" começa na MESMA altura do contêiner da lista — a lista não
+    // pula ao digitar. (O topo do TEXTO da primeira linha fica 3 px abaixo: é o inner_margin do
+    // Frame da linha, não pulo de layout.)
+    let mut vazio = harness_wh(unlocked_with(30, "lista-rodape-vazio", Prefs::new("en", ThemeMode::Dark)), 480.0, 660.0);
+    vazio.run_steps(2);
+    vazio.state_mut().search = "zzzz-nada".into();
+    vazio.run_steps(2);
+    let sem = vazio.get_by_label_contains("No items match the search").rect();
+    let com = lista;
+    assert!(
+        (sem.top() - com.top()).abs() < 0.5,
+        "a lista pulou ao esvaziar: 'no match' em {}, contêiner da lista com resultado em {}",
+        sem.top(),
+        com.top()
+    );
 
     // Rola a lista até o fim: o ponteiro precisa estar sobre ela para a roda rolar (delta em pontos:
     // 80 × 30 pt = 2400 pt, mais que a altura do conteúdo de 30 linhas, para garantir o fim do rolamento).
@@ -2780,21 +2829,194 @@ fn the_scrolled_list_stays_out_of_the_footer_strip_even_with_a_modal_open() {
     assert!(harness.query_by_label_contains("Items:").is_none(), "o rodapé (a contagem) aparece atrás do diálogo aberto");
 }
 
+/// O menu de mover com 20 pastas (pedido 030, item 6): a lista rola dentro da popup e a pasta do
+/// FIM é alcançável pelo teclado (setas + Enter) — e o mover grava a pasta certa com UMA gravação.
+#[test]
+fn the_move_menu_reaches_the_last_folder_by_keyboard_and_moves_there() {
+    let mut app = unlocked("move-20", Prefs::new("en", ThemeMode::Dark));
+    let dir = scratch("move-20");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    let mut raw = app.raw.clone().expect("cofre aberto");
+    let pastas = [
+        "Trabalho",
+        "Banco",
+        "Pessoal",
+        "Trabalho Remoto Projeto Alfa 2026",
+        "Configurações do Sistema",
+        "🚀 Lançamentos",
+        "Documentação Técnica Interna",
+        "Finanças Pessoais e Impostos Anuais",
+        "Clientes Importantes",
+        "Servidores e Infraestrutura",
+        "Redes Sociais",
+        "Compras Online",
+        "Saúde e Bem-Estar",
+        "Educação e Cursos",
+        "Viagens",
+        "Casas e Aluguéis",
+        "Veículos",
+        "Assinaturas e Serviços",
+        "Backup e Recuperação",
+        "Arquivo Morto 2020-2024",
+    ];
+    for nome in pastas {
+        crate::vault::add_folder(&mut raw, nome);
+    }
+    let ids: Vec<String> = crate::vault::folders(&raw).into_iter().map(|f| f.id).collect();
+    assert_eq!(ids.len(), 20, "20 pastas");
+    for i in 0..30 {
+        let nome = format!("conta-{i:02}.exemplo.com");
+        let form = crate::vault::LoginForm { name: &nome, username: "joao", password: "x", totp: "", url: "", notes: "" };
+        crate::vault::add_login(&mut raw, form);
+    }
+    let item_ids: Vec<String> = raw["items"].as_array().unwrap().iter().map(|it| it["id"].as_str().unwrap().to_string()).collect();
+    for (i, id) in item_ids.iter().enumerate() {
+        let pasta = &ids[i % ids.len()];
+        assert!(crate::vault::set_item_folder(&mut raw, id, Some(pasta)));
+    }
+    app.adopt(crate::crypto::test_session(), raw);
+    let baseline = persist_now(&mut app);
+
+    // Janela BAIXA (480×500): a popup do mover não cabe inteira e o segue-foco da rolagem é exercido
+    // (a pasta do fim, com o foco nela, tem de continuar dentro da popup).
+    let mut harness = harness_wh(app, 480.0, 560.0);
+    harness.run_steps(2);
+    // A seleção direta pelo estado (as linhas podem estar fora do viewport com 30 itens e 20 pastas).
+    for i in 0..3 {
+        let nome = format!("conta-{i:02}.exemplo.com");
+        let id = item_id(harness.state(), &nome);
+        harness.state_mut().selection.toggle(&id);
+    }
+    harness.run_steps(2);
+    harness.get_by_label("Move to folder…").click();
+    harness.run_steps(10);
+    for node in harness.root().children_recursive() {
+        let t = node_text(&node);
+        if t.contains("folder") || t.contains("selected") {
+            eprintln!("TREE: {t} rect={:?}", node.rect());
+        }
+    }
+    harness.get_by_label("No folder"); // a popup abriu
+
+    // O teclado até a ÚLTIMA pasta: "No folder" + 20 pastas = 21 opções; o primeiro ArrowDown cai no
+    // "No folder" (índice 0), então 21 setas alcançam o índice 20 = a pasta do fim.
+    for _ in 0..21 {
+        press(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    }
+    // O destaque do teclado tem de estar VISÍVEL: a popup termina no topo do botão ("Move to folder…"),
+    // então a pasta do fim, com o foco nela, tem de caber acima dele (o ScrollArea do egui não segue o
+    // foco por conta própria — o segue-foco é feito no app, `selection_ui.rs`).
+    let ultima = harness.get_all_by_label_contains("Arquivo Morto 2020-2024").map(|n| n.rect()).next().expect("a pasta do fim existe na árvore");
+    let botao = harness.get_by_label("Move to folder…").rect();
+    assert!(
+        ultima.bottom() <= botao.top() + 8.0,
+        "a pasta do fim ficou fora da popup com o foco nela: rect {ultima:?}, popup termina em {}",
+        botao.top()
+    );
+    press(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    harness.run_steps(3);
+
+    let pasta_fim = ids.last().expect("a última pasta").clone();
+    assert!(harness.state().selection.is_empty(), "o mover de sucesso limpa a seleção");
+    assert_eq!(harness.state().persist_count - baseline, 1, "o lote grava UMA vez");
+    for i in 0..3 {
+        let nome = format!("conta-{i:02}.exemplo.com");
+        let it = item_by_id(harness.state(), &item_id(harness.state(), &nome));
+        assert_eq!(it["folderId"].as_str(), Some(pasta_fim.as_str()), "o {nome} foi para a pasta do fim");
+    }
+}
+
 /// A barra da seleção sai da frente enquanto um diálogo modal está aberto: "Move to folder…" não pode
 /// aparecer atrás do rodapé do Edit (os prints do 027 mostravam a barra colada no cartão do diálogo).
+/// Parametrizado nos DOIS casos que existem (revisão 2, item 3): o aviso de cofre grande (`attach_warn`)
+/// é um Modal de verdade e esconde barra + rodapé; a paleta (Ctrl+K) é um popup do topo SEM véu — o
+/// rodapé CONTINUA à vista, porque escondê-lo deixava uma faixa vazia que nada cobria (revisão 3, item C).
 #[test]
 fn the_selection_bar_steps_aside_while_a_modal_is_open() {
-    let mut harness = harness(unlocked_with(6, "selbar-modal", Prefs::new("en", ThemeMode::Dark)));
-    harness.run_steps(2);
-    click_row(&mut harness, "conta-00.exemplo.com", egui::Modifiers::COMMAND);
-    harness.get_by_label("Move to folder…"); // com a seleção, a barra está lá
+    for (caso, esconde) in [("edit aberto", true), ("aviso de cofre grande", true), ("paleta aberta (Ctrl+K)", false)] {
+        // COM seleção: a barra está no rodapé e sai da árvore com um modal de verdade.
+        let mut barra = harness(unlocked_with(6, "selbar-modal", Prefs::new("en", ThemeMode::Dark)));
+        barra.run_steps(2);
+        click_row(&mut barra, "conta-00.exemplo.com", egui::Modifiers::COMMAND);
+        barra.get_by_label("Move to folder…"); // com a seleção, a barra está lá
 
-    // Abre o editor (o botão "Edit" da própria linha) — o cenário do print desktop-mudar-tipo.
-    click_labelled_button(&mut harness, "Edit");
-    harness.get_by_label("Save"); // o diálogo está aberto
+        match caso {
+            "edit aberto" => {
+                // O editor (o botão "Edit" da própria linha) — o cenário do print desktop-mudar-tipo.
+                click_labelled_button(&mut barra, "Edit");
+                barra.get_by_label("Save"); // o diálogo está aberto
+            }
+            "aviso de cofre grande" => {
+                barra.state_mut().attach_warn = Some(crate::AttachWarning {
+                    read: crate::jobs::AttachmentRead {
+                        item_id: "conta-00.exemplo.com".into(),
+                        name: "grande.txt".into(),
+                        mime: "text/plain",
+                        size: 1,
+                        data_b64: "QQ==".into(),
+                    },
+                    predicted: 999_999,
+                });
+                barra.run_steps(2);
+            }
+            _ => {
+                press(&mut barra, egui::Key::K, egui::Modifiers::COMMAND);
+                barra.run_steps(2);
+            }
+        }
 
-    for acao in ["Move to folder…", "Export to vault…", "Delete selected", "Clear selection"] {
-        assert!(harness.query_by_label(acao).is_none(), "'{acao}' apareceu atrás do diálogo aberto: a barra da seleção tem de sair da frente");
+        if esconde {
+            for acao in ["Move to folder…", "Export to vault…", "Delete selected", "Clear selection"] {
+                assert!(
+                    barra.query_by_label(acao).is_none(),
+                    "{caso}: '{acao}' apareceu atrás do diálogo aberto: a barra da seleção tem de sair da frente"
+                );
+            }
+        } else {
+            // A paleta não esconde nada: sem véu, o rodapé escondido ficava solto no ar.
+            for acao in ["Move to folder…", "Export to vault…", "Delete selected", "Clear selection"] {
+                barra.get_by_label(acao);
+            }
+        }
+
+        // SEM seleção: o rodapé é a contagem "Items:" — some com um modal de verdade, fica com a
+        // paleta (escondê-la deixava uma faixa vazia que nada cobria).
+        let mut contagem = harness(unlocked_with(6, "selbar-modal-contagem", Prefs::new("en", ThemeMode::Dark)));
+        contagem.run_steps(2);
+        contagem.get_by_label_contains("Items:");
+        match caso {
+            "edit aberto" => {
+                let primeira = contagem.get_by_label_contains("conta-00.exemplo.com").rect();
+                click_at(&mut contagem, primeira.center());
+                contagem.run_steps(2);
+                // O clique na linha só EXPANDE a ela: o editor abre pelo botão "Edit" da linha.
+                click_labelled_button(&mut contagem, "Edit");
+                contagem.get_by_label("Save");
+            }
+            "aviso de cofre grande" => {
+                contagem.state_mut().attach_warn = Some(crate::AttachWarning {
+                    read: crate::jobs::AttachmentRead {
+                        item_id: "conta-00.exemplo.com".into(),
+                        name: "grande.txt".into(),
+                        mime: "text/plain",
+                        size: 1,
+                        data_b64: "QQ==".into(),
+                    },
+                    predicted: 999_999,
+                });
+                contagem.run_steps(2);
+            }
+            _ => {
+                press(&mut contagem, egui::Key::K, egui::Modifiers::COMMAND);
+                contagem.run_steps(2);
+            }
+        }
+        if esconde {
+            assert!(contagem.query_by_label_contains("Items:").is_none(), "{caso}: o rodapé pingou atrás do diálogo");
+        } else {
+            contagem.get_by_label_contains("Items:");
+        }
     }
 }
 
