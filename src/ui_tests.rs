@@ -172,6 +172,15 @@ fn press(harness: &mut Harness<'_, KeysApp>, key: egui::Key, modifiers: egui::Mo
     harness.run_steps(2);
 }
 
+/// Como [`press`], mas anunciando o estado dos modificadores como o backend do SO faz
+/// (`Event::ModifiersChanged`): o app lê `input.modifiers`, não o modificador do evento da tecla.
+fn press_with(harness: &mut Harness<'_, KeysApp>, key: egui::Key, modifiers: egui::Modifiers) {
+    harness.input_mut().events.push(egui::Event::ModifiersChanged(modifiers));
+    press(harness, key, modifiers);
+    harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    harness.run_steps(1);
+}
+
 /// O clique numa linha da lista, com os modificadores do Ctrl/Shift (o mesmo caminho do ponteiro).
 fn click_row(harness: &mut Harness<'_, KeysApp>, name: &str, modifiers: egui::Modifiers) {
     {
@@ -721,6 +730,389 @@ fn cancelling_the_picker_with_an_empty_typed_path_in_a_saved_item_still_reports_
     assert!(err.contains("choose the attachment file"), "mensagem inesperada: {err:?}");
     let row_after = harness.get_by_label_contains("192.168.1.34").rect();
     assert!(row_after.top() > row_before.top(), "o aviso desloca a lista: {row_before:?} -> {row_after:?}");
+}
+
+/// O nó com o foco do teclado neste estado (a árvore do accesskit marca um só).
+fn focused_node<'a>(harness: &'a Harness<'_, KeysApp>) -> Option<egui_kittest::Node<'a>> {
+    harness.root().children_recursive().find(|node| node.is_focused())
+}
+
+/// Os rótulos e traços que desenharam o contorno de foco no último passe (o teste sem janela não vê
+/// pixels).
+fn focus_rings(harness: &Harness<'_, KeysApp>) -> Vec<(String, egui::Stroke)> {
+    crate::pintura::indicadores(&harness.ctx)
+}
+
+/// Onde ficou a área visível da rolagem do formulário no último passe (o retângulo já encolhido para
+/// o conteúdo, não o teto do `ScrollArea`).
+fn form_viewport(harness: &Harness<'_, KeysApp>) -> egui::Rect {
+    crate::pintura::viewport_do_form(&harness.ctx).expect("o formulário desenhou a rolagem")
+}
+
+/// O retângulo do modal do formulário de item (a `Area` do `egui::Modal`), do último passe.
+fn form_modal_rect(harness: &Harness<'_, KeysApp>) -> egui::Rect {
+    harness.ctx.memory(|mem| mem.area_rect(egui::Id::unique("form"))).expect("o modal do formulário")
+}
+
+/// Roda do mouse [notches] vezes sobre [pos]: com passo negativo o conteúdo sobe (rola para o fim).
+fn wheel(harness: &mut Harness<'_, KeysApp>, pos: egui::Pos2, notches: usize, step: f32) {
+    harness.input_mut().events.push(egui::Event::PointerMoved(pos));
+    harness.run_steps(1);
+    for _ in 0..notches {
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, step),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+    harness.run_steps(notches);
+}
+
+/// Um formulário de criar login com [campos] personalizados (mais alto que a janela), em 480×640.
+fn tall_login_form_with(name: &str, campos: usize) -> KeysApp {
+    let mut app = unlocked(name, Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Login);
+    // Com título o Save fica habilitado (e entra na ordem do Tab).
+    app.add_name = "Conta de teste".into();
+    for i in 0..campos {
+        app.form_custom.push(FormCustomField {
+            id: String::new(),
+            name: format!("Campo {i}"),
+            value: format!("valor {i}"),
+            hidden: false,
+            revealed: false,
+        });
+    }
+    app
+}
+
+/// O caso usual: dois campos personalizados.
+fn tall_login_form(name: &str) -> KeysApp {
+    tall_login_form_with(name, 2)
+}
+
+/// Os botões desenhados à mão (pill/ghost): só eles dependem do app para mostrar o foco.
+const HAND_DRAWN: [&str; 5] = ["Add attachment", "Add field", "Generate", "Save", "Cancel"];
+
+/// O Tab percorre o formulário inteiro, do primeiro campo ao Cancel: cada passo fica dentro da
+/// janela, e os botões desenhados à mão (Save, Cancel, anexo e "Add field") mostram o contorno de
+/// foco — antes só o campo Type tinha contorno.
+#[test]
+fn tab_walks_the_whole_form_and_every_button_shows_the_focus_ring() {
+    let mut harness = harness(tall_login_form("form-tab"));
+    harness.run_steps(3);
+    let janela = harness.ctx.content_rect();
+
+    let mut vistos: Vec<String> = Vec::new();
+    for step in 0..40 {
+        press(&mut harness, egui::Key::Tab, egui::Modifiers::NONE);
+        let node = focused_node(&harness).unwrap_or_else(|| panic!("passo {step}: o Tab perdeu o foco (vistos: {vistos:?})"));
+        let rotulo = node_text(&node);
+        let rect = node.rect();
+        assert!(janela.contains_rect(rect), "passo {step}: {rotulo:?} focado fora da janela: {rect:?}");
+        if HAND_DRAWN.contains(&rotulo.as_str()) {
+            let aneis = focus_rings(&harness);
+            let traco = aneis.iter().find(|(label, _)| label == &rotulo).map(|(_, traco)| *traco);
+            let traco = traco.unwrap_or_else(|| panic!("passo {step}: {rotulo:?} focado sem indicador de foco (aneis: {aneis:?})"));
+            // O diálogo engrossa a `selection.stroke` para 1,5 pt (`begin_dialog`); a cor é a do
+            // accent do tema, a mesma do traço de seleção dos campos.
+            let selecao = harness.ctx.style_of(harness.ctx.theme()).visuals.selection.stroke;
+            assert_eq!(
+                traco,
+                egui::Stroke::new(1.5, selecao.color),
+                "passo {step}: o anel de {rotulo:?} não usa o traço de seleção dos campos: {traco:?} vs 1,5×{:?}",
+                selecao.color
+            );
+        }
+        vistos.push(rotulo.clone());
+        if rotulo == "Cancel" {
+            break;
+        }
+    }
+    for label in HAND_DRAWN {
+        assert!(vistos.iter().any(|v| v == label), "o Tab não chegou em {label:?}: {vistos:?}");
+    }
+}
+
+/// PageDown, End, Home e as setas rolam o miolo do formulário (antes só a roda rolava): provado pelo
+/// lugar de um campo, não por estado interno. A fixture é alta de propósito para PageDown e End
+/// darem em lugares diferentes.
+#[test]
+fn the_form_scrolls_with_page_home_end_and_arrows() {
+    let mut harness = harness(tall_login_form_with("form-keys", 4));
+    harness.run_steps(3);
+    let viewport = form_viewport(&harness);
+    let topo = harness.get_by_label("Title").rect().top();
+    let fim = harness.get_by_label("Add field").rect().bottom();
+    assert!(fim > viewport.bottom(), "o formulário tem de passar da dobra para haver o que rolar: Add field em {fim}");
+
+    press(&mut harness, egui::Key::PageDown, egui::Modifiers::NONE);
+    let apos_pagedown = harness.get_by_label("Title").rect().top();
+    assert!(apos_pagedown < topo - 100.0, "PageDown não rolou: Title de {topo} para {apos_pagedown}");
+
+    press(&mut harness, egui::Key::Home, egui::Modifiers::NONE);
+    let apos_home = harness.get_by_label("Title").rect().top();
+    assert!((apos_home - topo).abs() <= 1.0, "Home não voltou ao topo: Title em {apos_home} (era {topo})");
+
+    press(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+    let apos_end = harness.get_by_label("Title").rect();
+    assert!(apos_end.bottom() <= viewport.top() + 1.0, "End não rolou até o fim: Title em {apos_end:?}, viewport até {viewport:?}");
+    // End foi além do PageDown (a fixture passa da dobra o bastante).
+    assert!(apos_end.top() < apos_pagedown - 50.0, "End e PageDown deram no mesmo lugar: {apos_end:?} vs Title em {apos_pagedown}");
+
+    press(&mut harness, egui::Key::Home, egui::Modifiers::NONE);
+    let apos_home = harness.get_by_label("Title").rect().top();
+    assert!((apos_home - topo).abs() <= 1.0, "Home não voltou ao topo depois do End: Title em {apos_home}");
+
+    press(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    let apos_seta = harness.get_by_label("Title").rect().top();
+    assert!(apos_seta < topo - 20.0, "a seta para baixo não rolou: Title de {topo} para {apos_seta}");
+
+    press(&mut harness, egui::Key::ArrowUp, egui::Modifiers::NONE);
+    let apos_seta = harness.get_by_label("Title").rect().top();
+    assert!((apos_seta - topo).abs() <= 1.0, "a seta para cima não voltou: Title em {apos_seta}");
+
+    // Com um botão focado (não é campo de texto), um modificador não é rolagem do miolo.
+    harness.get_by_label("Save").focus();
+    harness.run_steps(2);
+    press_with(&mut harness, egui::Key::End, egui::Modifiers::COMMAND);
+    let apos_ctrl_end = harness.get_by_label("Title").rect().top();
+    assert!((apos_ctrl_end - topo).abs() <= 1.0, "Ctrl+End rolou o miolo: Title de {topo} para {apos_ctrl_end}");
+
+    // Com o gerador por cima, as teclas não rolam o formulário escondido atrás do véu.
+    harness.state_mut().gen_open = true;
+    harness.run_steps(2);
+    let antes_gerador = harness.get_by_label("Title").rect().top();
+    press(&mut harness, egui::Key::PageDown, egui::Modifiers::NONE);
+    let com_gerador = harness.get_by_label("Title").rect().top();
+    assert!((com_gerador - antes_gerador).abs() <= 1.0, "o PageDown rolou o formulário por baixo do gerador: {antes_gerador} -> {com_gerador}");
+}
+
+/// As teclas de rolagem do formulário não vazam por cima de um popup de combo, da paleta (Ctrl+K) ou
+/// do prompt do atualizador: esses diálogos são `Area`s que não entram no `top_modal_layer`. Sem
+/// nenhum deles por cima, a mesma tecla rola (para o teste não passar no vazio).
+#[test]
+fn form_scroll_keys_do_not_leak_through_popups_or_the_palette() {
+    let mut app = tall_login_form("form-sobreposto");
+    // Sem o arquivo do launcher: o prompt do atualizador pode abrir (receita do teste da seleção).
+    app.updater = app.updater.with_pins_path(scratch("form-sobreposto-pins").join("pins.json"));
+    let mut harness = harness(app);
+    harness.run_steps(3);
+    let topo = harness.get_by_label("Title").rect().top();
+
+    // Combo Folder aberto: End não rola o miolo por baixo da lista.
+    harness.get_by_label("Folder").click();
+    harness.run_steps(2);
+    assert!(egui::Popup::is_any_open(&harness.ctx), "o combo Folder não abriu");
+    press(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+    let depois_popup = harness.get_by_label("Title").rect().top();
+    assert!((depois_popup - topo).abs() <= 1.0, "End rolou o miolo por baixo do popup do combo: {topo} -> {depois_popup}");
+    press(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    harness.run_steps(2);
+    assert!(!egui::Popup::is_any_open(&harness.ctx), "o popup do combo não fechou");
+
+    // Paleta (Ctrl+K) por cima: PageDown não rola o miolo.
+    press(&mut harness, egui::Key::K, egui::Modifiers::COMMAND);
+    harness.run_steps(2);
+    assert!(harness.state().palette.is_open(), "a paleta não abriu");
+    press(&mut harness, egui::Key::PageDown, egui::Modifiers::NONE);
+    let depois_paleta = harness.get_by_label("Title").rect().top();
+    assert!((depois_paleta - topo).abs() <= 1.0, "PageDown rolou o miolo por baixo da paleta: {topo} -> {depois_paleta}");
+    press(&mut harness, egui::Key::K, egui::Modifiers::COMMAND);
+    harness.run_steps(2);
+    assert!(!harness.state().palette.is_open(), "a paleta não fechou");
+
+    // Sem nada por cima, a mesma tecla rola o miolo (a fixture não pode ter encolhido a ponto de não
+    // haver o que rolar).
+    press(&mut harness, egui::Key::PageDown, egui::Modifiers::NONE);
+    let rolou = harness.get_by_label("Title").rect().top();
+    assert!(rolou < topo - 100.0, "sem popup/paleta o PageDown tinha de rolar: Title de {topo} para {rolou}");
+
+    // Prompt do atualizador (uma `Area` do craft_update) por cima: PageDown não rola o miolo. Antes,
+    // volta ao topo e confere que voltou — senão o PageDown não teria para onde ir e o passo passaria
+    // no vazio.
+    press(&mut harness, egui::Key::Home, egui::Modifiers::NONE);
+    let no_topo = harness.get_by_label("Title").rect().top();
+    assert!((no_topo - topo).abs() <= 1.0, "o Home não voltou ao topo: Title em {no_topo} (topo {topo})");
+    harness.state_mut().updater.offer(fake_release());
+    harness.run_steps(2);
+    assert!(harness.state().updater.prompt_open(), "o prompt do atualizador não abriu");
+    let antes_prompt = harness.get_by_label("Title").rect().top();
+    press(&mut harness, egui::Key::PageDown, egui::Modifiers::NONE);
+    let com_prompt = harness.get_by_label("Title").rect().top();
+    assert!((com_prompt - antes_prompt).abs() <= 1.0, "PageDown rolou o miolo por baixo do prompt do atualizador: {antes_prompt} -> {com_prompt}");
+}
+
+/// Tabular um formulário que cabe inteiro não rola nada: o foco só puxa a rolagem quando o widget
+/// está fora da área visível.
+#[test]
+fn tabbing_through_a_short_form_does_not_scroll() {
+    let mut app = unlocked("form-curto", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Note);
+    app.add_name = "Recado".into();
+    let mut harness = harness(app);
+    harness.run_steps(3);
+    // O viewport é o retângulo já encolhido para o conteúdo (não o teto do `ScrollArea`).
+    let viewport = form_viewport(&harness);
+    assert!(viewport.height() < 400.0, "o viewport do formulário curto devia encolher para o conteúdo: {viewport:?}");
+    let topo = harness.get_by_label("Title").rect().top();
+    let mut ultimo = String::new();
+    for _ in 0..12 {
+        press(&mut harness, egui::Key::Tab, egui::Modifiers::NONE);
+        let node = focused_node(&harness).expect("o Tab perde o foco no formulário curto");
+        ultimo = node_text(&node);
+        if ultimo == "Cancel" {
+            break;
+        }
+    }
+    assert_eq!(ultimo, "Cancel", "o Tab tem de chegar ao Cancel");
+    let depois = harness.get_by_label("Title").rect().top();
+    assert!((depois - topo).abs() <= 1.0, "tabular um formulário que cabe inteiro rolou: Title de {topo} para {depois}");
+}
+
+/// Focar pelo Tab um campo que está fora da dobra traz o campo para dentro da área visível da
+/// rolagem (antes a rolagem não acompanhava o foco): cada passo focado fica no viewport do miolo, e
+/// o conteúdo sobe no caminho até os campos de baixo. Na volta, Shift+Tab também traz para dentro.
+#[test]
+fn tabbing_to_a_field_below_the_fold_brings_it_into_the_scroll_viewport() {
+    let mut harness = harness(tall_login_form("form-focus-follow"));
+    harness.run_steps(3);
+    let viewport = form_viewport(&harness);
+    let janela = harness.ctx.content_rect();
+    let topo_inicial = harness.get_by_label("Title").rect().top();
+    // Só o rodapé fixo (Generate/Save/Cancel) vive fora da rolagem; todo o resto tem de estar dentro.
+    // A tolerância é a mesma folga de 4 pt do app: um widget rente à borda não dá salto de rolagem.
+    let rodape = ["Generate", "Save", "Cancel"];
+    let dentro = |rect: egui::Rect| viewport.expand(4.0).contains_rect(rect);
+
+    // Campos que já estão à vista não podem dar salto: no topo, o Tab até o "Add attachment" (que já
+    // está na vista) não pode mexer a rolagem. É o que pega o "centraliza qualquer foco".
+    let mut chegou_anexo = false;
+    for _ in 0..30 {
+        press(&mut harness, egui::Key::Tab, egui::Modifiers::NONE);
+        let node = focused_node(&harness).expect("o Tab perdeu o foco antes do Add attachment");
+        if node_text(&node) == "Add attachment" {
+            chegou_anexo = true;
+            break;
+        }
+    }
+    assert!(chegou_anexo, "o Tab não chegou ao Add attachment");
+    let apos_visivel = harness.get_by_label("Title").rect().top();
+    assert!((apos_visivel - topo_inicial).abs() <= 1.0, "tabular campos já visíveis rolou o miolo: Title de {topo_inicial} para {apos_visivel}");
+
+    let mut vistos: Vec<String> = Vec::new();
+    for step in 0..40 {
+        press(&mut harness, egui::Key::Tab, egui::Modifiers::NONE);
+        let node = focused_node(&harness).unwrap_or_else(|| panic!("passo {step}: o Tab perdeu o foco (vistos: {vistos:?})"));
+        let rotulo = node_text(&node);
+        let rect = node.rect();
+        assert!(janela.contains_rect(rect), "passo {step}: {rotulo:?} fora da janela: {rect:?}");
+        if !rodape.contains(&rotulo.as_str()) {
+            assert!(dentro(rect), "passo {step}: {rotulo:?} focado fora da área visível da rolagem: {rect:?} vs {viewport:?}");
+        }
+        vistos.push(rotulo.clone());
+        if rotulo == "Cancel" {
+            break;
+        }
+    }
+    let topo_final = harness.get_by_label("Title").rect().top();
+    assert!(topo_final < topo_inicial - 50.0, "o conteúdo não subiu ao descer o foco: Title de {topo_inicial} para {topo_final}");
+
+    // Na volta (Shift+Tab), do Cancel com o miolo no topo: o "Add field", que está abaixo da dobra,
+    // tem de ser trazido para dentro da área visível.
+    press(&mut harness, egui::Key::Home, egui::Modifiers::NONE);
+    let mut trouxe_add_field = false;
+    for _ in 0..3 {
+        press(&mut harness, egui::Key::Tab, egui::Modifiers::SHIFT);
+        // O Shift+Tab aplica o foco no quadro seguinte (o egui guarda o anterior até o próximo
+        // passe para o `gained_focus` funcionar); mais um quadro para a rolagem ser pintada.
+        harness.run_steps(1);
+        let node = focused_node(&harness).expect("o Shift+Tab perdeu o foco");
+        let rotulo = node_text(&node);
+        if !rodape.contains(&rotulo.as_str()) {
+            assert!(dentro(node.rect()), "Shift+Tab: {rotulo:?} fora da área visível: {:?} vs {viewport:?}", node.rect());
+            trouxe_add_field |= rotulo == "Add field";
+        }
+    }
+    assert!(trouxe_add_field, "o Shift+Tab não chegou ao Add field");
+}
+
+/// A 1000×720 internos do harness (a janela real tem a barra de título), um formulário de criar item
+/// com cinco anexos pendentes: logo ao abrir, antes de rolar, o botão de anexo já está inteiro dentro
+/// da área visível da rolagem e o rodapé dentro da janela; a roda desce até o "Add field" (que
+/// responde ao clique) e volta ao topo.
+#[test]
+fn the_five_attachment_form_is_reachable_at_1000x720() {
+    let mut app = unlocked("form-720", Prefs::new("en", ThemeMode::Dark));
+    // Identidade é o tipo mais alto (cinco campos + endereço em duas linhas): o pior caso.
+    app.open_add_form(NewKind::Identity);
+    app.add_name = "Documentos".into();
+    for nome in ["contrato-assinado-2026.pdf", "chave-de-recuperacao.txt", "foto-frente.jpg", "foto-verso.jpg", "laudo.pdf"] {
+        app.form_attachments.push(pending(nome));
+    }
+    let mut harness = harness_wh(app, 1000.0, 720.0);
+    harness.run_steps(3);
+    let janela = harness.ctx.content_rect();
+    let viewport = form_viewport(&harness);
+    assert!(janela.contains_rect(viewport), "a rolagem do formulário saiu da janela: {viewport:?}");
+
+    // Logo ao abrir (antes de rolar), o botão de anexo inteiro dentro da vista.
+    let anexo = harness.get_by_label("Add attachment").rect();
+    assert!(viewport.contains_rect(anexo), "o botão de anexo fica cortado na dobra: {anexo:?} vs viewport {viewport:?}");
+    for label in ["Save", "Cancel"] {
+        let rect = harness.get_by_label(label).rect();
+        assert!(janela.contains_rect(rect), "o rodapé {label} saiu da janela: {rect:?}");
+    }
+
+    // A roda rola até o fim: "Add field" inteiro na área visível e respondendo ao clique.
+    let topo = harness.get_by_label("Title").rect().top();
+    wheel(&mut harness, viewport.center(), 20, -30.0);
+    let campo = harness.get_by_label("Add field").rect();
+    assert!(viewport.contains_rect(campo), "Add field fora da vista depois da roda: {campo:?} vs viewport {viewport:?}");
+    // O anel de foco (2 pt para fora + a espessura do traço) também fica inteiro no fim da rolagem.
+    // A clipagem vertical é a da vista; na horizontal o miolo usa o recorte da moldura, mais largo.
+    let anel_v = egui::Rect::from_min_max(egui::pos2(campo.left(), campo.top() - 3.0), egui::pos2(campo.right(), campo.bottom() + 3.0));
+    assert!(
+        anel_v.top() >= viewport.top() - 0.5 && anel_v.bottom() <= viewport.bottom() + 0.5,
+        "o anel do Add field é cortado no fim da rolagem: {anel_v:?} vs viewport {viewport:?}"
+    );
+    let antes = harness.state().form_custom.len();
+    harness.get_by_label("Add field").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().form_custom.len(), antes + 1, "o Add field alcançado pela roda não respondeu ao clique");
+
+    // A roda volta ao topo.
+    wheel(&mut harness, viewport.center(), 40, 30.0);
+    let voltou = harness.get_by_label("Title").rect().top();
+    assert!((voltou - topo).abs() <= 1.0, "a roda não voltou ao topo: Title de {topo} para {voltou}");
+}
+
+/// A barra de força do login não pode redimensionar nem recentralizar o diálogo: a linha dela é
+/// reservada no miolo mesmo sem senha. Antes, a primeira letra digitada fazia o modal crescer e
+/// subir (recentralizado), levando os botões junto.
+#[test]
+fn the_login_form_does_not_resize_when_the_password_strength_bar_appears() {
+    let mut app = unlocked("form-forca", Prefs::new("en", ThemeMode::Dark));
+    app.open_add_form(NewKind::Login);
+    app.add_name = "Conta".into();
+    let mut harness = harness(app);
+    harness.run_steps(3);
+    let modal_antes = form_modal_rect(&harness);
+    let save_antes = harness.get_by_label("Save").rect();
+    let titulo_antes = harness.get_by_label("Title").rect();
+
+    harness.state_mut().add_pass = "x".into();
+    harness.run_steps(2);
+    assert_eq!(harness.get_all_by_role(Role::ProgressIndicator).count(), 1, "a barra de força não apareceu com a senha");
+
+    let modal_depois = form_modal_rect(&harness);
+    let save_depois = harness.get_by_label("Save").rect();
+    let titulo_depois = harness.get_by_label("Title").rect();
+    assert_eq!(modal_antes, modal_depois, "o modal mudou de tamanho/posição quando a barra de força apareceu");
+    assert_eq!(save_antes, save_depois, "o Save mudou de lugar quando a barra de força apareceu");
+    assert_eq!(titulo_antes, titulo_depois, "o miolo rolou quando a barra de força apareceu");
 }
 
 /// Um anexo já lido do disco, à espera no formulário.
@@ -4228,4 +4620,38 @@ fn locking_forgets_the_folder_of_the_last_picked_file() {
     h.state().pickers.push_for_test(crate::pickers::Picked { paths: vec![anexos.join("b.pdf")], then });
     h.run_steps(2);
     assert_eq!(h.state().picker_start_dir(), Some(dir), "resposta com o app trancado não repovoa a pasta lembrada");
+}
+
+/// Focar (pelas setas) um item do popup do combo Folder que está fora da lista visível não pode
+/// rolar o formulário atrás: o widget focado é de outra camada (a do popup), não a do miolo.
+#[test]
+fn focusing_an_item_of_the_folder_popup_does_not_scroll_the_form() {
+    let mut app = tall_login_form("form-popup-foco");
+    let mut raw = app.raw.clone().expect("cofre aberto");
+    for i in 0..30 {
+        crate::vault::add_folder(&mut raw, &format!("Pasta {i:02}"));
+    }
+    app.adopt(crate::crypto::test_session(), raw);
+    let mut harness = harness(app);
+    harness.run_steps(3);
+    let topo = harness.get_by_label("Title").rect().top();
+    harness.get_by_label("Folder").click();
+    harness.run_steps(2);
+    assert!(egui::Popup::is_any_open(&harness.ctx), "o combo Folder não abriu");
+
+    // Desce pelas setas até o foco sair da parte visível da janela (o popup não rola a lista).
+    let janela = harness.ctx.content_rect();
+    let mut fora_da_vista = false;
+    for _ in 0..30 {
+        press(&mut harness, egui::Key::ArrowDown, egui::Modifiers::NONE);
+        if let Some(node) = focused_node(&harness)
+            && !janela.contains_rect(node.rect())
+        {
+            fora_da_vista = true;
+            break;
+        }
+    }
+    assert!(fora_da_vista, "o foco não chegou a um item fora da parte visível da lista");
+    let depois = harness.get_by_label("Title").rect().top();
+    assert!((depois - topo).abs() <= 1.0, "focar um item do popup rolou o miolo atrás: Title de {topo} para {depois}");
 }

@@ -616,6 +616,14 @@ fn strength_color(score: u8) -> egui::Color32 {
 const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(10, 6);
 /// Altura externa mínima de um campo de uma linha.
 const FIELD_MIN_HEIGHT: f32 = 30.0;
+/// Altura do botão pill desenhado à mão (o rodapé do formulário reserva essa altura).
+const PILL_HEIGHT: f32 = 28.0;
+/// Moldura do modal na vertical (`modal_frame` recua 16 em cima e 16 embaixo).
+const MODAL_VERTICAL_MARGIN: f32 = 32.0;
+/// Respiro entre o modal centrado e as bordas da janela.
+const WINDOW_MARGIN: f32 = 16.0;
+/// Rodapé fixo do formulário: o espaço antes dos botões (12) + a altura do pill.
+const FORM_FOOTER_HEIGHT: f32 = 12.0 + PILL_HEIGHT;
 /// Quanto tempo o toast fica na tela (o mesmo do local-pdf).
 const TOAST_LIFETIME: std::time::Duration = std::time::Duration::from_millis(3500);
 
@@ -720,6 +728,49 @@ fn begin_dialog(ui: &mut egui::Ui) {
     ui.spacing_mut().interact_size.y = FIELD_MIN_HEIGHT;
 }
 
+/// Sinais de pintura que só os testes de UI leem: o teste roda sem janela e não vê pixels, então o
+/// próprio desenho avisa quando o indicador de foco saiu e onde ficou a área visível da rolagem. É o
+/// mesmo tipo de gancho do `persist_count` e do `dialog_asked` (só existem em `cfg(test)`).
+#[cfg(test)]
+mod pintura {
+    use egui::{Context, Id, Rect};
+
+    const INDICADORES: &str = "pintura-indicadores-de-foco";
+    const VIEWPORT: &str = "pintura-miolo-do-form";
+
+    /// Zera o quadro (chamado no começo de cada passe do app).
+    pub(crate) fn limpar(ctx: &Context) {
+        ctx.data_mut(|data| {
+            data.insert_temp(Id::unique(INDICADORES), Vec::<(String, egui::Stroke)>::new());
+            data.remove::<Rect>(Id::unique(VIEWPORT));
+        });
+    }
+
+    /// O contorno de foco saiu para este botão desenhado à mão, com este traço.
+    pub(crate) fn indicador(ctx: &Context, rotulo: &str, traco: egui::Stroke) {
+        ctx.data_mut(|data| {
+            let mut rotulos = data.get_temp::<Vec<(String, egui::Stroke)>>(Id::unique(INDICADORES)).unwrap_or_default();
+            rotulos.push((rotulo.to_owned(), traco));
+            data.insert_temp(Id::unique(INDICADORES), rotulos);
+        });
+    }
+
+    /// Onde ficou a área visível da rolagem do formulário neste passe.
+    pub(crate) fn viewport(ctx: &Context, rect: Rect) {
+        ctx.data_mut(|data| data.insert_temp(Id::unique(VIEWPORT), rect));
+    }
+
+    /// Rótulos e traços que mostraram o contorno no último passe.
+    pub(crate) fn indicadores(ctx: &Context) -> Vec<(String, egui::Stroke)> {
+        ctx.data(|data| data.get_temp::<Vec<(String, egui::Stroke)>>(Id::unique(INDICADORES))).unwrap_or_default()
+    }
+
+    /// A área visível da rolagem do formulário no último passe.
+    pub(crate) fn viewport_do_form(ctx: &Context) -> Option<Rect> {
+        ctx.data(|data| data.get_temp::<Rect>(Id::unique(VIEWPORT)))
+    }
+}
+
 /// Botão pill: `primary` preenche com o accent, o secundário fica no contorno.
 /// Desenhado à mão porque o `egui::Button` não tem raio/altura própria.
 fn pill(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
@@ -743,7 +794,7 @@ fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::
     let ink = if enabled { ink } else { skin.muted };
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 28.0, 28.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 28.0, PILL_HEIGHT), egui::Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let hovered = resp.hovered() && enabled;
     let fill = if !enabled {
@@ -758,7 +809,25 @@ fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::
     ui.painter().rect(rect, egui::CornerRadius::same(14), fill, stroke, egui::StrokeKind::Inside);
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter().galley(pos, galley, ink);
+    // Foco pelo Tab: o `selection.stroke` — dentro dos diálogos o `begin_dialog` o engrossa para
+    // 1,5 pt no accent do tema (fora deles vale o padrão de 1 pt do tema) —, o mesmo traço que o
+    // campo focado usa, por fora do pill. O pill é desenhado à mão; sem isto o botão recebia o foco
+    // e não mostrava.
+    if resp.has_focus() {
+        ui.painter().add(anel_de_foco(ui, label, rect, 16));
+    }
     resp
+}
+
+/// Monta o anel de foco dos botões desenhados à mão: 2 pt por fora do widget, com o
+/// `selection.stroke` (dentro dos diálogos, o accent de 1,5 pt que o `begin_dialog` define; fora
+/// deles, o de 1 pt do tema). O traço que vai para o `Shape` é o mesmo registrado no gancho de
+/// teste — quem apagar a chamada de pintura apaga o registro junto.
+fn anel_de_foco(ui: &egui::Ui, _rotulo: &str, rect: egui::Rect, raio: u8) -> egui::Shape {
+    let traco = ui.visuals().selection.stroke;
+    #[cfg(test)]
+    pintura::indicador(ui.ctx(), _rotulo, traco);
+    egui::Shape::rect_stroke(rect.expand(2.0), egui::CornerRadius::same(raio), traco, egui::StrokeKind::Middle)
 }
 
 /// Largura ocupada por um texto num estilo (para reservar espaço antes de desenhar).
@@ -823,6 +892,10 @@ fn ghost_ink_named(ui: &mut egui::Ui, label: &str, accessible: &str, ink: egui::
     }
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter().galley(pos, galley, ink);
+    // Foco pelo Tab, como no [`pill_colored`].
+    if resp.has_focus() {
+        ui.painter().add(anel_de_foco(ui, accessible, rect, 8));
+    }
     resp
 }
 
@@ -2970,6 +3043,15 @@ impl KeysApp {
         let mut copy_value: Option<(String, String)> = None;
         let resp = egui::Modal::new(egui::Id::unique("form")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
+            // Topo do conteúdo do modal: a altura da rolagem é o que sobra da janela depois do que
+            // fica fixo em volta (medido daqui até o começo do miolo e do rodapé fixo abaixo).
+            let topo_conteudo = ui.cursor().top();
+            // O modal é centrado no tamanho do quadro ANTERIOR e o `ScrollArea` mede a altura
+            // disponível nesse mesmo retângulo. Declarar aqui o espaço que resta até o fim da janela
+            // melhora o deslize de abertura (o miolo não fica encolhido pelo retângulo do quadro
+            // anterior), mas não o elimina: num formulário alto a altura ainda sai menor, limitada
+            // pelo topo do quadro anterior, e assenta nos quadros seguintes.
+            ui.set_max_height(ui.ctx().content_rect().bottom() - topo_conteudo);
             dialog_width(ui, 400.0);
             ui.heading(title);
             ui.add_space(4.0);
@@ -3016,7 +3098,6 @@ impl KeysApp {
             // da rolagem eles sumiam num formulário alto e a pessoa salvava sem reler. Corpo normal (o
             // `.small()` do print do 027 não era legível). Nada some em silêncio: os campos que o tipo
             // novo não tem viram campos personalizados.
-            let antes_avisos = ui.min_rect().bottom();
             if let Some(target) = alvo
                 && target != kind
             {
@@ -3037,14 +3118,88 @@ impl KeysApp {
                 }
                 ui.add_space(6.0);
             }
-            // O miolo rola só o que sobra na janela: o aviso medido acima + o que é fixo em volta dele
-            // (cabeçalho do diálogo, linha do tipo, rodapé de erro/botões e a moldura do modal ≈ 180).
-            // Assim os botões nunca saem da janela mínima de 340 px, com ou sem avisos.
-            let avisos_altura = ui.min_rect().bottom() - antes_avisos;
-            let teto_miolo = (ui.ctx().content_rect().height() - avisos_altura - 180.0).max(160.0);
+            // O miolo rola só o que sobra na janela: o que já foi desenhado fixo acima (cabeçalho,
+            // linha do tipo e avisos da troca), a moldura do modal, o rodapé fixo (erro + botões) e um
+            // respiro para não encostar nas bordas. Antes era um "180" chutado: com o erro/avisos ele
+            // estourava a janela (o rodapé saía por baixo) e, sem eles, o chute deixava o último
+            // botão do miolo cortado na dobra (1000×720).
+            let altura_acima = ui.cursor().top() - topo_conteudo;
+            // A linha de erro (quando há) mora fixa abaixo do miolo: o espaço dela é medido no mesmo
+            // estilo e na mesma largura em que é desenhada, senão um erro comprido empurra o rodapé
+            // para fora da janela.
+            let altura_erro = if let Some(error) = &self.form_err {
+                let texto = format!("{}: {error}", tr("Error"));
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let galley = ui.painter().layout(texto, font, Skin::of(ui).danger, ui.available_width());
+                6.0 + galley.size().y + 2.0
+            } else {
+                0.0
+            };
+            let teto_miolo =
+                (ui.ctx().content_rect().height() - MODAL_VERTICAL_MARGIN - WINDOW_MARGIN - altura_acima - FORM_FOOTER_HEIGHT - altura_erro)
+                    .max(120.0);
+            // O teclado do miolo só age quando o formulário é o diálogo do topo e nada está por cima:
+            // o popup de um combo (Type/Folder), a paleta (Ctrl+K) e o prompt do atualizador são
+            // `Area`s que não entram no `top_modal_layer`. Para os popups, `Popup::is_any_open` lê a
+            // MEMÓRIA (do quadro anterior), e não o `ctx.any_popup_open()` que o teclado da lista usa
+            // em `selection_ui.rs`: lá ele roda depois dos popups do passe; aqui, antes de eles serem
+            // desenhados.
+            let no_topo =
+                ctx.memory(|mem| mem.top_modal_layer()) == Some(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("form")));
+            let teclado_do_miolo =
+                no_topo && !egui::Popup::is_any_open(ctx) && !self.palette.is_open() && !self.updater.prompt_open();
             // Salt novo por abertura: o estado da rolagem persistia por id e o Edit de OUTRO item
             // reabria na rolagem do formulário anterior (D04 do teste independente).
-            egui::ScrollArea::vertical().id_salt(format!("form-miolo-{}", self.form_scroll_seq)).max_height(teto_miolo).show(ui, |ui| {
+            // `animated(false)`: o novo offset é aplicado direto no fim do passe (e pintado no quadro
+            // seguinte), sem interpolar até 0,3 s — uma tecla, um passo fixo. A roda continua com a
+            // física do egui.
+            let miolo =
+                egui::ScrollArea::vertical().id_salt(format!("form-miolo-{}", self.form_scroll_seq)).animated(false).max_height(teto_miolo);
+            let desenhar_miolo = |ui: &mut egui::Ui| {
+                // Teclado do miolo. PageUp/PageDown rolam sempre — o `TextEdit` não usa essas teclas.
+                // Com um campo de texto focado, Home/End e as setas ficam com ele: movem o cursor
+                // (num campo de várias linhas, Home/End vão ao começo/fim da LINHA, não do texto; as
+                // setas andam no texto). Home/End rolam quando o foco não é de texto; as setas, só
+                // sem foco nenhum, porque com um botão focado o egui as usa para navegar entre
+                // widgets. Só sem modificador (Ctrl+End, Shift+Home etc. não são rolagem daqui).
+                let texto_focado = ui.ctx().text_edit_focused();
+                let sem_foco = ui.memory(|mem| mem.focused()).is_none();
+                let (page_down, page_up, home, end, seta_baixo, seta_cima) = ui.input(|i| {
+                    let rola = teclado_do_miolo && i.modifiers.is_none();
+                    (
+                        rola && i.key_pressed(egui::Key::PageDown),
+                        rola && i.key_pressed(egui::Key::PageUp),
+                        rola && i.key_pressed(egui::Key::Home),
+                        rola && i.key_pressed(egui::Key::End),
+                        rola && i.key_pressed(egui::Key::ArrowDown),
+                        rola && i.key_pressed(egui::Key::ArrowUp),
+                    )
+                });
+                let passo_pagina = teto_miolo * 0.9;
+                let passo_linha = ui.spacing().interact_size.y + 8.0;
+                let mut delta = 0.0;
+                if page_down {
+                    delta -= passo_pagina;
+                }
+                if page_up {
+                    delta += passo_pagina;
+                }
+                if !texto_focado && sem_foco {
+                    if seta_baixo {
+                        delta -= passo_linha;
+                    }
+                    if seta_cima {
+                        delta += passo_linha;
+                    }
+                }
+                if delta != 0.0 {
+                    // Sem animação: uma tecla = um passo, e o deslocamento é o mesmo no app e no teste.
+                    ui.scroll_with_delta_animation(egui::vec2(0.0, delta), egui::style::ScrollAnimation::none());
+                }
+                if !texto_focado && home {
+                    // O cursor está no começo do miolo: alinhar o topo = voltar ao topo.
+                    ui.scroll_to_cursor(Some(egui::Align::TOP));
+                }
                 // Os campos encolhem com o diálogo (a coluna dos rótulos fica com ~110).
                 let field = (ui.available_width() - 110.0).clamp(140.0, 280.0);
                 egui::Grid::new("form-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -3294,25 +3449,32 @@ impl KeysApp {
                         }
                     });
                 }
-                // Força ao vivo (zxcvbn) — só no login (o único tipo com senha) e quando há uma.
-                if kind == vault::ItemKind::Login && !self.add_pass.is_empty() {
-                    let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
+                // Força ao vivo (zxcvbn) — só no login (o único tipo com senha). A linha da barra é
+                // reservada MESMO sem senha: se ela entrasse só ao digitar, o miolo ficaria mais alto
+                // e o diálogo cresceria (e subiria, recentralizado) na primeira letra. Sem senha a
+                // linha fica vazia, com a mesma altura da barra (`interact_size.y`).
+                if kind == vault::ItemKind::Login {
                     ui.add_space(8.0);
-                    // O rótulo FORA da barra (o texto dentro cortava no print do 027): barra à esquerda,
-                    // palavra ao lado em corpo normal.
-                    ui.horizontal(|ui| {
-                        // O rótulo medido no estilo em que é DESENHADO (corpo, com a palavra
-                        // traduzida — revisão 2, item F): medir "excellent" fixo no estilo de botão
-                        // deixava barra larga demais (ou estreita demais) nos outros idiomas.
-                        let largura_rotulo = text_width(ui, strength_label(strength.score), egui::TextStyle::Body) + 10.0;
-                        ui.add(
-                            egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
-                                .desired_width((ui.available_width() - largura_rotulo).max(120.0))
-                                .fill(strength_color(strength.score)),
-                        )
-                        .on_hover_text(tr_fmt("zxcvbn: 10^{guesses} guesses", &[("guesses", &format!("{:.1}", strength.guesses_log10))]));
-                        ui.label(egui::RichText::new(strength_label(strength.score)).strong());
-                    });
+                    if self.add_pass.is_empty() {
+                        ui.allocate_space(egui::vec2(ui.available_width(), ui.spacing().interact_size.y));
+                    } else {
+                        let strength = generator::password_strength(&self.add_pass, &[self.add_name.as_str()]);
+                        // O rótulo FORA da barra (o texto dentro cortava no print do 027): barra à
+                        // esquerda, palavra ao lado em corpo normal.
+                        ui.horizontal(|ui| {
+                            // O rótulo medido no estilo em que é DESENHADO (corpo, com a palavra
+                            // traduzida — revisão 2, item F): medir "excellent" fixo no estilo de
+                            // botão deixava barra larga demais (ou estreita demais) nos outros idiomas.
+                            let largura_rotulo = text_width(ui, strength_label(strength.score), egui::TextStyle::Body) + 10.0;
+                            ui.add(
+                                egui::ProgressBar::new((f32::from(strength.score) + 1.0) / 5.0)
+                                    .desired_width((ui.available_width() - largura_rotulo).max(120.0))
+                                    .fill(strength_color(strength.score)),
+                            )
+                            .on_hover_text(tr_fmt("zxcvbn: 10^{guesses} guesses", &[("guesses", &format!("{:.1}", strength.guesses_log10))]));
+                            ui.label(egui::RichText::new(strength_label(strength.score)).strong());
+                        });
+                    }
                 }
 
                 // ── campos personalizados (todos os tipos) ─────────────────────
@@ -3381,7 +3543,46 @@ impl KeysApp {
                 if pill(ui, tr("Add field"), false).clicked() {
                     add_field = true;
                 }
-            });
+                // Folga no fim do miolo: o anel de foco do último botão (2 pt para fora + a espessura
+                // do traço) não pode encostar na borda inferior da rolagem quando ela chega ao fim.
+                ui.add_space(4.0);
+                if !texto_focado && end {
+                    // O cursor está no fim do miolo: alinhar embaixo = rolar até o fim.
+                    ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                }
+                // Foco que chega pelo teclado (Tab/Shift+Tab) a um widget do miolo fora do recorte:
+                // centraliza. As condições dizem o que precisa ser verdade, não "se é do miolo":
+                // - a camada do widget focado tem de ser a do `ui` do miolo (um item do popup de um
+                //   combo, por exemplo, foca em outra camada — não pode mexer no formulário atrás);
+                // - `interact_rect != rect` significa "recortado por alguma rolagem" (o rodapé fixo
+                //   não é recortado, e não pode ser centralizado);
+                // - e só quando ele está fora da área visível (4 pt de folga) — campos já à vista não
+                //   dão salto. O clique não conta.
+                if !ui.input(|i| i.pointer.any_down())
+                    && let Some(id) = ui.memory(|mem| mem.focused())
+                    && let Some(foco) = ui.ctx().read_response(id)
+                    && foco.gained_focus()
+                    && foco.layer_id == ui.layer_id()
+                    && foco.interact_rect != foco.rect
+                    && !ui.clip_rect().expand(4.0).contains_rect(foco.rect)
+                {
+                    foco.scroll_to_me_animation(Some(egui::Align::Center), egui::style::ScrollAnimation::none());
+                }
+            };
+            // O `ScrollAreaOutput` só interessa ao teste (para saber o viewport); no app ele é
+            // descartado pelo próprio `show`.
+            #[cfg(test)]
+            let saida = miolo.show(ui, desenhar_miolo);
+            #[cfg(not(test))]
+            miolo.show(ui, desenhar_miolo);
+            #[cfg(test)]
+            pintura::viewport(
+                ui.ctx(),
+                // `inner_rect` é o retângulo antes do encolhimento. No eixo vertical o visível é o
+                // mínimo com o conteúdo (`auto_shrink`); no horizontal, sem rolagem habilitada, a
+                // área segue o conteúdo.
+                egui::Rect::from_min_size(saida.inner_rect.min, egui::vec2(saida.content_size.x, saida.inner_rect.height().min(saida.content_size.y))),
+            );
             // A conversão recusada aparece aqui, no próprio modal — a linha de erro da tela de trás fica
             // coberta enquanto o formulário está aberto.
             if let Some(error) = &self.form_err {
@@ -4554,6 +4755,8 @@ impl KeysApp {
     /// Um quadro da interface: o `eframe::App::ui` e os testes de UI (`ui_tests.rs`) chamam isto.
     fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
+        #[cfg(test)]
+        pintura::limpar(ctx);
         // Fechar (X) minimiza pra bandeja — SÓ no Windows, onde há bandeja.
         // (No Linux o X fecha de verdade.) Sem lock ao esconder: o cofre fica
         // destrancado na memória (decisão do app — PC da própria pessoa).
