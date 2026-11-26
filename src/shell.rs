@@ -150,7 +150,7 @@ impl KeysApp {
         if check {
             self.updater.check_now(ctx);
         }
-        if close || resp.should_close() {
+        if close || self.modal_should_close(ctx, &resp) {
             self.settings_open = false;
             self.updater.dismiss_status();
         }

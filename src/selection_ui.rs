@@ -244,7 +244,7 @@ impl KeysApp {
         });
         if confirm {
             self.trash_selected();
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.batch_delete_ask = None;
         }
     }

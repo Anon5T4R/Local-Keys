@@ -737,12 +737,16 @@ mod pintura {
 
     const INDICADORES: &str = "pintura-indicadores-de-foco";
     const VIEWPORT: &str = "pintura-miolo-do-form";
+    const TOAST: &str = "pintura-toast";
+    const ERRO_EXPORT: &str = "pintura-erro-do-export";
 
     /// Zera o quadro (chamado no começo de cada passe do app).
     pub(crate) fn limpar(ctx: &Context) {
         ctx.data_mut(|data| {
             data.insert_temp(Id::unique(INDICADORES), Vec::<(String, egui::Stroke)>::new());
             data.remove::<Rect>(Id::unique(VIEWPORT));
+            data.remove::<Rect>(Id::unique(TOAST));
+            data.remove::<Rect>(Id::unique(ERRO_EXPORT));
         });
     }
 
@@ -768,6 +772,26 @@ mod pintura {
     /// A área visível da rolagem do formulário no último passe.
     pub(crate) fn viewport_do_form(ctx: &Context) -> Option<Rect> {
         ctx.data(|data| data.get_temp::<Rect>(Id::unique(VIEWPORT)))
+    }
+
+    /// Onde o cartão do toast ficou neste passe.
+    pub(crate) fn toast(ctx: &Context, rect: Rect) {
+        ctx.data_mut(|data| data.insert_temp(Id::unique(TOAST), rect));
+    }
+
+    /// O cartão do toast no último passe (inclui a moldura, não só o texto).
+    pub(crate) fn toast_do_rodape(ctx: &Context) -> Option<Rect> {
+        ctx.data(|data| data.get_temp::<Rect>(Id::unique(TOAST)))
+    }
+
+    /// Onde ficou o slot reservado para o erro do "Export to vault" neste passe.
+    pub(crate) fn erro_do_export(ctx: &Context, rect: Rect) {
+        ctx.data_mut(|data| data.insert_temp(Id::unique(ERRO_EXPORT), rect));
+    }
+
+    /// O slot do erro do "Export to vault" no último passe.
+    pub(crate) fn slot_do_erro_do_export(ctx: &Context) -> Option<Rect> {
+        ctx.data(|data| data.get_temp::<Rect>(Id::unique(ERRO_EXPORT)))
     }
 }
 
@@ -1124,7 +1148,10 @@ struct KeysApp {
     // trancado
     path: String,
     master: String,
-    confirm: String,
+    /// Senhas do formulário "New vault" (tela de trancado). Buffers PRÓPRIOS: a senha digitada
+    /// para destrancar não pode aparecer no cofre novo, nem a do cofre novo na de destrancar.
+    new_master: String,
+    new_confirm: String,
     err: Option<String>,
     quick_unlock: bool,
     quick_ativa: bool, // há chave guardada no cofre do SO pra este path
@@ -1314,6 +1341,12 @@ struct KeysApp {
     merge_plan: Option<MergePlan>,
     /// Paleta de comandos da suíte (lupa e Ctrl+K).
     palette: craft_palette::Palette,
+    /// A barra de cima (lupa, tema, engrenagem) neste quadro. Com um diálogo modal aberto o clique
+    /// nela cai no véu (a barra está por baixo) e não pode fechar o diálogo.
+    top_bar_rect: Option<egui::Rect>,
+    /// O painel de rodapé (barra da seleção ou contagem) neste quadro. O toast é desenhado ACIMA
+    /// dele: em janela estreita a barra quebra em duas linhas e o aviso cobria "Clear selection".
+    footer_rect: Option<egui::Rect>,
     /// Onde o config.json é gravado (os testes apontam para uma pasta temporária).
     config_file: std::path::PathBuf,
     /// Onde o `state.json` é gravado (último cofre aberto); os testes apontam para uma pasta temporária.
@@ -1333,7 +1366,8 @@ impl KeysApp {
             last_picked_dir: None,
             path: String::new(),
             master: String::new(),
-            confirm: String::new(),
+            new_master: String::new(),
+            new_confirm: String::new(),
             err: None,
             quick_unlock: false,
             quick_ativa: false,
@@ -1436,6 +1470,8 @@ impl KeysApp {
             merge_error: None,
             merge_plan: None,
             palette: craft_palette::Palette::default(),
+            top_bar_rect: None,
+            footer_rect: None,
             config_file: config_dir(APP_ID).join("config.json"),
             state_file: config_dir(APP_ID).join("state.json"),
             #[cfg(test)]
@@ -1532,7 +1568,8 @@ impl KeysApp {
         self.raw = None;
         self.items.clear();
         self.master.clear();
-        self.confirm.clear();
+        self.new_master.clear();
+        self.new_confirm.clear();
         self.add_pass.clear();
         self.form_open = false;
         self.form_edit_id = None;
@@ -1626,7 +1663,8 @@ impl KeysApp {
         self.session = Some(session);
         self.err = None;
         self.master.clear();
-        self.confirm.clear();
+        self.new_master.clear();
+        self.new_confirm.clear();
     }
 
     /// Troca a pasta do filtro da lista e lembra a escolha no config.json (o próximo cofre abre nela). O cofre
@@ -1760,16 +1798,16 @@ impl KeysApp {
         if self.path.trim().is_empty() {
             return;
         }
-        if self.master.is_empty() {
+        if self.new_master.is_empty() {
             self.err = Some(tr("the master password cannot be empty").into());
             return;
         }
-        if self.master != self.confirm {
+        if self.new_master != self.new_confirm {
             self.err = Some(tr("the passwords do not match").into());
             return;
         }
-        let password = Zeroizing::new(std::mem::take(&mut self.master));
-        self.confirm.clear();
+        let password = Zeroizing::new(std::mem::take(&mut self.new_master));
+        self.new_confirm.clear();
         let quick = self.quick_unlock;
         let path = self.path.trim().to_string();
         self.start_job(ctx, tr("working…"), Job::Create { path, password, quick });
@@ -2745,12 +2783,14 @@ impl KeysApp {
     fn footer(&mut self, ctx: &egui::Context) {
         let skin = Skin::from_visuals(&ctx.style_of(ctx.theme()).visuals);
         let screen = ctx.viewport_rect();
-        let mut lift = 18.0;
+        // A base é o TOPO do rodapé (a barra da seleção/contagem), não o pé da janela: o toast
+        // desenhado em cima do rodapé cobria os botões quando a barra quebrava em duas linhas.
+        let mut bottom = self.footer_rect.map_or(screen.bottom() - 18.0, |rodape| rodape.top() - 8.0);
         if let Some(label) = self.job_label {
             let area = egui::Area::new(egui::Id::unique("job-notice"))
                 .order(egui::Order::Tooltip)
                 .pivot(egui::Align2::CENTER_BOTTOM)
-                .fixed_pos(screen.center_bottom() - egui::vec2(0.0, lift))
+                .fixed_pos(egui::pos2(screen.center().x, bottom))
                 .show(ctx, |ui| {
                     egui::Frame::NONE
                         .fill(skin.inverted_fill)
@@ -2763,7 +2803,7 @@ impl KeysApp {
                             });
                         });
                 });
-            lift += area.response.rect.height() + 8.0;
+            bottom = area.response.rect.top() - 8.0;
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         let Some((msg, at)) = self.toast.clone() else {
@@ -2773,25 +2813,33 @@ impl KeysApp {
             self.toast = None;
             return;
         }
-        egui::Area::new(egui::Id::unique("toast"))
-            .order(egui::Order::Tooltip)
-            .pivot(egui::Align2::CENTER_BOTTOM)
-            .fixed_pos(screen.center_bottom() - egui::vec2(0.0, lift))
-            .show(ctx, |ui| {
-                egui::Frame::NONE
-                    .fill(skin.inverted_fill)
-                    .corner_radius(egui::CornerRadius::same(8))
-                    .inner_margin(egui::Margin::symmetric(16, 10))
-                    .show(ui, |ui| {
-                        // Um toast curto não pode impor largura ao próximo.
-                        ui.set_max_width((screen.width() - 64.0).clamp(1.0, 560.0));
-                        // O ✓ é o ícone da suíte (o glyph não existe nas fontes embutidas).
-                        ui.horizontal(|ui| {
-                            ui.add(craft_icons::ui::image(ui, craft_icons::Icon::Check).tint(skin.inverted_text));
-                            ui.add(egui::Label::new(egui::RichText::new(msg).color(skin.inverted_text)).wrap());
+        let desenhar_toast = |ctx: &egui::Context| {
+            egui::Area::new(egui::Id::unique("toast"))
+                .order(egui::Order::Tooltip)
+                .pivot(egui::Align2::CENTER_BOTTOM)
+                .fixed_pos(egui::pos2(screen.center().x, bottom))
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(skin.inverted_fill)
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(16, 10))
+                        .show(ui, |ui| {
+                            // Um toast curto não pode impor largura ao próximo.
+                            ui.set_max_width((screen.width() - 64.0).clamp(1.0, 560.0));
+                            // O ✓ é o ícone da suíte (o glyph não existe nas fontes embutidas).
+                            ui.horizontal(|ui| {
+                                ui.add(craft_icons::ui::image(ui, craft_icons::Icon::Check).tint(skin.inverted_text));
+                                ui.add(egui::Label::new(egui::RichText::new(msg).color(skin.inverted_text)).wrap());
+                            });
                         });
-                    });
-            });
+                })
+        };
+        // O `InnerResponse` da área só interessa ao teste (o retângulo do cartão); no app ele é
+        // descartado pelo próprio `show`.
+        #[cfg(test)]
+        pintura::toast(ctx, desenhar_toast(ctx).response.rect);
+        #[cfg(not(test))]
+        desenhar_toast(ctx);
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 
@@ -3630,7 +3678,7 @@ impl KeysApp {
         {
             self.copied(&nome);
         }
-        if cancel || resp.should_close() {
+        if cancel || self.modal_should_close(ctx, &resp) {
             self.close_form();
         }
     }
@@ -3657,7 +3705,7 @@ impl KeysApp {
         if let Some(pick) = pick {
             self.new_kind_open = false;
             self.open_add_form(pick);
-        } else if resp.should_close() {
+        } else if self.modal_should_close(ctx, &resp) {
             self.new_kind_open = false;
         }
     }
@@ -3689,7 +3737,7 @@ impl KeysApp {
         if confirm {
             self.delete_item(&id);
             self.delete_ask = None;
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.delete_ask = None;
         }
     }
@@ -3767,7 +3815,7 @@ impl KeysApp {
         });
         if run {
             self.run_import(ctx);
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.import_open = false;
             self.import_path.clear();
             self.import_password.clear();
@@ -3803,7 +3851,7 @@ impl KeysApp {
                 close = true;
             }
         });
-        if close || resp.should_close() {
+        if close || self.modal_should_close(ctx, &resp) {
             self.import_report = None;
         }
     }
@@ -3875,7 +3923,7 @@ impl KeysApp {
                 Err(e) => self.err = Some(e),
             }
         }
-        if close || resp.should_close() {
+        if close || self.modal_should_close(ctx, &resp) {
             self.gen_open = false;
             self.gen_result.clear();
         }
@@ -3919,7 +3967,7 @@ impl KeysApp {
         });
         if confirm {
             self.change_master(ctx);
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.change_open = false;
             self.chg_old.clear();
             self.chg_new.clear();
@@ -4075,7 +4123,7 @@ impl KeysApp {
             }
         } else if add {
             self.add_attachment_from(&item_id, ctx);
-        } else if close || resp.should_close() {
+        } else if close || self.modal_should_close(ctx, &resp) {
             self.attach_item = None;
             self.attach_path.clear();
         }
@@ -4109,7 +4157,7 @@ impl KeysApp {
         if cria {
             self.create_folder();
             self.folder_new_open = false;
-        } else if cancela || resp.should_close() {
+        } else if cancela || self.modal_should_close(ctx, &resp) {
             self.folder_new_open = false;
             self.folder_new.clear();
         }
@@ -4168,7 +4216,7 @@ impl KeysApp {
                 self.apply_attachment(warning.read);
                 self.continua_fila_anexos(ctx);
             }
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             // Cancelar descarta o anexo lido E a fila: o resto da seleção não entra sem o usuário ver.
             self.attach_warn = None;
             self.attach_queue.clear();
@@ -4279,7 +4327,7 @@ impl KeysApp {
                 self.persist(next);
             }
         }
-        if fecha || resp.should_close() {
+        if fecha || self.modal_should_close(ctx, &resp) {
             self.folders_open = false;
             self.folder_edit_id = None;
             self.folder_edit_name.clear();
@@ -4351,7 +4399,7 @@ impl KeysApp {
             // "" = cancelar o "excluir de vez" deste item.
             self.purge_ask = if id.is_empty() { None } else { Some(id) };
         }
-        if close || resp.should_close() {
+        if close || self.modal_should_close(ctx, &resp) {
             self.trash_open = false;
             self.purge_ask = None;
         }
@@ -4460,7 +4508,7 @@ impl KeysApp {
         });
         if grava {
             self.sync_apply();
-        } else if fecha || resp.should_close() {
+        } else if fecha || self.modal_should_close(ctx, &resp) {
             self.sync_open = false;
             self.sync_plan = None;
         }
@@ -4508,7 +4556,7 @@ impl KeysApp {
         });
         if open {
             self.merge_other_open(ctx);
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.cancel_merge_password();
         }
     }
@@ -4609,7 +4657,7 @@ impl KeysApp {
         });
         if merge {
             self.merge_apply();
-        } else if close || resp.should_close() {
+        } else if close || self.modal_should_close(ctx, &resp) {
             self.merge_plan = None;
             self.merge_path.clear();
         }
@@ -4678,7 +4726,7 @@ impl KeysApp {
         });
         if run {
             self.run_export(ctx);
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.export_open = false;
         }
     }
@@ -4692,6 +4740,7 @@ impl KeysApp {
         let busy = self.job_label.is_some();
         let mut create = false;
         let mut cancel = false;
+        let mut passwords_edited = false;
         let resp = egui::Modal::new(egui::Id::unique("export-vault")).frame(modal_frame(ctx)).show(ctx, |ui| {
             begin_dialog(ui);
             dialog_width(ui, 420.0);
@@ -4714,7 +4763,8 @@ impl KeysApp {
             let field = (ui.available_width() - 130.0).clamp(120.0, 260.0);
             ui.horizontal(|ui| {
                 let label = ui.label(tr("Password"));
-                ui.add(line(&mut self.export_vault_pass).password(!self.export_vault_reveal).desired_width(field - 28.0)).labelled_by(label.id);
+                let response = ui.add(line(&mut self.export_vault_pass).password(!self.export_vault_reveal).desired_width(field - 28.0));
+                passwords_edited |= response.labelled_by(label.id).changed();
                 if ghost(ui, if self.export_vault_reveal { "🙈" } else { "👁" }).on_hover_text(tr("Show/hide")).clicked() {
                     self.export_vault_reveal = !self.export_vault_reveal;
                 }
@@ -4722,11 +4772,33 @@ impl KeysApp {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let label = ui.label(tr("Confirm password"));
-                ui.add(line(&mut self.export_vault_confirm).password(!self.export_vault_reveal).desired_width(field - 28.0)).labelled_by(label.id);
+                let response = ui.add(line(&mut self.export_vault_confirm).password(!self.export_vault_reveal).desired_width(field - 28.0));
+                passwords_edited |= response.labelled_by(label.id).changed();
             });
-            if let Some(error) = &self.export_vault_err {
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new(error).small().color(egui::Color32::LIGHT_RED));
+            // O slot do erro reserva SEMPRE uma linha: o caso comum (senhas vazias/diferentes) não
+            // muda a altura do modal. Medido no harness, sem o slot: a linha de erro entrava na altura
+            // do modal centralizado, os campos subiam 1 px e os botões desciam 19 px. Quando a mensagem
+            // precisa de mais linhas, o slot cresce até a altura real do texto (medida no mesmo estilo e
+            // na mesma largura) e o diálogo cresce junto, cerca de 10 px por linha; a galeria desenhada é
+            // a mesma — nada é cortado. Na janela mínima (260 px de conteúdo) as quatro mensagens cabem
+            // em uma linha nos idiomas do app; o ramo de duas linhas é guarda para mensagens futuras.
+            // Editar as senhas limpa o erro do envio anterior.
+            ui.add_space(6.0);
+            let error_width = ui.available_width();
+            let error_line = ui.text_style_height(&egui::TextStyle::Small);
+            let error_galley = self
+                .export_vault_err
+                .as_ref()
+                .map(|error| ui.painter().layout(error.clone(), egui::TextStyle::Small.resolve(ui.style()), egui::Color32::LIGHT_RED, error_width));
+            let error_height = error_galley.as_ref().map_or(error_line, |galeria| galeria.size().y.max(error_line));
+            let (slot, _) = ui.allocate_exact_size(egui::vec2(error_width, error_height), egui::Sense::hover());
+            if let Some(galeria) = error_galley {
+                let mut linha = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(egui::Layout::top_down(egui::Align::Min)));
+                // O clip é o herdado do diálogo; a altura reservada já é a da galeria desenhada.
+                linha.set_clip_rect(ui.clip_rect());
+                linha.add(egui::Label::new(egui::WidgetText::Galley(galeria)));
+                #[cfg(test)]
+                pintura::erro_do_export(ui.ctx(), slot);
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -4739,9 +4811,14 @@ impl KeysApp {
                 }
             });
         });
+        // Editar qualquer uma das senhas invalida o erro do envio anterior (o "não conferem" some
+        // assim que a pessoa começa a corrigir; o próximo Create valida de novo).
+        if passwords_edited {
+            self.export_vault_err = None;
+        }
         if create {
             self.run_export_vault(ctx);
-        } else if cancel || resp.should_close() {
+        } else if cancel || self.modal_should_close(ctx, &resp) {
             self.export_vault_open = false;
             drop(Zeroizing::new(std::mem::take(&mut self.export_vault_pass)));
             drop(Zeroizing::new(std::mem::take(&mut self.export_vault_confirm)));
@@ -4752,6 +4829,24 @@ impl KeysApp {
 }
 
 impl KeysApp {
+    /// `ModalResponse::should_close`, com uma exceção: um clique na barra da suíte (lupa, tema,
+    /// engrenagem) cai no véu do modal — a barra está na camada de fundo e o véu cobre ela — mas
+    /// não é um clique "fora do diálogo" para a pessoa: não fecha o diálogo. O botão também não
+    /// dispara (o véu consome o clique antes de a barra vê-lo). A posição vem do próprio backdrop
+    /// (`interact_pointer_pos`): um clique por acessibilidade não tem ponteiro e não pode ser
+    /// confundido com um clique na barra só porque o ponteiro parou ali.
+    fn modal_should_close<T>(&self, ctx: &egui::Context, resp: &egui::ModalResponse<T>) -> bool {
+        let clique_na_barra = resp.backdrop_response.clicked()
+            && resp.backdrop_response.interact_pointer_pos().is_some_and(|pos| self.top_bar_rect.is_some_and(|barra| barra.contains(pos)));
+        let clique_fora = resp.backdrop_response.clicked() && !clique_na_barra;
+        // Mesma ordem do `ModalResponse::should_close`: um clique que fecha não consome o Esc.
+        if clique_fora || resp.response.should_close() {
+            return true;
+        }
+        // O Esc só é consumido pelo modal do topo.
+        resp.is_top_modal && !resp.any_popup_open && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    }
+
     /// Um quadro da interface: o `eframe::App::ui` e os testes de UI (`ui_tests.rs`) chamam isto.
     fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
@@ -4830,12 +4925,18 @@ impl KeysApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
-        egui::containers::Panel::top("topo").show(ui, |ui| {
+        // O rodapé só existe na tela destrancada: zera o retângulo medido no quadro anterior.
+        self.footer_rect = None;
+
+        let topo = egui::containers::Panel::top("topo").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Local Keys");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.shell_buttons(ui));
             });
         });
+        // A barra da suíte é da camada de fundo: com um modal aberto o véu (Foreground) cobre ela,
+        // e um clique ali é do véu — não pode fechar o diálogo (`modal_should_close`).
+        self.top_bar_rect = Some(topo.response.rect);
 
         egui::CentralPanel::default().show(ui, |ui| {
             if self.locked() {
@@ -4970,15 +5071,15 @@ impl KeysApp {
             });
             ui.end_row();
             let label = ui.label(tr("Master password"));
-            ui.add(line(&mut self.master).password(true).desired_width(field)).labelled_by(label.id);
+            ui.add(line(&mut self.new_master).password(true).desired_width(field)).labelled_by(label.id);
             ui.end_row();
             let label = ui.label(tr("Confirm password"));
-            ui.add(line(&mut self.confirm).password(true).desired_width(field)).labelled_by(label.id);
+            ui.add(line(&mut self.new_confirm).password(true).desired_width(field)).labelled_by(label.id);
             ui.end_row();
         });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let ready = !busy && !self.path.trim().is_empty() && !self.master.is_empty();
+            let ready = !busy && !self.path.trim().is_empty() && !self.new_master.is_empty();
             if ui.add_enabled_ui(ready, |ui| pill(ui, tr("New vault"), true)).inner.clicked() {
                 self.create(ctx);
             }
@@ -5220,7 +5321,7 @@ impl KeysApp {
         // continua reservado (o layout não muda de um quadro para o outro) e os widgets saem da árvore
         // de acessibilidade: nem a contagem nem a barra pingam atrás do diálogo.
         // (O `modal_aberta` já veio computado lá em cima, para o "×" da busca.)
-        egui::containers::Panel::bottom("selection_footer")
+        let footer = egui::containers::Panel::bottom("selection_footer")
             .resizable(false)
             .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 4 }))
             .show(ui, |ui| {
@@ -5234,6 +5335,9 @@ impl KeysApp {
                     self.selection_bar(ui);
                 }
             });
+        // O toast é desenhado ACIMA deste painel (ver `footer`): em janela estreita a barra da
+        // seleção quebra em duas linhas e o aviso cobria "Clear selection" por 3,5 s.
+        self.footer_rect = Some(footer.response.rect);
 
         if view.is_empty() {
             if self.items.is_empty() {

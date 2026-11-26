@@ -4655,3 +4655,223 @@ fn focusing_an_item_of_the_folder_popup_does_not_scroll_the_form() {
     let depois = harness.get_by_label("Title").rect().top();
     assert!((depois - topo).abs() <= 1.0, "focar um item do popup rolou o miolo atrás: Title de {topo} para {depois}");
 }
+
+// ── defeitos menores de interface: trancado, exportar, toast e barra da suíte ──
+
+/// A senha digitada para destrancar tem buffer próprio: não vaza para os campos do "New vault".
+#[test]
+fn the_unlock_password_does_not_fill_the_new_vault_fields() {
+    let mut app = app("unlock-separate", Prefs::new("en", ThemeMode::Dark));
+    app.path = "C:\\tmp\\cofre.tkeys".into();
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    assert_eq!(harness.get_all_by_role(Role::PasswordInput).count(), 3, "destrancar (1) e cofre novo (2) têm campos próprios");
+
+    {
+        let unlock = harness.get_all_by_role(Role::PasswordInput).next().expect("o campo de destrancar");
+        unlock.click();
+    }
+    harness.run_steps(1);
+    harness.input_mut().events.push(egui::Event::Text("segredo".into()));
+    harness.run_steps(2);
+
+    let valores: Vec<String> =
+        harness.get_all_by_role(Role::PasswordInput).map(|node| node.accesskit_node().data().value().unwrap_or_default().to_string()).collect();
+    assert_eq!(valores.len(), 3);
+    assert!(!valores[0].is_empty(), "o campo de destrancar recebeu a senha digitada");
+    assert!(valores[1].is_empty(), "a senha do destrancar vazou para o 'New vault': {:?}", valores[1]);
+    assert!(valores[2].is_empty(), "a confirmação do 'New vault' veio preenchida: {:?}", valores[2]);
+}
+
+/// Digita uma senha nova num campo de senha do diálogo (foco + Ctrl+A + texto), como a mão faz.
+fn replace_password_field(harness: &mut Harness<'_, KeysApp>, index: usize, text: &str) {
+    {
+        let field = harness.get_all_by_role(Role::PasswordInput).nth(index).expect("campo de senha");
+        field.click();
+    }
+    harness.run_steps(1);
+    press_with(harness, egui::Key::A, egui::Modifiers::COMMAND);
+    harness.input_mut().events.push(egui::Event::Text(text.into()));
+    harness.run_steps(2);
+}
+
+/// Abre o diálogo das senhas do "Export to vault" com o destino já escolhido.
+fn open_export_vault_modal(name: &str) -> Harness<'static, KeysApp> {
+    let (mut app, item_id, _folder) = unlocked_for_vault_export(name, Prefs::new("en", ThemeMode::Dark));
+    app.selection.select_only(&item_id);
+    let mut harness = harness(app);
+    harness.run_steps(2);
+    harness.state_mut().export_vault_chosen("C:\\tmp\\novo.tkeys".into());
+    // A animação de abertura do modal precisa assentar antes de medir posições.
+    harness.run_steps(12);
+    assert!(harness.state().export_vault_open, "o diálogo das senhas abriu");
+    harness
+}
+
+/// O erro do "Export to vault" é do envio anterior: corrigir as senhas limpa a linha sem outro Create.
+#[test]
+fn the_export_vault_error_goes_away_when_the_passwords_are_fixed() {
+    let mut harness = open_export_vault_modal("vexport-error-clear");
+    harness.state_mut().export_vault_pass = "uma".into();
+    harness.state_mut().export_vault_confirm = "outra".into();
+    click_labelled_button(&mut harness, "Create vault");
+    assert_eq!(harness.state().export_vault_err.as_deref(), Some("the passwords do not match"));
+    harness.get_by_label("the passwords do not match");
+
+    replace_password_field(&mut harness, 1, "uma");
+    assert_eq!(harness.state().export_vault_confirm, "uma", "o campo de confirmação recebeu a correção");
+    assert_eq!(harness.state().export_vault_err, None, "corrigir as senhas limpa o erro do envio anterior");
+    assert!(harness.query_by_label("the passwords do not match").is_none(), "a linha de erro continua na tela");
+}
+
+/// A linha de erro do "Export to vault" tem espaço reservado: campos e botões ficam no mesmo y com e sem o erro.
+#[test]
+fn the_export_vault_fields_do_not_move_when_the_error_appears() {
+    let mut harness = open_export_vault_modal("vexport-error-layout");
+    let positions = |harness: &Harness<'_, KeysApp>| {
+        let fields: Vec<egui::Rect> = harness.get_all_by_role(Role::PasswordInput).map(|node| node.rect()).collect();
+        let button =
+            harness.get_all_by_label("Create vault").find(|node| node.accesskit_node().role() == Role::Button).expect("o botão Create vault").rect();
+        (fields, button)
+    };
+    let (sem_erro, botao_sem_erro) = positions(&harness);
+
+    harness.state_mut().export_vault_pass = "uma".into();
+    harness.state_mut().export_vault_confirm = "outra".into();
+    click_labelled_button(&mut harness, "Create vault");
+    assert!(harness.state().export_vault_err.is_some(), "o erro do envio anterior aparece");
+    let (com_erro, botao_com_erro) = positions(&harness);
+
+    assert_eq!(sem_erro.len(), com_erro.len());
+    for (i, (antes, depois)) in sem_erro.iter().zip(&com_erro).enumerate() {
+        assert!((antes.min.y - depois.min.y).abs() < 0.5, "o campo {i} pulou quando o erro apareceu: y {} -> {}", antes.min.y, depois.min.y);
+    }
+    assert!(
+        (botao_sem_erro.min.y - botao_com_erro.min.y).abs() < 0.5,
+        "o botão 'Create vault' pulou quando o erro apareceu: y {} -> {}",
+        botao_sem_erro.min.y,
+        botao_com_erro.min.y
+    );
+}
+
+/// O erro longo do "Export to vault" nunca é cortado: quando a mensagem quebra em duas linhas, o
+/// slot reservado cresce para a altura real do texto.
+#[test]
+fn the_export_vault_error_is_not_cut_at_the_narrow_window() {
+    for language in ["pt-br", "es"] {
+        let (mut app, item_id, _folder) = unlocked_for_vault_export("vexport-error-narrow", Prefs::new(language, ThemeMode::Dark));
+        app.selection.select_only(&item_id);
+        let mut harness = harness_wh(app, 340.0, 640.0);
+        // Na janela mínima real o conteúdo é 260 pt e as mensagens atuais cabem em uma linha. As
+        // bordas seguras de 21 pt de cada lado simulam uma largura menor que qualquer janela do app
+        // (≈218 pt de conteúdo) para exercitar o ramo de duas linhas: em pt-br e es, a mais longa quebra.
+        harness.input_mut().safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 { left: 21.0, right: 21.0, top: 0.0, bottom: 0.0 }));
+        harness.run_steps(2);
+        harness.state_mut().export_vault_chosen("C:\\tmp\\novo.tkeys".into());
+        // A animação de abertura do modal precisa assentar antes de medir.
+        harness.run_steps(12);
+        // Destino = o cofre aberto: é o erro longo de "não grave por cima" que quebra em duas linhas.
+        let cofre_aberto = harness.state().path.clone();
+        harness.state_mut().export_vault_path = cofre_aberto;
+        harness.state_mut().export_vault_pass = "senha".into();
+        harness.state_mut().export_vault_confirm = "senha".into();
+        // O caminho novo muda as linhas do rótulo "File" e a altura do diálogo; assenta antes de
+        // localizar o botão (senão o clique cai no lugar antigo).
+        harness.run_steps(4);
+        let criar = crate::i18n::tr("Create vault");
+        let botao_criar = harness.get_all_by_label(criar).find(|n| n.accesskit_node().role() == Role::Button).expect("botão Criar cofre").rect();
+        click_at(&mut harness, botao_criar.center());
+
+        let esperado = crate::i18n::tr("Do not save over the open vault; choose another file.");
+        assert_eq!(harness.state().export_vault_err.as_deref(), Some(esperado), "{language}: o erro longo apareceu");
+        let rotulo = harness.get_by_label(esperado).rect();
+        let slot = crate::pintura::slot_do_erro_do_export(&harness.ctx).expect("o slot do erro desenhado");
+        let fonte = egui::TextStyle::Small.resolve(harness.ctx.style_of(harness.ctx.theme()).as_ref());
+        let linha = harness.ctx.fonts_mut(|fonts| fonts.row_height(&fonte));
+        // O row_height do estilo leva o leading; a galeria de duas linhas mede ~2*linha - 1.
+        assert!(rotulo.height() >= 2.0 * linha - 1.0, "{language}: o erro devia ocupar duas linhas inteiras: rótulo {rotulo:?}, linha {linha}");
+        assert!(
+            slot.expand(0.5).contains_rect(rotulo),
+            "{language}: o texto do erro sai do slot reservado (cortado): rótulo {rotulo:?}, slot {slot:?}"
+        );
+        assert!(harness.ctx.content_rect().expand(0.5).contains_rect(rotulo), "{language}: o erro sai da janela: {rotulo:?}");
+    }
+}
+
+/// O toast é desenhado acima do rodapé: não cobre a barra da seleção (em 340 px ela quebra em
+/// duas linhas e o aviso ficava em cima do "Clear selection").
+#[test]
+fn the_toast_does_not_cover_the_selection_bar() {
+    for (width, height) in [(480.0, 640.0), (340.0, 640.0)] {
+        let mut app = unlocked("toast-over-bar", Prefs::new("en", ThemeMode::Dark));
+        let id = item_id(&app, "1lib.sk");
+        app.selection.select_only(&id);
+        let mut harness = harness_wh(app, width, height);
+        harness.run_steps(2);
+
+        harness.state_mut().notice("cofre exportado".into());
+        harness.run_steps(2);
+
+        let texto = harness.get_all_by_label("cofre exportado").next().expect("toast na tela").rect();
+        let cartao = crate::pintura::toast_do_rodape(&harness.ctx).expect("o cartão do toast desenhado");
+        let rodape = harness.state().footer_rect.expect("o rodapé medido");
+        assert!(!cartao.intersects(rodape), "{width}x{height}: o toast {cartao:?} cobre a barra da seleção {rodape:?}");
+        for acao in ["Move to folder…", "Export to vault…", "Delete selected", "Clear selection"] {
+            let rect = harness.get_by_label(acao).rect();
+            assert!(!texto.intersects(rect), "{width}x{height}: o toast cobre '{acao}' em {rect:?} (texto em {texto:?})");
+        }
+    }
+}
+
+/// Com um modal aberto o véu cobre a barra da suíte (o clique na lupa/tema/engrenagem cai no
+/// Foreground do modal) e não fecha o diálogo nem aciona o botão. Um clique fora da barra continua
+/// fechando, como antes. A engrenagem é provada com OUTRO diálogo aberto: com as Configurações já
+/// abertas, disparar ou não o botão dá no mesmo estado.
+#[test]
+fn a_modal_keeps_the_shell_bar_dimmed_and_inert() {
+    let mut harness = harness(unlocked("modal-shell-bar", Prefs::new("en", ThemeMode::Dark)));
+    harness.run_steps(2);
+    click_bar(&mut harness, GEAR);
+    assert!(harness.state().settings_open, "as Configurações abriram");
+
+    // O véu está ACIMA da barra: a camada no ponto dos três botões é a do modal.
+    let botoes = bar_buttons(&harness);
+    assert_eq!(botoes.len(), 3, "a barra tem lupa, tema e engrenagem: {botoes:?}");
+    let camada_modal = harness.ctx.memory(|mem| mem.top_modal_layer());
+    assert!(camada_modal.is_some(), "a camada do modal");
+    for botao in &botoes {
+        assert_eq!(harness.ctx.layer_id_at(botao.center()), camada_modal, "o véu cobre a barra em {:?}", botao.center());
+    }
+
+    // Clicar em cada botão da barra: nada dispara e o diálogo fica aberto.
+    let modo = harness.state().prefs.mode();
+    for _ in 0..2 {
+        let centers: Vec<egui::Pos2> = bar_buttons(&harness).iter().map(|rect| rect.center()).collect();
+        assert_eq!(centers.len(), 3, "a barra tem os três botões: {centers:?}");
+        for center in centers {
+            click_at(&mut harness, center);
+            assert!(harness.state().settings_open, "um clique na barra fechou o diálogo");
+        }
+    }
+    assert_eq!(harness.state().prefs.mode(), modo, "o clique no botão de tema acionou o botão por baixo do véu");
+    assert!(!harness.state().palette.is_open(), "o clique na lupa abriu a paleta por baixo do modal");
+
+    // Fora da barra o clique no véu continua fechando o diálogo, como antes.
+    click_at(&mut harness, egui::pos2(10.0, 600.0));
+    assert!(!harness.state().settings_open, "o clique fora do diálogo continua fechando");
+
+    // Engrenagem com outro diálogo aberto (Configurações fechadas): o clique na barra não pode
+    // fechar o diálogo nem abrir as Configurações.
+    harness.state_mut().export_open = true;
+    harness.state_mut().export_path = "C:\\tmp\\export.json".into();
+    harness.run_steps(2);
+    assert!(harness.state().export_open, "o diálogo Export abriu");
+    let botoes = bar_buttons(&harness);
+    assert_eq!(botoes.len(), 3, "a barra tem lupa, tema e engrenagem: {botoes:?}");
+    let gear = botoes[GEAR].center();
+    click_at(&mut harness, gear);
+    assert!(harness.state().export_open, "o clique na engrenagem fechou o outro diálogo");
+    assert!(!harness.state().settings_open, "o clique na engrenagem abriu as Configurações por baixo do véu");
+    click_at(&mut harness, egui::pos2(10.0, 600.0));
+    assert!(!harness.state().export_open, "o clique fora do diálogo Export continua fechando");
+}
