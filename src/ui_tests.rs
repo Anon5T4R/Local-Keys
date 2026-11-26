@@ -3999,3 +3999,233 @@ fn an_attachment_over_the_cap_is_refused_before_the_size_warning() {
     assert!(err.contains("too large"), "{err}");
     assert_eq!(live_attachments(harness.state(), &id), 0);
 }
+
+/// O seletor nativo parte da pasta do cofre aberto; depois de uma escolha, da pasta do arquivo
+/// escolhido (o anexo anterior); sem cofre nem escolha, de nenhuma (o padrão do sistema). O valor
+/// decidido fica registrado no `pickers` — o diálogo nativo não abre no teste (a pasta APLICADA ao
+/// diálogo é provada em `the_single_constructor_applies_the_start_folder_and_the_parent_hook`).
+#[test]
+fn the_picker_starts_in_the_vault_folder_then_in_the_last_picked_folder() {
+    let dir = scratch("picker-dir");
+    let anexos = dir.join("anexos");
+    std::fs::create_dir_all(&anexos).expect("pastas do teste");
+    let mut vault = unlocked("picker-dir", Prefs::new("en", ThemeMode::Dark));
+    vault.path = dir.join("meu-cofre.tkeys").display().to_string();
+    vault.pickers.set_dry();
+    let mut h = harness(vault);
+    h.run_steps(2);
+    let ctx = h.ctx.clone();
+
+    // O cofre aberto manda: o seletor parte da pasta dele.
+    h.state_mut().add_totp_from_file(&ctx);
+    assert_eq!(h.state().pickers.dialogs_asked(), vec![Some(dir.clone())], "a pasta do cofre aberto");
+
+    // Uma escolha anterior manda mais que o cofre: o próximo seletor parte da pasta do anexo.
+    let chosen = anexos.join("documento-anterior.pdf");
+    let then: crate::pickers::Then = Box::new(|_, _| {});
+    h.state().pickers.push_for_test(crate::pickers::Picked { paths: vec![chosen], then });
+    h.run_steps(2);
+    h.state_mut().add_totp_from_file(&ctx);
+    assert_eq!(h.state().pickers.dialogs_asked().last(), Some(&Some(anexos)), "a pasta do anexo anterior");
+
+    // Sem cofre e sem escolha não há de onde tirar: nenhuma pasta inicial.
+    let empty = app("picker-dir-empty", Prefs::new("en", ThemeMode::Dark));
+    empty.pickers.set_dry();
+    let mut h = harness(empty);
+    h.run_steps(2);
+    let ctx = h.ctx.clone();
+    h.state_mut().add_totp_from_file(&ctx);
+    assert_eq!(h.state().pickers.dialogs_asked(), vec![None], "sem cofre nem escolha, nenhuma pasta");
+
+    // Caminho de cofre relativo (sem pasta) e pasta que não existe: também não há pasta inicial — o
+    // app só decide pasta viva (o rfd ignora uma pasta inicial que não resolve, mas o app não a entrega).
+    let mut gone = app("picker-dir-relative", Prefs::new("en", ThemeMode::Dark));
+    gone.path = "cofre.tkeys".into();
+    gone.pickers.set_dry();
+    let mut h = harness(gone);
+    h.run_steps(2);
+    let ctx = h.ctx.clone();
+    h.state_mut().add_totp_from_file(&ctx);
+    assert_eq!(h.state().pickers.dialogs_asked(), vec![None], "caminho sem pasta");
+
+    let mut deleted = unlocked("picker-dir-deleted", Prefs::new("en", ThemeMode::Dark));
+    deleted.path = dir.join("cofre-que-nao-existe").join("cofre.tkeys").display().to_string();
+    deleted.pickers.set_dry();
+    let mut h = harness(deleted);
+    h.run_steps(2);
+    let ctx = h.ctx.clone();
+    h.state_mut().add_totp_from_file(&ctx);
+    assert_eq!(h.state().pickers.dialogs_asked(), vec![None], "pasta do cofre apagada");
+}
+
+/// O construtor único aplica de fato a pasta inicial decidida e passa o diálogo pelo gancho da
+/// janela-mãe. O `rfd` não tem getter: a prova é o `Debug` dele, que ecoa `starting_directory` e
+/// `title` (se o `rfd` mudar o formato, o teste falha alto). O gancho aqui é de teste (põe um
+/// título); o `set_parent` de verdade e a janela-mãe só o app real exercitam.
+#[test]
+fn the_single_constructor_applies_the_start_folder_and_the_parent_hook() {
+    let dir = scratch("picker-apply");
+    std::fs::create_dir_all(&dir).expect("pasta do teste");
+    let mut app = unlocked("picker-apply", Prefs::new("en", ThemeMode::Dark));
+    app.path = dir.join("cofre.tkeys").display().to_string();
+    app.dialog_parent = Some(Box::new(|dialog| dialog.set_title("parent hook")));
+
+    let shown = format!("{:?}", app.file_dialog());
+    assert!(shown.contains(&format!("starting_directory: Some({dir:?})")), "a pasta aplicada ao diálogo: {shown}");
+    assert!(shown.contains("title: Some(\"parent hook\")"), "o diálogo passou pelo gancho da janela-mãe: {shown}");
+
+    // Sem pasta decidida, nada é aplicado (o diálogo fica no padrão do sistema).
+    app.path = "cofre.tkeys".into();
+    let shown = format!("{:?}", app.file_dialog());
+    assert!(shown.contains("starting_directory: None"), "sem pasta decidida, nenhuma é aplicada: {shown}");
+}
+
+/// Varre `src/` e acusa qualquer seletor do rfd criado fora de `KeysApp::file_dialog` — o único que
+/// aplica janela-mãe e pasta inicial. A varredura é por TEXTO (sem parser): pega
+/// `AsyncFileDialog::new`/`::default`, `FileDialog::new`/`::default` e uma linha `use` que importe
+/// `AsyncFileDialog`/`FileDialog` do rfd em UMA linha de `use`. NÃO pega `pub use`, `use rfd::{…}`
+/// espalhado em várias linhas, apelido por esses caminhos (`D::new()`) nem construção via macro/string.
+#[test]
+fn every_native_dialog_comes_from_the_single_constructor() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rs_files(&src, &mut files);
+    assert!(!files.is_empty(), "nenhum .rs em {src:?}");
+
+    let main_path = src.join("main.rs");
+    let main_src = std::fs::read_to_string(&main_path).expect("ler o main.rs");
+    let start = main_src.find("fn file_dialog(&self) -> rfd::AsyncFileDialog").expect("o construtor único existe");
+    let end = start + main_src[start..].find("\n    }\n").expect("o fim do construtor");
+    let constructor = &main_src[start..end];
+    const CREATIONS: [&str; 4] = ["AsyncFileDialog::new", "AsyncFileDialog::default", "FileDialog::new", "FileDialog::default"];
+    // Dentro do construtor só entra a criação literal; qualquer outra forma de criar diálogo lá é
+    // um segundo seletor passando por baixo do gancho e da pasta. A literal sai da busca antes:
+    // `rfd::AsyncFileDialog::new()` contém `FileDialog::new` como pedaço de texto.
+    const LITERAL: &str = "rfd::AsyncFileDialog::new()";
+    assert_eq!(constructor.matches(LITERAL).count(), 1, "o construtor monta UM diálogo");
+    let rest = constructor.replace(LITERAL, "");
+    for creation in CREATIONS {
+        assert!(!rest.contains(creation), "outra forma de criar diálogo dentro do construtor: `{creation}`");
+    }
+    for path in &files {
+        if path.file_name().is_some_and(|name| name == "ui_tests.rs") {
+            continue; // o próprio teste carrega os padrões como texto
+        }
+        let text = std::fs::read_to_string(path).expect("ler o .rs");
+        // O corpo do construtor é a única exceção: é ele que cria o seletor.
+        let clean = if *path == main_path { format!("{}{}", &text[..start], &text[end..]) } else { text };
+        for creation in CREATIONS {
+            assert!(!clean.contains(creation), "{}: `{creation}` fora de `KeysApp::file_dialog`", path.display());
+        }
+        for line in clean.lines() {
+            let line = line.trim_start();
+            let imports_picker =
+                line.starts_with("use ") && line.contains("rfd") && (line.contains("AsyncFileDialog") || line.contains("FileDialog"));
+            assert!(!imports_picker, "{}: import de seletor do rfd fora do construtor: {line}", path.display());
+        }
+    }
+}
+
+/// Todos os `.rs` de um diretório, recursivo (`src/` não tem subpastas hoje; o walk é barato).
+fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rs_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// O "Add attachment" do formulário de criar entrada responde com e sem a barra de força da senha na
+/// tela. No caso "com barra" o teste confere que a barra está mesmo desenhada (o indicador de
+/// progresso do zxcvbn), não só que a senha foi digitada. Não há assert de altura da janela: um botão
+/// fora da área rolável não recebe clique, então o próprio clique é a prova de que ele está
+/// alcançável. A animação de abertura do modal precisa assentar antes do clique (durante ela o botão
+/// ainda anda).
+#[test]
+fn the_form_add_attachment_button_answers_with_and_without_the_strength_bar() {
+    for with_bar in [false, true] {
+        let mut app = unlocked("form-attach-click", Prefs::new("en", ThemeMode::Dark));
+        app.open_add_form(NewKind::Login);
+        if with_bar {
+            app.add_pass = "abc123".into();
+        }
+        app.pickers.set_dry();
+        let mut h = harness(app);
+        h.run_steps(12);
+        let barras = h.query_all_by_role(Role::ProgressIndicator).count();
+        assert_eq!(barras, usize::from(with_bar), "com barra={with_bar}: a barra de força na tela");
+        let rect = h.get_by_label("Add attachment").rect();
+        click_at(&mut h, rect.center());
+        assert_eq!(h.state().pickers.asks(), vec!["files"], "com barra={with_bar}: o clique chegou ao seletor");
+    }
+}
+
+/// No diálogo de anexos de um item salvo, "Add attachment" pede o seletor; um clique antes da resposta
+/// é ignorado (o seletor conta como ocupado, como na produção) e, com a resposta entregue, o próximo
+/// clique pede de novo — o seletor não fica preso no "já tem um aberto".
+#[test]
+fn the_attachments_dialog_add_button_asks_again_after_a_closed_picker() {
+    let mut app = unlocked("attach-again", Prefs::new("en", ThemeMode::Dark));
+    let id = item_id(&app, "account.matrix.org");
+    app.attach_item = Some(id);
+    app.pickers.set_dry();
+    let mut h = harness(app);
+    h.run_steps(12);
+
+    click_labelled_button(&mut h, "Add attachment");
+    assert_eq!(h.state().pickers.asks(), vec!["files"], "o primeiro clique pede o seletor");
+    assert!(h.state().pickers.busy(), "com o seletor pedido, ele conta como ocupado");
+
+    // Sem resposta ainda, o clique a mais não abre outro seletor.
+    click_labelled_button(&mut h, "Add attachment");
+    assert_eq!(h.state().pickers.asks(), vec!["files"], "clique com o seletor ocupado é ignorado");
+
+    // O seletor fechou vazio (cancelado): a resposta chega como a thread entregaria.
+    let then: crate::pickers::Then = Box::new(|_, _| {});
+    h.state().pickers.push_for_test(crate::pickers::Picked { paths: Vec::new(), then });
+    h.run_steps(2);
+    assert!(!h.state().pickers.busy(), "a resposta entregue libera o seletor");
+
+    click_labelled_button(&mut h, "Add attachment");
+    assert_eq!(h.state().pickers.asks(), vec!["files", "files"], "o próximo clique pede o seletor de novo");
+}
+
+/// A pasta do último arquivo escolhido é memória da sessão destrancada: ao trancar, o seletor da tela
+/// de trancado parte da pasta do cofre, não da pasta de anexos da sessão anterior.
+#[test]
+fn locking_forgets_the_folder_of_the_last_picked_file() {
+    let dir = scratch("picker-lock");
+    let anexos = dir.join("anexos");
+    std::fs::create_dir_all(&anexos).expect("pastas do teste");
+    let mut vault = unlocked("picker-lock", Prefs::new("en", ThemeMode::Dark));
+    vault.path = dir.join("cofre.tkeys").display().to_string();
+    vault.pickers.set_dry();
+    let mut h = harness(vault);
+    h.run_steps(2);
+
+    // Destrancado, uma escolha deixa a pasta dos anexos como ponto de partida.
+    let then: crate::pickers::Then = Box::new(|_, _| {});
+    h.state().pickers.push_for_test(crate::pickers::Picked { paths: vec![anexos.join("a.pdf")], then });
+    h.run_steps(2);
+    assert_eq!(h.state().picker_start_dir(), Some(anexos.clone()), "dentro da sessão vale a escolha");
+
+    // Trancou: a tela de trancado é de outra sessão. O seletor do campo do cofre parte da pasta dele.
+    h.state_mut().lock();
+    h.run_steps(2);
+    let mut botoes: Vec<egui::Rect> = h.get_all_by_label("…").map(|node| node.rect()).collect();
+    botoes.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    assert_eq!(botoes.len(), 2, "os dois campos .tkeys da tela de trancado têm seletor: {botoes:?}");
+    click_at(&mut h, botoes[0].center());
+    assert_eq!(h.state().pickers.dialogs_asked(), vec![Some(dir.clone())], "depois de trancar, a pasta inicial é a do cofre");
+
+    // Uma resposta que chega com o app trancado (o seletor ficou aberto pelo trancar) não traz a
+    // memória de volta.
+    let then: crate::pickers::Then = Box::new(|_, _| {});
+    h.state().pickers.push_for_test(crate::pickers::Picked { paths: vec![anexos.join("b.pdf")], then });
+    h.run_steps(2);
+    assert_eq!(h.state().picker_start_dir(), Some(dir), "resposta com o app trancado não repovoa a pasta lembrada");
+}

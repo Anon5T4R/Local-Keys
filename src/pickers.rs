@@ -27,6 +27,18 @@ pub(crate) enum Ask {
     Save(rfd::AsyncFileDialog),
 }
 
+impl Ask {
+    /// Nome curto do painel, para o registro dos testes.
+    #[cfg(test)]
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::File(_) => "file",
+            Self::Files(_) => "files",
+            Self::Save(_) => "save",
+        }
+    }
+}
+
 /// O que fazer com os caminhos escolhidos, num frame posterior.
 /// Paths vazios = usuário cancelou.
 pub(crate) type Then = Box<dyn FnOnce(&mut KeysApp, Vec<PathBuf>) + Send>;
@@ -37,11 +49,25 @@ pub(crate) struct Picked {
     pub(crate) then: Then,
 }
 
+/// O que os testes observam em vez do diálogo nativo (que eles não podem abrir).
+#[cfg(test)]
+#[derive(Default)]
+struct Spy {
+    /// Pasta inicial DECIDIDA para cada seletor (`None` = o padrão do sistema).
+    dialogs: Vec<Option<PathBuf>>,
+    /// Tipo de cada pedido feito ao seletor (`file`, `files`, `save`), na ordem.
+    asks: Vec<&'static str>,
+    /// Não abre o diálogo nativo: o pedido registrado é a prova do teste.
+    dry: bool,
+}
+
 /// Seletor em andamento + escolhas prontas.
 #[derive(Default)]
 pub(crate) struct Pickers {
     showing: Arc<AtomicBool>,
     done: Arc<Mutex<Vec<Picked>>>,
+    #[cfg(test)]
+    spy: Arc<Mutex<Spy>>,
 }
 
 impl Pickers {
@@ -56,6 +82,13 @@ impl Pickers {
     pub(crate) fn ask(&self, ctx: &egui::Context, ask: Ask, then: Then) -> bool {
         if self.busy() {
             return false;
+        }
+        #[cfg(test)]
+        if self.spy_records(ask.kind()) {
+            // Modo seco: o pedido fica registrado e o seletor conta como OCUPADO até a resposta
+            // chegar pela fila (`push_for_test`), como a thread real faz.
+            self.showing.store(true, Ordering::SeqCst);
+            return true;
         }
         self.showing.store(true, Ordering::SeqCst);
         let showing = self.showing.clone();
@@ -86,8 +119,45 @@ impl Pickers {
 
     /// Enfileira uma resposta como a thread do seletor faria — só nos testes,
     /// que não podem abrir o diálogo nativo. O frame consome pelo `take`.
+    /// Libera o próximo pedido, como a thread faz ao terminar.
     #[cfg(test)]
     pub(crate) fn push_for_test(&self, picked: Picked) {
         self.done.lock().unwrap_or_else(PoisonError::into_inner).push(picked);
+        self.showing.store(false, Ordering::SeqCst);
+    }
+
+    /// Testes: registra o tipo do pedido e diz se o modo seco está ligado (o diálogo nativo não abre).
+    #[cfg(test)]
+    fn spy_records(&self, kind: &'static str) -> bool {
+        let mut spy = self.spy.lock().unwrap_or_else(PoisonError::into_inner);
+        spy.asks.push(kind);
+        spy.dry
+    }
+
+    /// Testes: a pasta inicial que o app DECIDIU para o seletor (`None` = o padrão do sistema). A
+    /// aplicação ao diálogo em si é provada pelo `Debug` do rfd (`file_dialog`).
+    #[cfg(test)]
+    pub(crate) fn dialog_asked(&self, start_dir: Option<PathBuf>) {
+        self.spy.lock().unwrap_or_else(PoisonError::into_inner).dialogs.push(start_dir);
+    }
+
+    /// Testes: a pasta inicial decidida para cada seletor, na ordem.
+    #[cfg(test)]
+    pub(crate) fn dialogs_asked(&self) -> Vec<Option<PathBuf>> {
+        self.spy.lock().unwrap_or_else(PoisonError::into_inner).dialogs.clone()
+    }
+
+    /// Testes: o tipo de cada pedido feito ao seletor, na ordem.
+    #[cfg(test)]
+    pub(crate) fn asks(&self) -> Vec<&'static str> {
+        self.spy.lock().unwrap_or_else(PoisonError::into_inner).asks.clone()
+    }
+
+    /// Testes: daqui em diante o clique só registra o pedido — o diálogo nativo nunca abre (nenhum
+    /// teste abre janela). O estado do `busy` é o mesmo da produção: o pedido ocupa o seletor até a
+    /// resposta ser entregue por `push_for_test`.
+    #[cfg(test)]
+    pub(crate) fn set_dry(&self) {
+        self.spy.lock().unwrap_or_else(PoisonError::into_inner).dry = true;
     }
 }

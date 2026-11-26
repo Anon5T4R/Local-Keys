@@ -38,6 +38,7 @@ mod ui_tests;
 use localkeys_core::{
     bwdecrypt, card, change_kind, cpf, crypto, export, filters, generator, import, kdbx, merge, merge_other, otpauth, totp, vault, vault_export,
 };
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -144,6 +145,8 @@ fn main() -> eframe::Result<()> {
             // Linux: a escolha clara/escura do desktop, que o winit não informa.
             craft_desktop_theme::follow(&cc.egui_ctx);
             let mut app = KeysApp::new(prefs, initial_vault);
+            // O seletor nativo nasce com a janela do app como mãe (abre na frente dela).
+            app.attach_dialog_parent(cc);
             // Check de update no arranque: achou release nova, o prompt do
             // updater abre sozinho (craft_update::dialog).
             app.updater.check_at_start(&cc.egui_ctx);
@@ -1029,11 +1032,22 @@ fn tray_icon() -> Option<tray_icon::Icon> {
     tray_icon::Icon::from_rgba(rgba.into_raw(), w, h).ok()
 }
 
+/// Aplica a janela-mãe do app a um seletor nativo: o `set_parent` do rfd pede o `HasWindowHandle` e o
+/// `HasDisplayHandle` da janela; guardado como closure para o app não nomear o tipo do winit.
+type DialogParent = Box<dyn Fn(rfd::AsyncFileDialog) -> rfd::AsyncFileDialog>;
+
 struct KeysApp {
     prefs: Prefs,
     /// Seletor nativo async (src/pickers.rs): a resposta chega num frame
     /// posterior, como closure — cada fluxo tem a sua continuação.
     pickers: pickers::Pickers,
+    /// Janela-mãe dos seletores nativos: sem ela o diálogo do Windows abre solto e pode ficar atrás
+    /// do app. `None` sem janela (testes) e onde o eframe não entrega o handle; os testes instalam um
+    /// gancho no lugar quando querem observar a passagem pelo gancho.
+    dialog_parent: Option<DialogParent>,
+    /// Pasta inicial do próximo seletor: a do último arquivo escolhido (o anexo anterior). Sem escolha
+    /// nesta sessão, vale a pasta do cofre aberto (`picker_start_dir`).
+    last_picked_dir: Option<PathBuf>,
     // trancado
     path: String,
     master: String,
@@ -1242,6 +1256,8 @@ impl KeysApp {
         Self {
             prefs,
             pickers: pickers::Pickers::default(),
+            dialog_parent: None,
+            last_picked_dir: None,
             path: String::new(),
             master: String::new(),
             confirm: String::new(),
@@ -1374,6 +1390,62 @@ impl KeysApp {
         self.session.is_none()
     }
 
+    // ── seletores nativos: um construtor só, com janela-mãe e pasta inicial ──
+
+    /// Dá ao app a janela-mãe dos seletores nativos: `cc.winit_window()` entrega o `Window` do winit,
+    /// que já implementa o `HasWindowHandle` e o `HasDisplayHandle` que o `set_parent` do rfd pede (sem
+    /// crate nova). Guardado como closure para o app não precisar nomear o tipo do winit. Que a
+    /// janela-mãe de verdade põe o diálogo na frente só o app real prova.
+    fn attach_dialog_parent(&mut self, cc: &eframe::CreationContext<'_>) {
+        let Some(window) = cc.winit_window().cloned() else { return };
+        self.dialog_parent = Some(Box::new(move |dialog: rfd::AsyncFileDialog| dialog.set_parent(&*window)));
+    }
+
+    /// O ÚNICO lugar que cria seletor nativo: todo diálogo do app nasce com a janela-mãe (para abrir
+    /// na frente, não solto atrás do app) e com a pasta decidida em `picker_start_dir`. O teste
+    /// verifica, pelo `Debug` do rfd, a pasta aplicada e que o diálogo passou pelo gancho da
+    /// janela-mãe; a janela-mãe de verdade e a pasta que o diálogo nativo mostra só o app real prova.
+    fn file_dialog(&self) -> rfd::AsyncFileDialog {
+        let start = self.picker_start_dir();
+        #[cfg(test)]
+        self.pickers.dialog_asked(start.clone());
+        let dialog = rfd::AsyncFileDialog::new();
+        let dialog = match &self.dialog_parent {
+            Some(parent) => parent(dialog),
+            None => dialog,
+        };
+        match start {
+            Some(dir) => dialog.set_directory(dir),
+            None => dialog,
+        }
+    }
+
+    /// Pasta inicial do próximo seletor: a do último arquivo escolhido (o anexo anterior, o cofre
+    /// importado…) e, se ela não existe mais, a do cofre aberto. Sem cofre nem escolha, nenhuma — o
+    /// seletor usa o padrão do sistema. Só pasta viva: o app não decide uma pasta que não existe (o
+    /// rfd ignora em silêncio uma pasta inicial que não resolve — no Windows,
+    /// `rfd-0.17.2/src/backend/win_cid/file_dialog/dialog_ffi.rs:223-252` só chama `SetFolder` quando
+    /// `SHCreateItemFromParsingName` deu certo).
+    fn picker_start_dir(&self) -> Option<PathBuf> {
+        if let Some(dir) = self.last_picked_dir.as_ref().filter(|dir| dir.is_dir()) {
+            return Some(dir.clone());
+        }
+        let vault = self.path.trim();
+        if vault.is_empty() {
+            return None;
+        }
+        Path::new(vault).parent().filter(|dir| dir.is_dir()).map(Path::to_path_buf)
+    }
+
+    /// A pasta do que a pessoa escolheu no seletor vira o ponto de partida do próximo diálogo.
+    fn remember_picked_dir(&mut self, paths: &[PathBuf]) {
+        let Some(dir) = paths.first().and_then(|path| path.parent()) else { return };
+        if dir.as_os_str().is_empty() {
+            return;
+        }
+        self.last_picked_dir = Some(dir.to_path_buf());
+    }
+
     /// Tranca: apaga a sessão (Drop → Zeroizing limpa a chave) e o vault em
     /// claro da memória. Ordem session → raw, como no oficial.
     fn lock(&mut self) {
@@ -1444,6 +1516,9 @@ impl KeysApp {
         self.attach_warn = None;
         self.attach_warn_confirmed = false;
         self.vault_bytes = 0;
+        // A pasta do último arquivo escolhido é memória da sessão destrancada: o seletor da tela de
+        // trancado parte da pasta do cofre, não da pasta de anexos da sessão anterior.
+        self.last_picked_dir = None;
         // onda 24: gerência/criação de pastas fecha junto, e a fila de anexos
         // multi-selecionados não sobrevive ao trancar (o raw já era).
         self.folders_open = false;
@@ -1467,6 +1542,9 @@ impl KeysApp {
 
     fn adopt(&mut self, session: crypto::SessionKey, raw: serde_json::Value) {
         self.clear_selection();
+        // Sessão nova (outro cofre, ou o mesmo reaberto): a pasta escolhida na sessão anterior não é
+        // ponto de partida do seletor deste — vale a pasta do cofre.
+        self.last_picked_dir = None;
         self.items = vault::items_view(&raw);
         // O cofre pode ser OUTRO (destrancar depois de trancar): a pasta lembrada só vale se este cofre ainda
         // tem essa pasta; senão a lista começa em "todas" (a preferência fica como está).
@@ -1921,7 +1999,7 @@ impl KeysApp {
 
     /// "Ler QR de imagem…": seletor nativo de arquivo de imagem (a leitura e o decode correm no callback).
     fn add_totp_from_file(&mut self, ctx: &egui::Context) {
-        let dialog = rfd::AsyncFileDialog::new().add_filter("PNG/JPEG/BMP", &["png", "jpg", "jpeg", "bmp"]);
+        let dialog = self.file_dialog().add_filter("PNG/JPEG/BMP", &["png", "jpg", "jpeg", "bmp"]);
         let _ = self.pickers.ask(
             ctx,
             pickers::Ask::File(dialog),
@@ -2107,7 +2185,7 @@ impl KeysApp {
         if self.job_label.is_some() {
             return;
         }
-        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
+        let dialog = self.file_dialog().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
         let ctx2 = ctx.clone();
         let _ = self.pickers.ask(
             ctx,
@@ -2357,7 +2435,7 @@ impl KeysApp {
         if self.job_label.is_some() || self.pickers.busy() {
             return;
         }
-        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("exported-vault.tkeys");
+        let dialog = self.file_dialog().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("exported-vault.tkeys");
         let _ = self.pickers.ask(
             ctx,
             pickers::Ask::Save(dialog),
@@ -2474,7 +2552,7 @@ impl KeysApp {
         // Cancelou (paths vazios): fora do Windows cai no campo de caminhos digitados
         // (`;`-separados), o fallback de sempre; no Windows, onde o campo nem existe, só não
         // anexa nada.
-        let _ = self.pickers.ask(ctx, pickers::Ask::Files(rfd::AsyncFileDialog::new()), Self::attach_then(item_id, ctx));
+        let _ = self.pickers.ask(ctx, pickers::Ask::Files(self.file_dialog()), Self::attach_then(item_id, ctx));
     }
 
     /// A closure que o seletor de anexos roda num frame posterior: o id do item (ou `FORM_ATTACH`)
@@ -2563,7 +2641,7 @@ impl KeysApp {
         let ctx2 = ctx.clone();
         let _ = self.pickers.ask(
             ctx,
-            pickers::Ask::Save(rfd::AsyncFileDialog::new().set_file_name(name)),
+            pickers::Ask::Save(self.file_dialog().set_file_name(name)),
             Box::new(move |app, paths| {
                 let target = paths.first().map(|p| p.display().to_string()).unwrap_or_else(|| app.attach_path.trim().to_string());
                 if target.is_empty() {
@@ -3446,9 +3524,9 @@ impl KeysApp {
                         // Seletor nativo (src/pickers.rs); resposta num frame posterior.
                         let kind = self.import_kind;
                         let dialog = match kind {
-                            ImportKind::Kdbx => rfd::AsyncFileDialog::new().add_filter("KeePass (.kdbx)", &["kdbx"]),
-                            ImportKind::Bitwarden => rfd::AsyncFileDialog::new().add_filter("Bitwarden (.json)", &["json"]),
-                            ImportKind::Csv => rfd::AsyncFileDialog::new().add_filter("CSV (.csv)", &["csv"]),
+                            ImportKind::Kdbx => self.file_dialog().add_filter("KeePass (.kdbx)", &["kdbx"]),
+                            ImportKind::Bitwarden => self.file_dialog().add_filter("Bitwarden (.json)", &["json"]),
+                            ImportKind::Csv => self.file_dialog().add_filter("CSV (.csv)", &["csv"]),
                         };
                         let _ = self.pickers.ask(
                             ui.ctx(),
@@ -4082,7 +4160,7 @@ impl KeysApp {
     fn pick_sync_copy_target(&mut self, ctx: &egui::Context) {
         let nome =
             std::path::Path::new(self.path.trim()).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "cofre.tkeys".into());
-        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name(nome);
+        let dialog = self.file_dialog().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name(nome);
         let _ = self.pickers.ask(
             ctx,
             pickers::Ask::Save(dialog),
@@ -4096,7 +4174,7 @@ impl KeysApp {
 
     /// Seletor nativo da outra cópia para a sincronização.
     fn pick_sync_other(&mut self, ctx: &egui::Context) {
-        let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
+        let dialog = self.file_dialog().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
         let _ = self.pickers.ask(
             ctx,
             pickers::Ask::File(dialog),
@@ -4374,8 +4452,7 @@ impl KeysApp {
                     .labelled_by(label.id);
                 if ui.button("…").on_hover_text(tr("Choose file…")).clicked() {
                     let kind = self.export_kind;
-                    let dialog =
-                        rfd::AsyncFileDialog::new().add_filter("Cofre em claro", &[kind.ext()]).set_file_name(format!("cofre.{}", kind.ext()));
+                    let dialog = self.file_dialog().add_filter("Cofre em claro", &[kind.ext()]).set_file_name(format!("cofre.{}", kind.ext()));
                     let _ = self.pickers.ask(
                         ui.ctx(),
                         pickers::Ask::Save(dialog),
@@ -4504,6 +4581,11 @@ impl KeysApp {
         // Seletor nativo (src/pickers.rs): consome as respostas que chegaram
         // da thread (ela acorda este frame com request_repaint).
         for picked in self.pickers.take() {
+            // A pasta do arquivo escolhido é o ponto de partida do próximo seletor. Só na sessão
+            // destrancada: uma resposta que chega depois de trancar não repovoa a memória da sessão.
+            if !self.locked() {
+                self.remember_picked_dir(&picked.paths);
+            }
             (picked.then)(self, picked.paths);
         }
         self.poll_jobs(ctx);
@@ -4619,7 +4701,7 @@ impl KeysApp {
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\cofre.tkeys").desired_width(field)).labelled_by(label.id);
                 if ui.button("…").on_hover_text(tr("Choose file…")).clicked() {
-                    let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
+                    let dialog = self.file_dialog().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]);
                     let _ = self.pickers.ask(
                         ui.ctx(),
                         pickers::Ask::File(dialog),
@@ -4671,7 +4753,7 @@ impl KeysApp {
             ui.horizontal(|ui| {
                 ui.add(line(&mut self.path).hint_text("C:\\...\\novo-cofre.tkeys").desired_width(field)).labelled_by(label.id);
                 if ui.button("…").on_hover_text(tr("Choose file…")).clicked() {
-                    let dialog = rfd::AsyncFileDialog::new().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("novo-cofre.tkeys");
+                    let dialog = self.file_dialog().add_filter("Cofre LocalKeys (.tkeys)", &["tkeys"]).set_file_name("novo-cofre.tkeys");
                     let _ = self.pickers.ask(
                         ui.ctx(),
                         pickers::Ask::Save(dialog),
