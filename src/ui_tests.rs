@@ -666,6 +666,63 @@ fn the_attachments_panel_fits_the_narrow_window() {
     }
 }
 
+/// No Windows, cancelar o seletor no diálogo de anexos de um item JÁ SALVO não é erro: nada é anexado,
+/// o diálogo continua aberto e a lista de itens não anda (o "Error: choose the attachment file" era
+/// desenhado acima dela). O teste abre o diálogo pelo estado (`attach_item`, como o teste do painel),
+/// NÃO clica em "Add attachment" — o clique dispararia o rfd real numa thread — e entrega a resposta
+/// vazia pela mesma closure (`attach_then`) e pela mesma fila que a thread do `pickers` usa
+/// (`push_for_test`), que o frame consome pelo `take`.
+#[cfg(windows)]
+#[test]
+fn cancelling_the_picker_in_a_saved_item_attachments_dialog_is_not_an_error() {
+    let mut app = unlocked("attach-cancel", Prefs::new("en", ThemeMode::Dark));
+    let id = item_id(&app, "account.matrix.org");
+    app.attach_item = Some(id.clone());
+    let mut harness = harness(app);
+    harness.run_steps(3);
+    // Outra linha da lista (o título do diálogo também contém o nome do item deste teste).
+    let row_before = harness.get_by_label_contains("192.168.1.34").rect();
+    assert!(harness.state().err.is_none(), "o diálogo abre sem erro: {:?}", harness.state().err);
+
+    // A closure que o `add_attachment_from` entrega ao seletor, com a escolha vazia (cancelou).
+    let ctx = harness.ctx.clone();
+    let then = KeysApp::attach_then(&id, &ctx);
+    harness.state().pickers.push_for_test(crate::pickers::Picked { paths: Vec::new(), then });
+    harness.run_steps(2);
+
+    assert!(harness.state().err.is_none(), "cancelar o seletor no item salvo não é erro: {:?}", harness.state().err);
+    assert!(harness.state().attach_item.is_some(), "o diálogo de anexos continua aberto");
+    let row_after = harness.get_by_label_contains("192.168.1.34").rect();
+    assert_eq!(row_before, row_after, "a lista de itens não pode mudar de posição/altura");
+}
+
+/// Espelho fora do Windows: ali o campo de caminho digitado é a única fonte, então cancelar o seletor
+/// com o campo vazio continua sendo erro do usuário — o aviso aparece e a lista de itens desce uma
+/// linha. Mesmo fluxo do teste do Windows (sem clicar em "Add attachment"); este não roda no CI do
+/// Windows, só no de Linux/macOS.
+#[cfg(not(windows))]
+#[test]
+fn cancelling_the_picker_with_an_empty_typed_path_in_a_saved_item_still_reports_the_error() {
+    let mut app = unlocked("attach-cancel-empty", Prefs::new("en", ThemeMode::Dark));
+    let id = item_id(&app, "account.matrix.org");
+    app.attach_item = Some(id.clone());
+    app.attach_path.clear();
+    let mut harness = harness(app);
+    harness.run_steps(3);
+    let row_before = harness.get_by_label_contains("192.168.1.34").rect();
+    assert!(harness.state().err.is_none(), "o diálogo abre sem erro: {:?}", harness.state().err);
+
+    let ctx = harness.ctx.clone();
+    let then = KeysApp::attach_then(&id, &ctx);
+    harness.state().pickers.push_for_test(crate::pickers::Picked { paths: Vec::new(), then });
+    harness.run_steps(2);
+
+    let err = harness.state().err.clone().expect("com o campo vazio fora do Windows o aviso aparece");
+    assert!(err.contains("choose the attachment file"), "mensagem inesperada: {err:?}");
+    let row_after = harness.get_by_label_contains("192.168.1.34").rect();
+    assert!(row_after.top() > row_before.top(), "o aviso desloca a lista: {row_before:?} -> {row_after:?}");
+}
+
 /// Um anexo já lido do disco, à espera no formulário.
 fn pending(name: &str) -> crate::jobs::AttachmentRead {
     crate::jobs::AttachmentRead { item_id: crate::FORM_ATTACH.into(), name: name.into(), mime: "text/plain", size: 1, data_b64: "QQ==".into() }

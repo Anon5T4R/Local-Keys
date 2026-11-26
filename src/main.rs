@@ -65,6 +65,10 @@ const WINDOW_TITLE: &str = "Local Keys";
 
 /// Alvo dos anexos escolhidos no formulário de item: não é um id de item (os ids são UUIDs).
 const FORM_ATTACH: &str = "\u{0}form";
+/// O diálogo de anexos de um item salvo só tem o campo de caminho digitado fora do Windows (sem gtk
+/// no AppImage); no Windows o picker nativo é a única fonte. Fonte única do `cfg` — usado no campo e
+/// na decisão de avisar quando o seletor volta vazio.
+const HAS_TYPED_ATTACH_PATH: bool = !cfg!(windows);
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Carrega o ícone da janela (title bar + taskbar) do `icon.ico` embutido.
@@ -2466,16 +2470,19 @@ impl KeysApp {
     /// Como o mecanismo de jobs é UM por vez, o primeiro arquivo abre o job e
     /// o resto espera na fila (`attach_queue`), consumida a cada resultado.
     fn add_attachment_from(&mut self, item_id: &str, ctx: &egui::Context) {
-        // Seletor nativo multi-seleção (src/pickers.rs): a resposta chega num
-        // frame posterior. Cancelou (paths vazios) → cai no campo de caminhos
-        // digitados (`;`-separados), o fallback que sempre existiu.
+        // Seletor nativo multi-seleção (src/pickers.rs): a resposta chega num frame posterior.
+        // Cancelou (paths vazios): fora do Windows cai no campo de caminhos digitados
+        // (`;`-separados), o fallback de sempre; no Windows, onde o campo nem existe, só não
+        // anexa nada.
+        let _ = self.pickers.ask(ctx, pickers::Ask::Files(rfd::AsyncFileDialog::new()), Self::attach_then(item_id, ctx));
+    }
+
+    /// A closure que o seletor de anexos roda num frame posterior: o id do item (ou `FORM_ATTACH`)
+    /// e o mapeamento `PathBuf → String` num lugar só — produção e teste usam esta mesma função.
+    fn attach_then(item_id: &str, ctx: &egui::Context) -> pickers::Then {
         let item = item_id.to_string();
-        let ctx2 = ctx.clone();
-        let _ = self.pickers.ask(
-            ctx,
-            pickers::Ask::Files(rfd::AsyncFileDialog::new()),
-            Box::new(move |app, paths| app.attachments_chosen(&item, paths.into_iter().map(|p| p.display().to_string()).collect(), &ctx2)),
-        );
+        let ctx = ctx.clone();
+        Box::new(move |app, paths| app.attachments_chosen(&item, paths.into_iter().map(|p| p.display().to_string()).collect(), &ctx))
     }
 
     /// Sequência comum dos anexos: os caminhos do seletor, ou — vazios — os
@@ -2483,14 +2490,16 @@ impl KeysApp {
     /// (unidade 8): acima do teto, um diálogo de Continuar/Cancelar vem primeiro.
     /// O primeiro arquivo abre o job; o resto espera na fila (`attach_queue`).
     fn attachments_chosen(&mut self, item_id: &str, mut sources: Vec<String>, ctx: &egui::Context) {
-        if sources.is_empty() && item_id == FORM_ATTACH {
-            // O formulário não tem campo de caminho: cancelar o seletor só não anexa nada.
+        if sources.is_empty() && (item_id == FORM_ATTACH || !HAS_TYPED_ATTACH_PATH) {
+            // O formulário não tem campo de caminho, e no Windows também não há (a UI do campo
+            // depende de `HAS_TYPED_ATTACH_PATH`): cancelar o seletor só não anexa nada.
             return;
         }
         if sources.is_empty() {
             sources = split_attachment_paths(&self.attach_path);
         }
         if sources.is_empty() {
+            // Fora do Windows o campo digitado vazio continua merecendo o aviso: é a única fonte.
             self.err = Some(tr("choose the attachment file").into());
             return;
         }
@@ -3745,11 +3754,12 @@ impl KeysApp {
             ui.add_space(6.0);
             // No Linux o(s) caminho(s) são digitados (sem gtk no AppImage),
             // MULTI: separados por `;` — o Windows tem picker nativo.
-            #[cfg(not(windows))]
-            ui.horizontal(|ui| {
-                ui.label(tr("File"));
-                ui.add(line(&mut self.attach_path).hint_text("C:\\...\\arquivo1;arquivo2").desired_width(ui.available_width().max(120.0)));
-            });
+            if HAS_TYPED_ATTACH_PATH {
+                ui.horizontal(|ui| {
+                    ui.label(tr("File"));
+                    ui.add(line(&mut self.attach_path).hint_text("C:\\...\\arquivo1;arquivo2").desired_width(ui.available_width().max(120.0)));
+                });
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.add_enabled_ui(ready, |ui| pill(ui, tr("Add attachment"), true)).inner.clicked() {

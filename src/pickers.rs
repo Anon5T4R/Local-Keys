@@ -83,4 +83,11 @@ impl Pickers {
     pub(crate) fn take(&self) -> Vec<Picked> {
         std::mem::take(&mut *self.done.lock().unwrap_or_else(PoisonError::into_inner))
     }
+
+    /// Enfileira uma resposta como a thread do seletor faria — só nos testes,
+    /// que não podem abrir o diálogo nativo. O frame consome pelo `take`.
+    #[cfg(test)]
+    pub(crate) fn push_for_test(&self, picked: Picked) {
+        self.done.lock().unwrap_or_else(PoisonError::into_inner).push(picked);
+    }
 }
