@@ -19,19 +19,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Rust + cargo-ndk: o Gradle compila o núcleo (crates/ffi) para cada ABI antes do APK.
       - uses: ./.github/actions/android-native
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
 
       # Os testes primeiro: se a cripto/TOTP/model quebrou, não interessa se o APK sai.
       # Os testes JVM validam o port contra o fixture .tkeys gerado no desktop.
@@ -44,7 +44,7 @@ jobs:
         run: ./gradlew assembleDebug --console=plain
 
       - name: Upload APK
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: app-debug
           path: android/app/build/outputs/apk/debug/*.apk
@@ -59,19 +59,19 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Rust + cargo-ndk: o Gradle compila o núcleo (crates/ffi) para cada ABI antes do APK.
       - uses: ./.github/actions/android-native
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
 
       # Os runners Linux do GitHub têm /dev/kvm; sem a permissão o emulador
       # sobe sem aceleração e estoura o timeout de boot (flake histórico).
