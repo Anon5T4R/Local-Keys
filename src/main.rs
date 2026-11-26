@@ -637,6 +637,8 @@ struct Skin {
     accent: egui::Color32,
     /// Texto sobre `accent` (pill primário).
     on_accent: egui::Color32,
+    /// Tinta da opção/linha marcada e dos anéis de foco sobre a `selection`.
+    accent_text: egui::Color32,
     text: egui::Color32,
     muted: egui::Color32,
     border: egui::Color32,
@@ -658,28 +660,28 @@ impl Skin {
 
     fn from_visuals(v: &egui::Visuals) -> Self {
         let text = v.override_text_color.unwrap_or(v.widgets.noninteractive.fg_stroke.color);
-        // O accent cheio (o da seleção é translúcido e sumia no fundo: chip "Todas", ★, filtros e o pill primário).
+        // O accent cheio do hyperlink (chips "Todas", ★, filtros e o pill primário). A seleção não usa
+        // mais um accent translúcido: o fundo é o token `selection`, opaco.
         let accent = v.hyperlink_color;
         Self {
             card: v.extreme_bg_color,
             field: v.panel_fill,
             accent,
-            on_accent: if luminance(accent) > 150.0 { egui::Color32::BLACK } else { egui::Color32::WHITE },
+            on_accent: theme::ink_on(accent),
+            // O texto marcado e o fraco saem dos tokens do tema (`theme::Tokens`): um valor medido
+            // contra o fundo, não um `× 0,6` que muda com ele.
+            accent_text: v.selection.stroke.color,
             text,
-            muted: text.gamma_multiply(0.6),
+            muted: v.weak_text_color(),
             border: if v.dark_mode { egui::Color32::from_white_alpha(30) } else { egui::Color32::from_black_alpha(30) },
-            hover: if v.dark_mode { egui::Color32::from_white_alpha(18) } else { egui::Color32::from_black_alpha(14) },
+            // O mesmo `hover` do tema (o fundo contra o qual o texto secundário dos ghosts é medido).
+            hover: v.widgets.hovered.bg_fill,
             inverted_fill: if v.dark_mode { egui::Color32::from_rgb(0xEC, 0xEC, 0xEF) } else { egui::Color32::from_rgb(0x2A, 0x2A, 0x2F) },
             inverted_text: if v.dark_mode { egui::Color32::from_rgb(0x22, 0x22, 0x26) } else { egui::Color32::WHITE },
             warn: v.warn_fg_color,
             danger: v.error_fg_color,
         }
     }
-}
-
-/// Luminância perceptual (0–255) — decide texto claro ou escuro sobre o accent.
-fn luminance(c: egui::Color32) -> f32 {
-    0.299 * f32::from(c.r()) + 0.587 * f32::from(c.g()) + 0.114 * f32::from(c.b())
 }
 
 /// Campo de uma linha com altura de clique decente.
@@ -717,7 +719,7 @@ fn begin_dialog(ui: &mut egui::Ui) {
     let skin = Skin::of(ui);
     let v = ui.visuals_mut();
     v.extreme_bg_color = skin.field;
-    v.selection.stroke = egui::Stroke::new(1.5_f32, skin.accent);
+    v.selection.stroke = egui::Stroke::new(1.5_f32, skin.accent_text);
     let w = &mut v.widgets;
     w.inactive.bg_stroke = egui::Stroke::new(1.0_f32, skin.border);
     w.inactive.weak_bg_fill = skin.field;
@@ -806,9 +808,9 @@ fn pill(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
     }
 }
 
-/// Pill de ação destrutiva (vermelho fixo: legível nos dois temas).
+/// Pill de ação destrutiva (vermelho fixo, igual nos dois temas; a tinta e o fundo moram em `theme`).
 fn pill_danger(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    pill_colored(ui, label, egui::Color32::from_rgb(0xC0, 0x3A, 0x3A), egui::Color32::WHITE, false)
+    pill_colored(ui, label, theme::DANGER_PILL, theme::ON_DANGER_PILL, false)
 }
 
 /// Pill com cores explícitas; `outline` desenha só a borda.
@@ -821,22 +823,16 @@ fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 28.0, PILL_HEIGHT), egui::Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     let hovered = resp.hovered() && enabled;
-    let fill = if !enabled {
-        fill.gamma_multiply(0.45)
-    } else if hovered {
-        fill.gamma_multiply(1.12)
-    } else {
-        fill.gamma_multiply(0.9)
-    };
+    let fill = if !enabled { fill.gamma_multiply(0.45) } else { theme::pill_fill(fill, hovered) };
     let fill = if outline { if hovered { skin.hover } else { egui::Color32::TRANSPARENT } } else { fill };
     let stroke = if outline { egui::Stroke::new(1.0_f32, skin.border) } else { egui::Stroke::NONE };
     ui.painter().rect(rect, egui::CornerRadius::same(14), fill, stroke, egui::StrokeKind::Inside);
     let pos = rect.center() - galley.size() / 2.0;
     ui.painter().galley(pos, galley, ink);
     // Foco pelo Tab: o `selection.stroke` — dentro dos diálogos o `begin_dialog` o engrossa para
-    // 1,5 pt no accent do tema (fora deles vale o padrão de 1 pt do tema) —, o mesmo traço que o
-    // campo focado usa, por fora do pill. O pill é desenhado à mão; sem isto o botão recebia o foco
-    // e não mostrava.
+    // 1,5 pt na tinta `accent_text` do tema (fora deles vale o padrão de 1 pt do tema) —, o mesmo traço
+    // que o campo focado usa, por fora do pill. O pill é desenhado à mão; sem isto o botão recebia o
+    // foco e não mostrava.
     if resp.has_focus() {
         ui.painter().add(anel_de_foco(ui, label, rect, 16));
     }
@@ -844,9 +840,9 @@ fn pill_colored(ui: &mut egui::Ui, label: &str, fill: egui::Color32, ink: egui::
 }
 
 /// Monta o anel de foco dos botões desenhados à mão: 2 pt por fora do widget, com o
-/// `selection.stroke` (dentro dos diálogos, o accent de 1,5 pt que o `begin_dialog` define; fora
-/// deles, o de 1 pt do tema). O traço que vai para o `Shape` é o mesmo registrado no gancho de
-/// teste — quem apagar a chamada de pintura apaga o registro junto.
+/// `selection.stroke` (dentro dos diálogos, a tinta `accent_text` de 1,5 pt que o `begin_dialog`
+/// define; fora deles, a de 1 pt do tema). O traço que vai para o `Shape` é o mesmo registrado no
+/// gancho de teste — quem apagar a chamada de pintura apaga o registro junto.
 fn anel_de_foco(ui: &egui::Ui, _rotulo: &str, rect: egui::Rect, raio: u8) -> egui::Shape {
     let traco = ui.visuals().selection.stroke;
     #[cfg(test)]
@@ -3319,12 +3315,12 @@ impl KeysApp {
                                                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
                                             }
                                             if let Some(warn) = &self.totp_warn {
-                                                ui.label(egui::RichText::new(warn).small().color(egui::Color32::from_rgb(230, 130, 40)));
+                                                ui.label(egui::RichText::new(warn).small().color(Skin::of(ui).warn));
                                             }
                                         }
                                         otpauth::ParseResult::Invalid(reason) => {
                                             if let Some(msg) = totp_error_text(reason) {
-                                                ui.label(egui::RichText::new(msg).small().color(egui::Color32::LIGHT_RED));
+                                                ui.label(egui::RichText::new(msg).small().color(Skin::of(ui).danger));
                                             }
                                         }
                                     }
@@ -3376,7 +3372,7 @@ impl KeysApp {
                                     ui.label(
                                         egui::RichText::new(tr("This number fails the card check (Luhn). Check for a typo; you can still save."))
                                             .small()
-                                            .color(egui::Color32::from_rgb(230, 130, 40)),
+                                            .color(Skin::of(ui).warn),
                                     );
                                 }
                             });
@@ -3573,7 +3569,7 @@ impl KeysApp {
                                 ui.label(
                                     egui::RichText::new(tr("The CPF check digits don't match. Check for a typo; you can still save."))
                                         .small()
-                                        .color(egui::Color32::from_rgb(230, 130, 40)),
+                                        .color(Skin::of(ui).warn),
                                 );
                             }
                             ui.add_space(2.0);
@@ -4539,7 +4535,7 @@ impl KeysApp {
             });
             if let Some(error) = &self.merge_error {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(error).small().color(egui::Color32::LIGHT_RED));
+                ui.label(egui::RichText::new(error).small().color(Skin::of(ui).danger));
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -4678,7 +4674,7 @@ impl KeysApp {
             ui.add_space(8.0);
             // Aviso FORTE: o export não tem cifra nenhuma.
             egui::Frame::NONE
-                .fill(egui::Color32::from_rgb(0xC0, 0x3A, 0x3A).gamma_multiply(0.22))
+                .fill(theme::export_warning_fill())
                 .corner_radius(egui::CornerRadius::same(6))
                 .inner_margin(egui::Margin::symmetric(10, 8))
                 .show(ui, |ui| {
@@ -4686,7 +4682,7 @@ impl KeysApp {
                         egui::RichText::new(tr(
                             "WARNING: the export is UNENCRYPTED — any app can read it. Use it only to migrate, then delete the file.",
                         ))
-                        .color(egui::Color32::from_rgb(0xE0, 0x6C, 0x6C)),
+                        .color(Skin::of(ui).danger),
                     );
                 });
             ui.add_space(10.0);
@@ -4789,7 +4785,7 @@ impl KeysApp {
             let error_galley = self
                 .export_vault_err
                 .as_ref()
-                .map(|error| ui.painter().layout(error.clone(), egui::TextStyle::Small.resolve(ui.style()), egui::Color32::LIGHT_RED, error_width));
+                .map(|error| ui.painter().layout(error.clone(), egui::TextStyle::Small.resolve(ui.style()), Skin::of(ui).danger, error_width));
             let error_height = error_galley.as_ref().map_or(error_line, |galeria| galeria.size().y.max(error_line));
             let (slot, _) = ui.allocate_exact_size(egui::vec2(error_width, error_height), egui::Sense::hover());
             if let Some(galeria) = error_galley {
@@ -5042,7 +5038,7 @@ impl KeysApp {
 
         if let Some(e) = &self.err {
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("{}: {e}", tr("Error"))).color(egui::Color32::LIGHT_RED));
+            ui.label(egui::RichText::new(format!("{}: {e}", tr("Error"))).color(Skin::of(ui).danger));
         }
 
         ui.add_space(18.0);
@@ -5294,7 +5290,7 @@ impl KeysApp {
         ui.add_space(6.0);
 
         if let Some(e) = &self.err {
-            ui.label(egui::RichText::new(format!("{}: {e}", tr("Error"))).color(egui::Color32::LIGHT_RED));
+            ui.label(egui::RichText::new(format!("{}: {e}", tr("Error"))).color(skin.danger));
             ui.add_space(6.0);
         }
 
@@ -5368,9 +5364,9 @@ impl KeysApp {
                     for row in view {
                         let selected = self.selection.contains(&row.id);
                         // A linha marcada NÃO é lavada em nenhum tema (revisão 2, item A: o modelo do teste
-                        // era gama e o subtítulo fraco é overlay — qualquer lavado derruba o contraste
-                        // DELE; o destaque é a barra + contorno, pintados fora do Frame). O estado de
-                        // seleção vai também na árvore de acessibilidade pelo `selectable_label`.
+                        // é gama e qualquer lavado muda o fundo sob o subtítulo fraco; o destaque é a barra
+                        // + contorno, pintados fora do Frame). O estado de seleção vai também na árvore de
+                        // acessibilidade pelo `selectable_label`.
                         let fill =
                             if selected { crate::theme::selected_row_fill(skin.accent, ui.visuals().dark_mode) } else { egui::Color32::TRANSPARENT };
                         let linha = egui::Frame::NONE
@@ -5420,7 +5416,7 @@ impl KeysApp {
                                                     });
                                                 }
                                                 Err(Some(text)) => {
-                                                    ui.label(egui::RichText::new(text).small().color(egui::Color32::LIGHT_RED));
+                                                    ui.label(egui::RichText::new(text).small().color(skin.danger));
                                                 }
                                                 // Segredo vazio não tem o que explicar.
                                                 Err(None) => {}

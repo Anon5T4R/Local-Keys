@@ -155,6 +155,16 @@ fn click_at(harness: &mut Harness<'_, KeysApp>, pos: egui::Pos2) {
     harness.run_steps(2);
 }
 
+/// Deixa o ponteiro em cima do botão com esse rótulo (o hover do pill é pintado no quadro seguinte).
+fn hover_label(harness: &mut Harness<'_, KeysApp>, label: &str) {
+    let pos = {
+        let node = harness.get_by_label(label);
+        node.rect().center()
+    };
+    harness.input_mut().events.push(egui::Event::PointerMoved(pos));
+    harness.run_steps(2);
+}
+
 fn click_bar(harness: &mut Harness<'_, KeysApp>, index: usize) {
     let rects = bar_buttons(harness);
     assert_eq!(rects.len(), 3, "a barra tem lupa, tema e engrenagem: {rects:?}");
@@ -816,8 +826,9 @@ fn tab_walks_the_whole_form_and_every_button_shows_the_focus_ring() {
             let aneis = focus_rings(&harness);
             let traco = aneis.iter().find(|(label, _)| label == &rotulo).map(|(_, traco)| *traco);
             let traco = traco.unwrap_or_else(|| panic!("passo {step}: {rotulo:?} focado sem indicador de foco (aneis: {aneis:?})"));
-            // O diálogo engrossa a `selection.stroke` para 1,5 pt (`begin_dialog`); a cor é a do
-            // accent do tema, a mesma do traço de seleção dos campos.
+            // O diálogo engrossa a `selection.stroke` para 1,5 pt (`begin_dialog`); a cor é a
+            // `accent_text` do tema (tinta do item marcado e dos anéis), a mesma do traço de seleção
+            // dos campos.
             let selecao = harness.ctx.style_of(harness.ctx.theme()).visuals.selection.stroke;
             assert_eq!(
                 traco,
@@ -2795,6 +2806,52 @@ fn review_shots() {
             harness.run_steps(2);
             shot(&mut harness, &format!("vault-folders-{name}-{label}"));
         }
+    }
+}
+
+/// As capturas de QA do contraste (LOCALKEYS_QA_RENDER), nos dois temas: lista com seleção, hover no
+/// pill de perigo, formulário com a linha de erro, hover no pill primário, diálogo do "Export to
+/// vault" com erro e a paleta aberta.
+#[test]
+fn contrast_shots() {
+    for (appearance, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+        // Lista destrancada com a seleção múltipla na linha (barra + contorno do accent).
+        let mut app = unlocked("contrast-list", Prefs::new("en", appearance));
+        app.selection.select_only(&item_id(&app, "1lib.sk"));
+        let mut qa = harness(app);
+        qa.run_steps(2);
+        shot(&mut qa, &format!("contrast-list-{name}"));
+        hover_label(&mut qa, "Delete selected");
+        shot(&mut qa, &format!("contrast-list-danger-hover-{name}"));
+
+        // Formulário de item novo com a linha de erro no rodapé fixo.
+        let mut app = unlocked("contrast-form", Prefs::new("en", appearance));
+        app.open_add_form(NewKind::Login);
+        app.add_name = "exemplo".into();
+        app.form_err = Some("the vault could not be saved".into());
+        let mut qa = harness(app);
+        qa.run_steps(3);
+        shot(&mut qa, &format!("contrast-form-error-{name}"));
+        hover_label(&mut qa, "Save");
+        shot(&mut qa, &format!("contrast-form-primary-hover-{name}"));
+
+        // Diálogo do "Export to vault" com o erro de senhas diferentes.
+        let (mut app, item, _folder) = unlocked_for_vault_export("contrast-export", Prefs::new("en", appearance));
+        app.selection.select_only(&item);
+        let mut qa = harness(app);
+        qa.run_steps(2);
+        qa.state_mut().export_vault_chosen("C:\\tmp\\novo.tkeys".into());
+        qa.run_steps(12);
+        qa.state_mut().export_vault_pass = "uma".into();
+        qa.state_mut().export_vault_confirm = "outra".into();
+        click_labelled_button(&mut qa, "Create vault");
+        shot(&mut qa, &format!("contrast-export-error-{name}"));
+
+        // Paleta aberta (o rótulo de grupo é o texto secundário da linha selecionada).
+        let mut qa = harness(unlocked("contrast-palette", Prefs::new("en", appearance)));
+        qa.run_steps(2);
+        click_bar(&mut qa, SEARCH);
+        shot(&mut qa, &format!("contrast-palette-{name}"));
     }
 }
 
